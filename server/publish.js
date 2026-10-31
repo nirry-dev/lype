@@ -2,6 +2,7 @@
 // repository, so a static site can follow a running creature without anyone reaching this machine.
 //   node server/publish.js     publish now (config.json "publish": { "dir": "../site/iterant", "git": true })
 import { execFile } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -43,5 +44,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     console.error('nothing to publish to: set "publish": { "dir": "<folder>", "git": true } in config.json');
     process.exit(1);
   }
-  process.exit((await publish(cfg, 'Its life, published by hand')) ? 0 : 1);
+  const chainFile = join(cfg.dataDir, 'chain.json');
+  const head = existsSync(chainFile) ? JSON.parse(readFileSync(chainFile, 'utf8')).at(-1)?.hash : null;
+  process.exit((await publish(cfg, `Its life, published by hand${head ? `\n\nLatest seal: ${head}` : ''}`)) ? 0 : 1);
 }
