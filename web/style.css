@@ -1582,7 +1582,7 @@ a.btn {
   border-left: 2px solid color-mix(in srgb, var(--curious) 55%, transparent);
 }
 .thing-frame {
-  background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--curious) 10%, var(--bg-3)), var(--bg-2) 75%);
+  background: radial-gradient(circle at 50% 40%, var(--paper), var(--paper-2) 130%);
 }
 .thing-frame img {
   padding: 10%;
@@ -1662,7 +1662,7 @@ a.btn {
 .place-card text,
 .place-map .thing text,
 .place-site-label {
-  font: 500 9.5px var(--mono);
+  font: 500 8.5px var(--mono);
   fill: var(--text-2);
   letter-spacing: 0.02em;
   pointer-events: none;
@@ -1682,9 +1682,13 @@ a.btn {
   outline: none;
 }
 .place-map .thing-hit {
-  /* a faint patch of ground, so a dark drawing still stands out on the dark map */
   fill: color-mix(in srgb, var(--curious) 7%, transparent);
   stroke: transparent;
+}
+.place-map .thing-ground {
+  /* its drawings are made for paper, like everything else it draws */
+  fill: var(--paper);
+  opacity: 0.94;
 }
 .place-map .thing:hover .thing-hit,
 .place-map .thing:focus-visible .thing-hit {
@@ -1694,7 +1698,8 @@ a.btn {
   stroke: var(--curious);
   fill: color-mix(in srgb, var(--curious) 8%, transparent);
 }
-.place-map .thing.ruin image {
+.place-map .thing.ruin image,
+.place-map .thing.ruin .thing-ground {
   filter: grayscale(1) brightness(0.65);
 }
 .place-map .thing.ruin text {

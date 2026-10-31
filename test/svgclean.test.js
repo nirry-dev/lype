@@ -11,6 +11,11 @@ test('keeps whitelisted shapes and attributes', () => {
   );
 });
 
+test('keeps paint set on the root, which every shape inherits, but not its size', () => {
+  const { svg } = cleanSvg('<svg viewBox="0 0 64 64" width="64" height="64" stroke="#333" fill="none" stroke-width="2" onload="x()"><rect x="10" y="14" width="44" height="32"/></svg>');
+  assert.equal(svg, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" stroke="#333" fill="none" stroke-width="2"><rect x="10" y="14" width="44" height="32"/></svg>');
+});
+
 test('strips scripts, handlers, foreign content and external references', () => {
   const evil = `<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">
     <script>alert(1)</script>

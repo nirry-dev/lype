@@ -1580,6 +1580,24 @@ async function renderPlace(current) {
   updatePlaceLive();
 }
 
+/** A name on the map, in at most two short lines that stay inside its own tile, so neighbours never overlap. */
+function tileLabel(name, x, y, attrs = {}) {
+  const fit = 11;
+  const lines = [];
+  for (const word of (name.length > fit ? name.replace(/^(the|a|an)\s+/i, '') : name).split(/\s+/)) {
+    const last = lines.at(-1);
+    if (last != null && last.length + 1 + word.length <= fit) lines[lines.length - 1] = `${last} ${word}`;
+    else lines.push(word);
+  }
+  const shown = lines.length > 2 ? [lines[0], lines.slice(1).join(' ')] : lines;
+  const cx = x * TILE + TILE / 2;
+  return sv(
+    'text',
+    { x: cx, y: y * TILE + TILE - 2 - (shown.length - 1) * 9, 'text-anchor': 'middle', ...attrs },
+    shown.map((l, i) => sv('tspan', { x: cx, dy: i ? 9 : 0 }, short(l, fit))),
+  );
+}
+
 function placeMap(w) {
   const W = w.w * TILE;
   const H = w.h * TILE;
@@ -1632,7 +1650,7 @@ function placeMap(w) {
     sv('line', { x1: c.x + dx + 3, y1: c.y - 19, x2: c.x + dx + 3, y2: c.y - 14 }),
     sv('line', { x1: c.x + dx + 3, y1: c.y + 14, x2: c.x + dx + 3, y2: c.y + 19 }),
   ]);
-  const card = sv('g', { class: 'place-card', tabindex: 0, role: 'button', 'aria-label': 'The card it lives on' }, sv('rect', { x: c.x - 22, y: c.y - 14, width: 44, height: 28, rx: 4 }), pins, sv('text', { x: c.x, y: c.y + 32, 'text-anchor': 'middle' }, 'the card'));
+  const card = sv('g', { class: 'place-card', tabindex: 0, role: 'button', 'aria-label': 'The card it lives on' }, sv('rect', { x: c.x - 22, y: c.y - 14, width: 44, height: 28, rx: 4 }), pins, sv('text', { x: c.x, y: c.y + 30, 'text-anchor': 'middle' }, 'the card'));
   card.addEventListener('click', () => selectThing(null));
   svg.append(card);
 
@@ -1648,9 +1666,13 @@ function placeMap(w) {
       style: `--o:${t.ruin ? 0.55 : (0.45 + 0.55 * t.condition).toFixed(2)}`,
     });
     g.append(sv('rect', { x: x + 2, y: y + 2, width: TILE - 4, height: TILE - 4, rx: 10, class: 'thing-hit' }));
-    g.append(t.sprite ? sv('image', { href: asset(t.sprite), x: x + 8, y: y + 2, width: TILE - 16, height: TILE - 16 }) : sv('rect', { x: x + 20, y: y + 12, width: 24, height: 24, rx: 4, class: 'thing-blank' }));
-    if (t.ruin) g.append(sv('path', { d: `M${x + 14} ${y + 42} l7 -9 l5 6 l6 -11 l6 8 l8 -6`, class: 'cracks' }));
-    g.append(sv('text', { x: x + TILE / 2, y: y + TILE - 3, 'text-anchor': 'middle' }, short(t.name, 17)), sv('title', {}, `${t.name}${t.ruin ? ' (a ruin)' : ''}\n${t.plaque}`));
+    g.append(
+      ...(t.sprite
+        ? [sv('rect', { x: x + 10, y, width: TILE - 20, height: TILE - 20, rx: 5, class: 'thing-ground' }), sv('image', { href: asset(t.sprite), x: x + 11, y: y + 1, width: TILE - 22, height: TILE - 22 })]
+        : [sv('rect', { x: x + 20, y: y + 11, width: 24, height: 24, rx: 4, class: 'thing-blank' })]),
+    );
+    if (t.ruin) g.append(sv('path', { d: `M${x + 14} ${y + 40} l7 -9 l5 6 l6 -11 l6 8 l8 -6`, class: 'cracks' }));
+    g.append(tileLabel(t.name, t.x, t.y), sv('title', {}, `${t.name}${t.ruin ? ' (a ruin)' : ''}\n${t.plaque}`));
     g.addEventListener('click', () => selectThing(t.id));
     g.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -1727,8 +1749,9 @@ function updatePlaceLive() {
     fill(
       layer,
       sv('rect', { x: x * TILE + 3, y: y * TILE + 3, width: TILE - 6, height: TILE - 6, rx: 10, class: 'place-site' }),
-      sv('svg', { x: x * TILE + 8, y: y * TILE + 2, width: TILE - 16, height: TILE - 16, viewBox: '0 0 64 64', id: 'place-live-sprite' }),
-      sv('text', { x: x * TILE + TILE / 2, y: y * TILE + TILE - 3, 'text-anchor': 'middle', class: 'place-site-label' }, short(name, 17)),
+      sv('rect', { x: x * TILE + 10, y: y * TILE, width: TILE - 20, height: TILE - 20, rx: 5, class: 'thing-ground' }),
+      sv('svg', { x: x * TILE + 11, y: y * TILE + 1, width: TILE - 22, height: TILE - 22, viewBox: '0 0 64 64', id: 'place-live-sprite' }),
+      tileLabel(name, x, y, { class: 'place-site-label' }),
     );
   }
   $('#place-live-sprite').innerHTML = cleanSvg(live.sprite, { partial: true, idPrefix: 'pl-' }).svg; // whitelist-only output

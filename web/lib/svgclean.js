@@ -12,6 +12,8 @@ const ATTR_NAMES = [
   'gradientUnits', 'gradientTransform', 'spreadMethod',
 ];
 const ATTRS = new Map(ATTR_NAMES.map((a) => [a.toLowerCase(), a]));
+// Paint the root may carry: every shape inherits it (models often write <svg stroke="black">). Its size is never kept.
+const ROOT_PAINT = new Set(['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray', 'stroke-opacity', 'fill-opacity', 'fill-rule', 'opacity']);
 
 // No quotes, angle brackets, ampersands, colons or slashes: nothing that can open a URL, a script or a new tag.
 const SAFE_VALUE = /^[a-zA-Z0-9#.,%()\s+\-]*$/;
@@ -119,7 +121,8 @@ export function cleanSvg(input, { partial = false, idPrefix = '', maxElements = 
     elements++;
     if (name === 'svg') {
       rooted = true;
-      out.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${rootViewBox(attrs.get('viewBox'))}">`);
+      const paint = new Map([...attrs].filter(([k]) => ROOT_PAINT.has(k)));
+      out.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${rootViewBox(attrs.get('viewBox'))}"${renderAttrs(paint)}>`);
       open.push({ name, emitted: true });
       continue;
     }
