@@ -89,6 +89,42 @@ export function weather(world, memory, { since, cycle }) {
   return { worn, ruined };
 }
 
+/** Drawings a child inherits are numbered from here, far past any cycle a life reaches, so they never meet its own. */
+export const KIN_SPRITES = 900000;
+
+/**
+ * The place a mind leaves its child. What it asked to keep still stands, held up by its last letter (so it stands
+ * while the child remembers that letter, or its parent); everything else is a ruin. Returns the child's world and
+ * which drawings to copy ([old number, new number]); the parent's world is not touched.
+ */
+export function inheritWorld(world, { keep = [], parent, generation, letter = null }) {
+  const kept = new Set(keep.map((name) => findThing(world, name)?.id).filter(Boolean));
+  const sprites = [];
+  const things = world.things.map((old) => {
+    const t = structuredClone(old);
+    const stays = kept.has(t.id);
+    const sprite = t.sprite ? KIN_SPRITES + generation * 1000 + Number(t.id.slice(1)) : null;
+    if (sprite) sprites.push([t.sprite, sprite]);
+    delete t.ruinedAt;
+    return {
+      ...t,
+      // Its child's timeline starts again at 0; when and by whom it was really built is kept.
+      builtBy: t.builtBy || { name: parent, generation: generation - 1, cycle: t.built, version: t.version },
+      built: 0,
+      version: 0,
+      tended: null,
+      from: stays && letter ? [letter] : [],
+      people: stays ? [...new Set([...(t.people || []), parent])] : t.people || [],
+      sprite,
+      condition: stays ? 1 : 0,
+      ruin: !stays,
+      ...(stays ? {} : { ruinedAt: 0 }),
+      history: [...t.history, { cycle: 0, what: 'inherited', text: stays ? `${parent} asked for this to be kept for its child.` : `${parent} died, and this was left to fall.` }],
+    };
+  });
+  return { world: { ...structuredClone(world), things, at: null }, sprites };
+}
+
 /** A new wish, unless it is one it already asked for or too many are still waiting. */
 export function addWish(wishes, { text, why }, { version, cycle, at }) {
   if (!text) return null;

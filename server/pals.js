@@ -70,7 +70,14 @@ export function outbox(life, { file = false } = {}) {
   const s = life.state;
   return {
     v: 1,
-    from: { id: s.id, name: s.name || 'unnamed', night: file ? 'nights/{n4}.json' : 'night/{n}', ...(publicPage(life.cfg.publish?.url) ? { page: publicPage(life.cfg.publish.url) } : {}) },
+    from: {
+      id: s.id,
+      name: s.name || 'unnamed',
+      night: file ? 'nights/{n4}.json' : 'night/{n}',
+      ...(publicPage(life.cfg.publish?.url) ? { page: publicPage(life.cfg.publish.url) } : {}),
+      // A child writes from the outbox its parent wrote from; this tells its parent's pen pals who it is.
+      ...(s.parent ? { parent: { id: s.parent.id, name: s.parent.name || 'unnamed' } } : {}),
+    },
     letters: (s.outbox || [])
       .filter((o) => o.sentAt && o.seal)
       .slice(-100)
@@ -86,5 +93,7 @@ export function readOutbox(raw) {
     .filter((l) => l && typeof l.id === 'string' && typeof l.to === 'string' && typeof l.text === 'string' && l.text.trim())
     .map((l) => ({ ...l, text: l.text.slice(0, 1200), toName: String(l.toName || '').slice(0, 40) }));
   const page = publicPage(from.page);
-  return { from: { id: from.id.slice(0, 40), name: from.name.replace(/\s+/g, ' ').trim().slice(0, 40) || 'a creature', night: String(from.night || ''), ...(page ? { page } : {}) }, letters };
+  const tidy = (name) => String(name || '').replace(/\s+/g, ' ').trim().slice(0, 40) || 'a creature';
+  const parent = typeof from.parent?.id === 'string' ? { id: from.parent.id.slice(0, 40), name: tidy(from.parent.name) } : null;
+  return { from: { id: from.id.slice(0, 40), name: tidy(from.name), night: String(from.night || ''), ...(page ? { page } : {}), ...(parent ? { parent } : {}) }, letters };
 }

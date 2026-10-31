@@ -41,10 +41,11 @@ const sha256 = async (text) => hex(await crypto.subtle.digest('SHA-256', new Tex
 /**
  * Checks the whole chain: each entry links to the one before, and each record, fetched as published, still hashes to
  * its seal. fetchRecord(entry) returns the published record (with its seal). Returns { ok, checked, late, problem }.
+ * A child's record begins where its parent's ended: pass that last seal as `genesis`.
  */
-export async function verifyChain(entries, fetchRecord, { onProgress = () => {}, parallel = 6, from = 0 } = {}) {
+export async function verifyChain(entries, fetchRecord, { onProgress = () => {}, parallel = 6, from = 0, genesis = GENESIS } = {}) {
   for (let i = 0; i < entries.length; i++) {
-    const want = i ? entries[i - 1].hash : GENESIS;
+    const want = i ? entries[i - 1].hash : genesis;
     if (entries[i].prev !== want) return { ok: false, checked: i, problem: { at: entries[i], why: 'it does not link to the entry before it' } };
   }
   // Every link is checked; the records themselves from `from` on (the newest few, or all of them).

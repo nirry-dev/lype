@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { createBrain } from './brain.js';
 import { cleanJpeg } from './errands.js';
+import { exportLife } from './export.js';
 import { ROOT, loadConfig } from './config.js';
 import { Life, letterStatus } from './life.js';
 import * as pals from './pals.js';
@@ -111,9 +112,49 @@ function broadcast(event, data) {
   for (const res of clients) res.write(frame);
   relay?.send(event, data);
 }
-for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish', 'errand']) life.on(event, (data) => broadcast(event, data));
+for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish', 'errand', 'death']) life.on(event, (data) => broadcast(event, data));
 // Each night's latest seal goes into the commit too, so public git history pins its record as it was.
-life.on('night', (n) => publish(cfg, `${life.state.name || 'It'} became version ${n.n}: ${n.release?.title || 'a night'}\n\nLatest seal: ${life.chain.at(-1)?.hash || 'none'}`));
+life.on('night', (n) =>
+  publish(
+    cfg,
+    n.will
+      ? `${life.state.name || 'It'} died after ${n.n} nights: nobody wrote to it for ${n.mortality.quiet} nights. Its child was born.\n\nLast seal: ${life.chain.at(-1)?.hash || 'none'}`
+      : `${life.state.name || 'It'} became version ${n.n}: ${n.release?.title || 'a night'}\n\nLatest seal: ${life.chain.at(-1)?.hash || 'none'}`,
+  ),
+);
+
+// The lives that ended here, each a read-only page at /ancestors/<k>/ (the same static copy a published site gets).
+function ancestorPage(a) {
+  try {
+    exportLife({ ...cfg, dataDir: join(cfg.dataDir, a.dir) }, store.path(`${a.dir}/page`));
+  } catch (err) {
+    console.error(`the page of ${a.name || 'an ancestor'} could not be made: ${err.message}`);
+  }
+}
+life.on('death', ancestorPage);
+
+async function serveAncestor(res, path) {
+  const m = /^\/ancestors\/(\d+)\/(.*)$/.exec(path);
+  const a = m && life.lineage.find((x) => String(x.k) === m[1]);
+  if (!a) return json(res, 404, { error: 'not found' });
+  const root = store.path(`${a.dir}/page`);
+  const file = join(root, normalize(decodeURIComponent(m[2] || 'index.html')).replace(/^([/\\])+/, ''));
+  if (!file.startsWith(root + sep)) return json(res, 403, { error: 'no' });
+  try {
+    const body = await readFile(file);
+    const type = MIME[extname(file)] || 'application/octet-stream';
+    res.writeHead(200, {
+      'content-type': type,
+      'cache-control': 'no-cache',
+      'x-content-type-options': 'nosniff',
+      ...(type.startsWith('text/html') ? { 'content-security-policy': PAGE_CSP, 'referrer-policy': 'no-referrer' } : {}),
+      ...(type.startsWith('image/svg') ? { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" } : {}),
+    });
+    res.end(body);
+  } catch {
+    json(res, 404, { error: 'not found' });
+  }
+}
 setInterval(() => {
   for (const res of clients) res.write(': keep-alive\n\n');
 }, 25000).unref();
@@ -304,6 +345,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname.startsWith('/works/')) return await serveWork(res, url.pathname);
     if (url.pathname.startsWith('/returns/')) return await servePhoto(res, url);
+    if (url.pathname.startsWith('/ancestors/')) return await serveAncestor(res, url.pathname);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
     return await serveStatic(res, url.pathname);
   } catch (err) {
@@ -314,6 +356,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(cfg.port, cfg.host, () => {
   life.start();
+  for (const a of life.lineage) ancestorPage(a); // made afresh, so they follow the viewer as it changes
   const base = `http://${cfg.host}:${cfg.port}`;
   console.log(`${life.state.name || 'An unnamed creature'} is alive at ${base}`);
   console.log(`  mind:   ${brain.label} (${brain.kind}${cfg.brain.backend === 'openai' ? ` via ${cfg.brain.baseUrl}` : ''})`);

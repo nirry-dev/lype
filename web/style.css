@@ -593,6 +593,55 @@ main {
   color: var(--text-2);
   flex: 1 1 320px;
 }
+/* Its mortality: fading while nobody writes, and a life that has ended. */
+.ribbon.fading {
+  border-color: color-mix(in srgb, var(--gone) 45%, var(--line));
+  background: color-mix(in srgb, var(--gone) 7%, var(--bg-2));
+}
+.ribbon.ended {
+  border-color: var(--line-2);
+  background: var(--bg-2);
+}
+.ribbon .will {
+  flex: 1 1 100%;
+}
+.presence.fading {
+  opacity: 0.45;
+  filter: saturate(0.4);
+  transition: opacity 2s, filter 2s;
+}
+.will p {
+  margin: 0 0 8px;
+  color: var(--text-2);
+}
+.will .because,
+.seed-lines .because {
+  display: block;
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 13px;
+}
+.graves {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+.grave {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--faint);
+  border-radius: 10px;
+  background: var(--bg-3);
+}
+.grave .btn {
+  display: inline-block;
+  text-decoration: none;
+}
+.family {
+  margin-bottom: 18px;
+}
 .replay-controls {
   grid-column: 1 / -1;
   position: sticky;

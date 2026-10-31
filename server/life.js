@@ -1,7 +1,7 @@
 // Its life: waking on a rhythm, thinking, making, remembering, and every night becoming a new version of itself.
 import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { readFileSync, rmSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
@@ -11,7 +11,28 @@ import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
-import { CARD, addWish, answerWish, emptyWorld, findThing, namedThing, placeNear, untoldAnswers, weather } from './world.js';
+import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, placeNear, untoldAnswers, weather } from './world.js';
+
+/** Everything one life is made of on disk. When it dies, these are put away together, whole, and stay replayable. */
+const LIFE_FILES = ['state.json', 'letters.json', 'journal.json', 'chain.json', 'cycles', 'nights', 'works', 'returns'];
+const bornText = (d) => d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+/** Moves a file or folder; if Windows holds it open, copies it and removes the original instead. */
+function move(from, to) {
+  try {
+    renameSync(from, to);
+  } catch (err) {
+    if (!['EPERM', 'EBUSY', 'EACCES', 'EXDEV'].includes(err.code)) throw err;
+    cpSync(from, to, { recursive: true });
+    rmSync(from, { recursive: true, force: true });
+  }
+}
+
+/** Its will as anyone may see it. */
+export function publicWill(w) {
+  if (!w) return null;
+  return { line: w.line, why: w.why, letter: w.letter, keep: w.keep, ...(w.refused ? { refused: w.refused } : {}), ...(w.letterHeld ? { letterHeld: true } : {}) };
+}
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const clamp01 = (x) => clamp(Number.isFinite(x) ? x : 0.5, 0, 1);
@@ -96,6 +117,7 @@ export function publicLetter(l, { own = false } = {}) {
     reply,
     influenced: l.influenced || [],
     fromCreature: Boolean(l.pal),
+    fromParent: Boolean(l.kin),
     errand: l.errand
       ? { id: l.errand.id, text: l.errand.text, photo: letterStatus(l) === 'allowed' ? l.errand.photo : null, look: publicLook(l.errand.look), seenCycle: l.errand.seenCycle ?? null }
       : null,
@@ -137,6 +159,7 @@ export class Life extends EventEmitter {
     this.cycles = store.list('cycles').map((f) => cycleSummary(store.read(`cycles/${f}`)));
     this.nights = store.list('nights').map((f) => store.read(`nights/${f}`));
     this.chain = store.read('chain.json', []); // its sealed record, one entry per cycle and night (web/lib/seal.js)
+    this.lineage = store.read('lineage.json', []); // the minds that lived here before it, oldest first
     this.busy = false;
     this.paused = Boolean(config.paused);
     this.timer = null;
@@ -162,6 +185,7 @@ export class Life extends EventEmitter {
     s.errands ??= [];
     s.stats.errands ??= 0;
     s.stats.errandsFilled ??= 0;
+    s.generation ??= 1;
   }
 
   // ---------- lifecycle ----------
@@ -205,15 +229,91 @@ export class Life extends EventEmitter {
       this.notes.push(`Your keeper asked something of you: "${s.formerName}", what you call yourself, describes something, but it is not a name a person can call you by. On your next night you will choose your name again, once and for good. It can keep something of the old one.`);
       this.journalAdd({ kind: 'gift', text: `Its keeper asked it to choose a name it can be called by, once and for good, in place of "${s.formerName}".` });
     }
+    if (this.cfg.mortality?.enabled && !s.mortal) {
+      const after = this.cfg.mortality.dieAfter;
+      s.mortal = { since: s.version, quiet: 0 };
+      this.notes.push(`Since you last woke, your keeper made you mortal. From now on you live only as long as someone writes to you: if ${after} nights pass in a row without a single letter, from a person or from another mind, your life ends, and a new mind is born here in your place. Every letter starts the count again.`);
+      this.journalAdd({ kind: 'gift', text: `Its keeper made it mortal: from now on it lives only as long as someone writes to it. ${after} nights in a row without a letter, and its life ends.` });
+      this.milestone('mortal', 'Its keeper made it mortal: it lives as long as someone writes to it.');
+    }
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
     this.saveState();
+  }
+
+  // ---------- its mortality and its lineage ----------
+
+  /** How near its end it is, or null while its keeper has not made it mortal. */
+  mortality() {
+    const m = this.cfg.mortality;
+    if (!m?.enabled || !this.state?.mortal) return null;
+    const quiet = this.state.mortal.quiet;
+    return { quiet, fadeAfter: m.fadeAfter, dieAfter: m.dieAfter, fading: quiet >= m.fadeAfter, left: Math.max(0, m.dieAfter - quiet) };
+  }
+
+  /** Its last night: what it leaves its child. The seed line is held to the drift guard and screened, since nobody can change it afterwards. */
+  async writeWill(system, mortal, dream) {
+    const s = this.state;
+    this.setPhase('dying', 'writing what it leaves its child');
+    const raw = await this.brain.complete({ kind: 'will', system, user: mind.willPrompt(s, mortal, dream), maxTokens: 700, temperature: 0.8, schema: mind.WILL_SCHEMA });
+    const will = mind.readWill(raw.text);
+    if (will.line && s.self.seed.some((l) => similarity(l.text, will.line) >= 0.55)) Object.assign(will, { refused: { line: will.line, why: 'too close to a line its child is already born with' }, line: '' });
+    else if (will.line && (await this.screen('reply', will.line)).status !== 'allowed') Object.assign(will, { line: '', why: '' });
+    if (will.letter && (await this.screen('reply', will.letter)).status !== 'allowed') Object.assign(will, { letter: '', letterHeld: true });
+    will.keep = [...new Set(will.keep.map((n) => findThing(s.world, n)?.name).filter(Boolean))];
+    return will;
+  }
+
+  /** Its life ends: everything it was is put away whole (still replayable, its seals intact), and its child is born in its place. */
+  die(will, mortal) {
+    const s = this.state;
+    const k = this.lineage.length + 1;
+    const dir = `ancestors/${k}`;
+    const at = new Date().toISOString();
+    const cause = `nobody wrote to it for ${mortal.quiet} nights`;
+    const entry = {
+      k,
+      dir,
+      id: s.id,
+      name: s.name,
+      generation: s.generation,
+      born: s.born,
+      died: at,
+      versions: s.version,
+      cycles: s.cycle,
+      quiet: mortal.quiet,
+      lettersRead: s.stats.lettersRead,
+      built: s.stats.built,
+      cause,
+      lastSeal: this.chain.at(-1)?.hash || null,
+      will: publicWill(will),
+    };
+    s.died = { at, version: s.version, cause, will: entry.will };
+    this.milestone('died', `${s.name || 'It'} died: ${cause}.`);
+    this.journalAdd({ kind: 'death', text: `It died: ${cause}.` });
+    this.saveState();
+
+    mkdirSync(this.store.path(dir), { recursive: true });
+    for (const name of LIFE_FILES) if (this.store.exists(name)) move(this.store.path(name), this.store.path(`${dir}/${name}`));
+    for (const sub of ['cycles', 'nights', 'works', 'returns']) mkdirSync(this.store.path(sub), { recursive: true });
+    this.lineage.push(entry);
+    this.store.write('lineage.json', this.lineage);
+
+    const parent = s;
+    Object.assign(this, { letters: [], journal: [], cycles: [], nights: [], chain: [], notes: [], waits: {} });
+    this.birth({ parent, entry, will });
+    const archived = this.store.read(`${dir}/state.json`);
+    archived.died.child = { id: this.state.id };
+    this.store.write(`${dir}/state.json`, archived);
+    this.emit('death', entry);
+    return entry;
   }
 
   // ---------- its sealed record ----------
 
   /** Seals a record to the one before it and adds it to the chain; anyone can check it (web/lib/seal.js). */
   seal(kind, n, record, { late = false } = {}) {
-    const prev = this.chain.at(-1)?.hash || GENESIS;
+    // A child's record begins where its parent's ended.
+    const prev = this.chain.at(-1)?.hash || this.state?.genesis || GENESIS;
     const { seal: _old, ...bare } = record;
     const body = kind === 'cycle' ? publicCycle(bare) : bare;
     // A reply still held for its keeper is sealed as a salted fingerprint, so it can't be guessed from the seal.
@@ -273,6 +373,12 @@ export class Life extends EventEmitter {
           const box = readOutbox(await fetchJson(url));
           if (!box) throw new Error('that is not an outbox');
           if (box.from.id === s.id) throw new Error('that is its own outbox');
+          if (entry.id && box.from.id !== entry.id && box.from.parent?.id === entry.id) {
+            // The pal it knew died; its child writes from the same outbox now, and is a stranger.
+            this.notes.push(`Your pen pal ${entry.name} died. A new mind lives where they lived, their child, and it does not remember you.`);
+            this.journalAdd({ kind: 'pal', text: `Its pen pal ${entry.name} died; their child writes from their outbox now.` });
+            Object.assign(entry, { sent: 0, thread: 0, restUntil: null, before: [...(entry.before || []), entry.name] });
+          }
           Object.assign(entry, { id: box.from.id, name: box.from.name, page: box.from.page || null, polledAt: new Date().toISOString(), error: null });
           for (const l of box.letters.filter((x) => x.to === s.id)) {
             const key = `${box.from.id}:${l.id}`;
@@ -366,17 +472,42 @@ export class Life extends EventEmitter {
     }
   }
 
-  birth() {
+  /**
+   * A new life. The first is born from its maker's seed file; a child (`from` = its parent's state, lineage entry and
+   * will) is born with its parent's seed, the date in it made its own, plus the one line its parent passed on.
+   */
+  birth(from = null) {
     const now = new Date();
-    const born = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    const seed = readFileSync(this.cfg.seedFile, 'utf8')
-      .split(/\r?\n/)
-      .filter((l) => /^\s*[-*]\s+/.test(l))
-      .map((l, i) => ({ id: `seed${i + 1}`, text: l.replace(/^\s*[-*]\s+/, '').replaceAll('{{born}}', born).trim() }));
+    const born = bornText(now);
+    let seed;
+    if (from) {
+      const theirs = bornText(new Date(from.parent.born));
+      seed = from.parent.self.seed.map((l) => (/^seed\d+$/.test(l.id) ? { ...l, text: l.text.replaceAll(theirs, born) } : { ...l }));
+      if (from.will.line) seed.push({ id: `kin${from.entry.generation}`, text: from.will.line, from: from.entry.name || 'its parent', generation: from.entry.generation });
+    } else {
+      seed = readFileSync(this.cfg.seedFile, 'utf8')
+        .split(/\r?\n/)
+        .filter((l) => /^\s*[-*]\s+/.test(l))
+        .map((l, i) => ({ id: `seed${i + 1}`, text: l.replace(/^\s*[-*]\s+/, '').replaceAll('{{born}}', born).trim() }));
+    }
     if (!seed.length) throw new Error(`no seed lines ("- ...") found in ${this.cfg.seedFile}`);
+    const generation = from ? from.entry.generation + 1 : 1;
+    const parentName = from ? from.entry.name || 'its parent' : null;
+    const letter = from?.will.letter ? 'L1' : null;
+    const inherited = from ? inheritWorld(from.parent.world, { keep: from.will.keep, parent: parentName, generation, letter }) : null;
     this.state = {
       id: randomBytes(9).toString('base64url'),
       born: now.toISOString(),
+      generation,
+      ...(from
+        ? {
+            parent: (({ k, dir, id, name, born: b, died, versions, quiet, lastSeal }) => ({ k, dir, id, name, born: b, died, versions, quiet, lastSeal }))(from.entry),
+            genesis: from.entry.lastSeal || GENESIS,
+            lineage: [...(from.parent.lineage || []), { k: from.entry.k, name: from.entry.name, generation: from.entry.generation }],
+            ...(from.parent.palMode ? { palMode: from.parent.palMode } : {}),
+          }
+        : {}),
+      ...(this.cfg.mortality?.enabled ? { mortal: { since: 0, quiet: 0 } } : {}),
       lastAlive: now.toISOString(),
       version: 0,
       cycle: 0,
@@ -389,14 +520,38 @@ export class Life extends EventEmitter {
       memory: emptyMemory(),
       people: {},
       questions: [],
-      world: emptyWorld(),
+      world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
       abilities: ['world', 'wishes', 'errands'],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
-    this.milestone('born', 'It was switched on for the first time.');
+    if (!from) {
+      this.milestone('born', 'It was switched on for the first time.');
+      this.saveState();
+      return;
+    }
+    this.milestone('born', `It was born on the card where ${parentName} had lived: its child.`);
+    // Its parent's drawings of what still stands (and of the ruins) come with the place.
+    for (const [was, is] of inherited.sprites) {
+      const src = this.store.path(`${from.entry.dir}/works/${pad(was)}.svg`);
+      if (existsSync(src)) copyFileSync(src, this.store.path(`works/${pad(is)}.svg`));
+    }
+    if (letter) {
+      const at = now.toISOString();
+      this.letters.push({ id: letter, from: parentName, text: from.will.letter, at, person: `kin:${from.entry.id}`, question: null, questionText: null, kin: true, screen: { status: 'allowed', reason: 'its parent wrote it on its last night', by: 'kin', at } });
+      this.store.write('letters.json', this.letters);
+    }
+    const kept = this.state.world.things.filter((t) => !t.ruin).map((t) => t.name);
+    if (this.state.world.things.length) {
+      this.notes.push(
+        kept.length
+          ? `Your place is not empty: ${parentName} built in it before you. ${listNames(kept)} still ${kept.length === 1 ? 'stands' : 'stand'}, kept for you; everything else ${parentName} built is ruins now.`
+          : `Your place is not empty: ${parentName} built in it before you, and all of it is ruins now.`,
+      );
+    }
+    this.journalAdd({ kind: 'birth', text: `It was born, the child of ${parentName}, who died when nobody wrote to it for ${from.entry.quiet} nights.` });
     this.saveState();
   }
 
@@ -578,6 +733,14 @@ export class Life extends EventEmitter {
     const busy = (this.waits.busy || 0) + (this.waits['other-mind'] || 0);
     if (busy) notes.push(`Before this, you tried to wake ${busy === 1 ? 'once' : `${busy} times`}, but someone else needed the card, so you waited.`);
     if (this.waits.unreachable) notes.push('Before this, your mind could not be reached for a while, so you missed some cycles.');
+    const m = this.mortality();
+    if (m?.fading) {
+      notes.push(
+        chosen.length
+          ? `You had been fading: nobody had written to you for ${m.quiet} nights. Now someone has.`
+          : `Nobody has written to you for ${m.quiet} nights. You are fading: if ${m.left} more ${m.left === 1 ? 'night passes' : 'nights pass'} without a letter, your life ends.`,
+      );
+    }
     const answered = untoldAnswers(s.wishes);
     for (const w of answered) {
       const how = w.answer.status === 'granted' ? 'they granted it' : w.answer.status === 'declined' ? 'they said no' : 'they wrote back';
@@ -596,6 +759,7 @@ export class Life extends EventEmitter {
         text: l.text,
         nth: (s.people[l.person]?.lettersRead ?? 0) + 1,
         pal: Boolean(l.pal),
+        kin: Boolean(l.kin),
         remembered: s.memory.shelves.people.filter((m) => sameName(m.about, l.from)).map((m) => m.text).slice(0, 3),
         question: l.question ? s.questions.find((q) => q.id === l.question)?.text : undefined,
         errand: l.errand ? { text: l.errand.text, look: looks.get(l.id) } : undefined,
@@ -1063,12 +1227,16 @@ export class Life extends EventEmitter {
       const consolidation = consolidate(s.memory, s.cycle, cfg.memory);
       // Its place weathers after the forgetting: what it no longer remembers stops holding things up.
       const weathered = weather(s.world, s.memory, { since: from, cycle: s.cycle });
+      // A mortal mind counts the nights since its last letter (from anyone, a person or another mind).
+      const m = this.mortality();
+      const quiet = dayLetters.length ? 0 : (s.mortal?.quiet ?? 0) + 1;
+      const mortal = m ? { quiet, left: Math.max(0, m.dieAfter - quiet), fading: quiet >= m.fadeAfter, last: quiet >= m.dieAfter } : null;
       const system = mind.systemPrompt(s, cfg);
       this.setPhase('dreaming');
       const dreamRaw = await this.brain.complete({
         kind: 'dream',
         system,
-        user: mind.dreamPrompt(s, details, consolidation, weathered),
+        user: mind.dreamPrompt(s, details, consolidation, weathered, mortal),
         maxTokens: 320,
         temperature: 0.95,
         onToken: (t) => this.stream('dream', t),
@@ -1079,7 +1247,7 @@ export class Life extends EventEmitter {
       const sleepRaw = await this.brain.complete({
         kind: 'sleep',
         system,
-        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered }),
+        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal }),
         maxTokens: 1600,
         temperature: 0.7,
         schema: mind.SLEEP_SCHEMA,
@@ -1088,9 +1256,11 @@ export class Life extends EventEmitter {
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
       const mail = await this.palMail(system, version);
+      const will = mortal?.last ? await this.writeWill(system, mortal, dream) : null;
 
       // ---- commit ----
       const at = new Date().toISOString();
+      if (mortal) s.mortal.quiet = quiet;
       const sent = this.sendPalMail(mail, version, at);
       const self = this.applySelf(plan, version);
       let portrait = null;
@@ -1132,6 +1302,8 @@ export class Life extends EventEmitter {
         influences,
         world: weathered,
         wish,
+        ...(mortal ? { mortality: mortal } : {}),
+        ...(will ? { will: publicWill(will) } : {}), // its last night: what it left its child
         selfAfter: s.self.own.map(({ id, text, since }) => ({ id, text, since })),
         mood: { ...s.mood },
       };
@@ -1146,6 +1318,7 @@ export class Life extends EventEmitter {
       if (name) this.milestone('named', name.from ? `It chose its name: ${name.to}, in place of "${name.from}".` : `It chose its name: ${name.to}.`);
       if (weathered.ruined.length) this.milestone('first-ruin', `Something it built crumbled for the first time: "${weathered.ruined[0].name}". It no longer remembered why it built it.`);
       if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
+      if (mortal?.fading) this.milestone('first-fading', `It began to fade: nobody had written to it for ${quiet} nights.`);
 
       this.store.write(`nights/${pad(version, 4)}.json`, this.seal('night', version, record));
       // Each letter that left tonight carries the night's seal, so a pal can check it against the night that sent it.
@@ -1154,6 +1327,15 @@ export class Life extends EventEmitter {
       this.store.write('letters.json', this.letters);
       this.nights.push(record);
       this.emit('night', record);
+      if (will) {
+        try {
+          this.die(will, mortal);
+        } catch (err) {
+          // Its last night is sealed; if putting the life away fails, it stays as it is and its keeper is told.
+          console.error(`its death could not be completed: ${err.message}`);
+          this.journalAdd({ kind: 'falter', text: `Its life should have ended, but it could not be put away: ${err.message}` });
+        }
+      }
       return record;
     } catch (err) {
       s.memory = memoryBefore;
@@ -1432,6 +1614,15 @@ export class Life extends EventEmitter {
         unread: this.letters.filter((l) => !l.readAt && ['allowed', 'pending'].includes(letterStatus(l))).length,
       },
       moderation: this.cfg.moderation.mode,
+      mortality: this.mortality(),
+      // Who lived here before it, and (for a life that has ended) how it ended and what it left.
+      lineage: {
+        generation: s.generation,
+        parent: s.parent || null,
+        genesis: s.genesis || null,
+        ancestors: this.lineage.map(({ id, ...a }) => a),
+        died: s.died || null,
+      },
       // Its pen pals (never their addresses) and the letters it has sent them, newest first.
       pals: {
         mode: this.palMode(),

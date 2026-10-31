@@ -82,6 +82,14 @@ const DEFAULTS = {
     open: { perNight: 3, perCycle: 2, threadMax: 0, restNights: 0 }, // per pal; threadMax 0 = no limit
     throttled: { perNight: 1, perCycle: 1, threadMax: 8, restNights: 2 },
   },
+  mortality: {
+    // Off by default. When on, it lives only as long as someone writes to it: after `fadeAfter` nights in a row without
+    // a letter (from a person or another creature) it begins to fade, and after `dieAfter` it dies on its last night,
+    // leaving a will, and its child is born in its place. The life that ended is kept whole in data/ancestors/.
+    enabled: false,
+    fadeAfter: 10,
+    dieAfter: 30,
+  },
   wishes: {
     // Where its keeper can turn a wish into an issue (a pre-filled "new issue" page); "" hides the link.
     issuesUrl: 'https://github.com/nirry-dev/lype/issues/new',

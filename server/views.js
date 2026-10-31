@@ -74,6 +74,7 @@ export function world(life) {
       sprite: spriteSrc(t.sprite),
       from: t.from.filter((id) => readable.has(id)).map((id) => ({ id, from: readable.get(id) })),
       people: t.people,
+      ...(t.builtBy ? { builtBy: t.builtBy } : {}),
       history: t.history,
     })),
     wishes: s.wishes.map(publicWish).reverse(),

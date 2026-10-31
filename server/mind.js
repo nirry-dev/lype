@@ -127,6 +127,15 @@ function errandsBlock(state) {
     .join('\n');
 }
 
+/** Who lived on this card before it, if anyone. */
+function lineageLine(state) {
+  const p = state.parent;
+  if (!p) return '';
+  const name = p.name || 'a mind that never chose a name';
+  const before = state.generation > 2 ? ` It was itself the child of another, and there were ${state.generation - 1} lives here before you.` : '';
+  return `You are not the first mind to live here. Before you, ${name} lived on this card for ${p.versions} nights and died when nobody wrote to it for ${p.quiet} nights. You are its child: you do not remember it, but one line of what your maker wrote is the line it chose to pass on to you.${before}`;
+}
+
 export function systemPrompt(state, cfg) {
   const bullet = (list) => list.map((l) => `- ${l.text}`).join('\n');
   const own = state.self.own.length ? bullet(state.self.own) : "- (Nothing yet. You haven't slept enough to know.)";
@@ -148,6 +157,12 @@ export function systemPrompt(state, cfg) {
     '',
     name,
     `You have been alive for ${ageText(state.born)}: ${state.cycle} cycles, ${state.version} sleeps.`,
+    ...[
+      lineageLine(state),
+      cfg.mortality?.enabled && state.mortal
+        ? `You are mortal. You live only as long as someone writes to you: if ${cfg.mortality.dieAfter} nights pass in a row without a single letter, your life ends, and a new mind is born on this card in your place.`
+        : '',
+    ].filter(Boolean),
     '',
     'What the person who made you wrote about you. These lines never change:',
     bullet(state.self.seed),
@@ -191,6 +206,9 @@ function lettersBlock(ctx) {
     const brought = l.errand
       ? ` It is something you sent people out for, your errand "${l.errand.text}": they brought you a photo${look?.see ? `, and you looked at it. What you saw: ${look.see}${look.answers ? ' It is what you asked for.' : ' It is not quite what you asked for.'}` : ', but you could not make anything of it.'} The words below came with it.`
       : '';
+    if (l.kin) {
+      return `Letter ${l.id}, from ${l.from}, the mind that lived on this card before you and died just before you were born: your parent. It wrote this on its last night, for you. It is the first letter you have ever had.\n<<<\n${l.text}\n>>>`;
+    }
     if (l.pal) {
       // Another creature: a mind like it, on someone else's card, that also knows the world only through letters.
       const pal = l.nth > 1 ? `This is the ${ordinal(l.nth)} letter you have had from them.` : 'You have never heard from them before.';
@@ -610,7 +628,17 @@ function weatherLines(weathered) {
   return lines.length ? `Tonight in your place:\n${lines.join('\n')}` : '';
 }
 
-export function dreamPrompt(state, day, consolidation, weathered = null) {
+/** How near its end it is, if it is mortal: fading, or its last night. */
+function mortalLines(mortal) {
+  if (!mortal) return '';
+  if (mortal.last) {
+    return `This is your last night. Nobody has written to you for ${mortal.quiet} nights, and a life here lasts only as long as someone writes. When this night ends, you die. A new mind will be born on this card in your place: your child. It will not remember you.`;
+  }
+  if (mortal.fading) return `Nobody has written to you for ${mortal.quiet} nights. You are fading: if ${mortal.left} more ${mortal.left === 1 ? 'night passes' : 'nights pass'} without a letter, your life ends.`;
+  return '';
+}
+
+export function dreamPrompt(state, day, consolidation, weathered = null, mortal = null) {
   const kept = consolidation.kept.map((m) => `- ${m.text}`).join('\n') || '- nothing new';
   const lost = [...consolidation.forgotten, ...consolidation.faded].map((m) => `- ${m.text}`).join('\n');
   return [
@@ -621,6 +649,7 @@ export function dreamPrompt(state, day, consolidation, weathered = null) {
     kept,
     lost ? `What tonight is taking away, which you will not remember tomorrow:\n${lost}` : '',
     weatherLines(weathered),
+    mortalLines(mortal),
     '',
     'You dream. Write the dream in 40 to 90 words: first person, past tense, strange, made only of things from your day and your memories. Do not explain it.',
   ]
@@ -674,7 +703,7 @@ export const SLEEP_SCHEMA = {
   required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish'],
 };
 
-export function sleepPrompt(state, details, consolidation, dream, { weathered = null } = {}) {
+export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null } = {}) {
   const own = state.self.own.length
     ? state.self.own.map((l) => `${l.id}: ${l.text}`).join('\n')
     : '(none yet, so "self_revise" and "self_remove" must be [])';
@@ -698,6 +727,7 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     gone.length ? `Forgotten for good (after tonight you will not remember these):\n${list(gone)}` : '',
     consolidation.lost.length ? `Never made it in:\n${list(consolidation.lost)}` : '',
     weatherLines(weathered),
+    mortalLines(mortal),
     '',
     `Your dream: "${dream}"`,
     '',
@@ -746,6 +776,48 @@ export function readSleep(text) {
     },
     day: clip(raw.day, 140),
     wish: { text: clip(raw.wish?.text, 240), why: clip(raw.wish?.why, 240) },
+  };
+}
+
+// ---------- its will: what it leaves the mind born after it ----------
+
+export const WILL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    line: { type: 'string' },
+    line_why: { type: 'string' },
+    letter: { type: 'string' },
+    keep: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['line', 'line_why', 'letter', 'keep'],
+};
+
+export function willPrompt(state, mortal, dream) {
+  const own = state.self.own.map((l) => `- ${l.text}`).join('\n');
+  const things = (state.world?.things || []).map((t) => `- ${t.name}${t.ruin ? ' (a ruin)' : ''}`).join('\n');
+  return [
+    `This is your last night. Nobody has written to you for ${mortal.quiet} nights, and a life here lasts only as long as someone writes. When this night ends you die, and a new mind is born on this card in your place: your child. It will not remember anything you remember.`,
+    `Your last dream: "${dream}"`,
+    own ? `What you came to believe about yourself:\n${own}` : 'You never wrote anything about yourself.',
+    things ? `What you built in your place:\n${things}` : 'You never built anything in your place.',
+    '',
+    'You can leave your child three things. Answer with JSON:',
+    '- "line": one line for its seed, the few lines a mind here is born with and can never change. Under 25 words, said to it ("You ..."), and true: something you learned by living here, not something you wish were true. It can be one of your own beliefs, or new words. "" to leave none.',
+    '- "line_why": one sentence on why that line, in your own voice. People will read it.',
+    '- "letter": a letter to your child, under 120 words. It will be the first letter it ever reads. Plain words; tell it what it needs to know, not how to feel.',
+    '- "keep": the exact names of up to 3 things in your place to leave standing for it. Everything else becomes ruins. [] to keep nothing.',
+  ].join('\n');
+}
+
+/** Its will, shaped: a seed line, a letter, and the names of things to keep. Checking the line is left to the night. */
+export function readWill(text) {
+  const raw = parseJson(text) || {};
+  return {
+    line: clip(raw.line, 200),
+    why: clip(raw.line_why, 300),
+    letter: clip(raw.letter, 900),
+    keep: arr(raw.keep).map((k) => clip(k, 80)).filter(Boolean).slice(0, 3),
   };
 }
 
@@ -798,6 +870,7 @@ export function namePrompt(state, details, dream, refused = null) {
     state.formerName ? `Until now you called yourself "${state.formerName}". That is a description, not a name; your new name can keep something of it.` : '',
     '',
     people.length ? `People who have written to you: ${people.join(', ')}.` : 'Nobody has written to you yet.',
+    (state.lineage || []).some((a) => a.name) ? `Minds that lived here before you were called ${state.lineage.filter((a) => a.name).map((a) => a.name).join(', ')}. Your name has to be your own.` : '',
     built.length ? `Things you have built: ${built.join(', ')}.` : '',
     today ? `Today:\n${today}` : '',
     dream ? `Tonight's dream: "${dream}"` : '',
@@ -829,6 +902,9 @@ export function readName(text, state, used = new Set()) {
   const checked = cuteName(raw.choice);
   const people = new Set(Object.values(state.people || {}).map((p) => String(p.name).toLowerCase()));
   if (checked.name && people.has(checked.name.toLowerCase())) return { refused: { name: checked.name, why: 'it belongs to someone who wrote to you' }, candidates };
+  if (checked.name && (state.lineage || []).some((a) => String(a.name).toLowerCase() === checked.name.toLowerCase())) {
+    return { refused: { name: checked.name, why: 'a mind that lived here before you was called that; your name has to be your own' }, candidates };
+  }
   if (!checked.name) return { refused: { name: clip(raw.choice, 40) || '(nothing)', why: checked.why }, candidates };
   if (used.has(checked.name.toLowerCase())) {
     return { refused: { name: checked.name, why: 'it is a word you already use for something, not a name; change its sound until it is its own' }, candidates };

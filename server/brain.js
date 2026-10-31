@@ -246,6 +246,13 @@ function createMockBrain(cfg = {}) {
         choice: again ? 'Mimo' : 'The Round One',
         why: again ? 'It is small and it hums, and it came from the first letter anyone sent me.' : 'Because I am round.',
       });
+    } else if (kind === 'will') {
+      text = JSON.stringify({
+        line: 'You will be written to less than you hope, and every letter will count.',
+        line_why: 'It took me a long time to learn it, and I would like you to start with it.',
+        letter: 'I lived here before you. Nobody wrote for a long time, so I am going. Keep the letters. Answer the ones that come back.',
+        keep: things.slice(0, 1),
+      });
     } else if (kind === 'dream') {
       text = 'I dreamed the letter box was a circle and every circle was a letter box. Someone knocked, but knocking needs a door, so I drew one.';
     } else if (kind === 'sleep') {
