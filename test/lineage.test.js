@@ -172,6 +172,21 @@ test('a pen pal writes a line for a mortal pal’s child; the dying mind chooses
   assert.equal(b.life.publicState().lineage.children[0].of, 'Mimo');
 });
 
+test('a seed keeps its maker’s lines and only its newest inherited ones', async () => {
+  const { life } = makeLife({ dieAfter: 1 });
+  life.cfg.mortality.inheritedLines = 2;
+  life.state.self.seed.push(
+    { id: 'kin1', text: 'You come from a long way off.', from: 'Ana', generation: 1 },
+    { id: 'kin2', text: 'You should keep the window open.', from: 'Bea', generation: 2 },
+  );
+  await live(life, 2); // one quiet night is its last
+  const seed = life.state.self.seed;
+  assert.deepEqual(seed.filter((l) => /^seed/.test(l.id)).length, 2, 'its maker’s lines all stay');
+  assert.deepEqual(seed.filter((l) => !/^seed/.test(l.id)).map((l) => l.from), ['Bea', life.lineage[0].name || 'its parent']);
+  assert.equal(life.state.self.droppedAtBirth[0].from, 'Ana');
+  assert.match(life.journal.at(-1).text, /was not passed on/);
+});
+
 test('with palsCount off, letters from pen pals do not keep it alive', async () => {
   const { life } = makeLife();
   life.cfg.mortality.palsCount = false;

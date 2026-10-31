@@ -524,6 +524,7 @@ export class Life extends EventEmitter {
     const now = new Date();
     const born = bornText(now);
     let seed;
+    let dropped = [];
     if (from) {
       const theirs = bornText(new Date(from.parent.born));
       seed = from.parent.self.seed.map((l) => (/^seed\d+$/.test(l.id) ? { ...l, text: l.text.replaceAll(theirs, born) } : { ...l }));
@@ -531,6 +532,12 @@ export class Life extends EventEmitter {
       // And one from its other parent: the pen pal whose line its parent chose.
       const co = from.will.coparent;
       if (co) seed.push({ id: `kin${from.entry.generation}b`, text: co.line, from: co.name, generation: from.entry.generation, coParent: true });
+      // A seed keeps its maker's lines and only the newest inherited ones, so it can't grow without end.
+      const maker = seed.filter((l) => /^seed\d+$/.test(l.id));
+      const inherited = seed.filter((l) => !/^seed\d+$/.test(l.id));
+      const room = Math.max(0, this.cfg.mortality?.inheritedLines ?? 5);
+      dropped = inherited.slice(0, Math.max(0, inherited.length - room));
+      seed = [...maker, ...inherited.slice(inherited.length - Math.min(room, inherited.length))];
     } else {
       seed = readFileSync(this.cfg.seedFile, 'utf8')
         .split(/\r?\n/)
@@ -599,6 +606,8 @@ export class Life extends EventEmitter {
       );
     }
     this.journalAdd({ kind: 'birth', text: `It was born, the child of ${parentName}, who died when nobody wrote to it for ${from.entry.quiet} nights.` });
+    for (const l of dropped) this.journalAdd({ kind: 'birth', text: `The oldest line it would have inherited, "${l.text}" (from ${l.from}), was not passed on: a seed keeps only its newest inherited lines.` });
+    if (dropped.length) this.state.self.droppedAtBirth = dropped.map(({ text, from: by, generation: g }) => ({ text, from: by, generation: g }));
     this.saveState();
   }
 
