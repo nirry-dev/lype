@@ -1,4 +1,5 @@
 // The viewer: what it is doing right now, its whole journey, who it has become, and the letter box.
+import { createAtlas } from './atlas.js';
 import { cleanSvg } from './lib/svgclean.js';
 import { createPresence, moodColor } from './presence.js';
 
@@ -149,7 +150,7 @@ if (new URLSearchParams(location.search).has('embed')) document.documentElement.
 
 function snapshotFile(path) {
   const route = path.replace(/^\/?api\//, '').split('?')[0];
-  if (['state', 'journey', 'works', 'life', 'letters'].includes(route)) return `${SNAPSHOT}${route}.json`;
+  if (['state', 'journey', 'works', 'life', 'atlas', 'letters'].includes(route)) return `${SNAPSHOT}${route}.json`;
   const m = /^cycle\/(\d+|latest)$/.exec(route);
   if (m) return `${SNAPSHOT}cycles/${pad6(m[1] === 'latest' ? app.state.cycle : m[1])}.json`;
   return null;
@@ -227,13 +228,13 @@ function connect() {
   });
   es.addEventListener('cycle', async () => {
     [app.latest, app.state] = await Promise.all([api('/api/cycle/latest'), api('/api/state')]);
-    invalidate('journey', 'works', 'letters', 'you');
+    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData');
     refreshView();
   });
   es.addEventListener('night', async (e) => {
     const night = JSON.parse(e.data);
     app.state = await api('/api/state');
-    invalidate('journey', 'works', 'letters', 'you');
+    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData');
     app.mindVersion = null;
     toast(`It became version ${night.n}: “${night.release?.title || 'untitled'}”`);
     refreshView();
@@ -308,12 +309,13 @@ function renderChrome() {
 
 // ---------- router ----------
 
-const VIEWS = { now: renderNow, replay: renderReplay, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters };
+const VIEWS = { now: renderNow, replay: renderReplay, atlas: renderAtlas, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters };
 
 function route() {
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
   const next = VIEWS[path] ? path : 'now';
   if (next === 'replay') stopReplay(); // a new address (another cycle, another speed) starts the replay over
+  if (next === 'atlas') stopAtlas();
   const changed = next !== app.view;
   app.view = next;
   app.params = new URLSearchParams(query || '');
@@ -333,8 +335,10 @@ async function render() {
     app.presence = null;
   }
   if (app.view !== 'replay') stopReplay();
+  if (app.view !== 'atlas') stopAtlas();
   // The replay drives itself; live updates must not restart it.
   if (app.view === 'replay' && app.renderedView === 'replay' && app.replay) return;
+  if (app.view === 'atlas' && app.renderedView === 'atlas' && app.atlas) return;
   // A live update re-renders the view the reader is in; keep their place.
   const again = app.renderedView === app.view;
   const y = window.scrollY;
@@ -1041,6 +1045,16 @@ function svgSteps(n) {
 }
 
 document.addEventListener('keydown', (e) => {
+  if (app.view === 'atlas' && app.atlas && !e.target.closest('input, textarea, select, button')) {
+    const A = app.atlas;
+    if (e.key === ' ') {
+      e.preventDefault();
+      A.playing ? A.pause() : A.play();
+    } else if (e.key === 'ArrowRight') A.seek(A.t + 1);
+    else if (e.key === 'ArrowLeft') A.seek(A.t - 1);
+    else if (e.key === 'Escape' && A.selected) A.select(null);
+    return;
+  }
   if (app.view !== 'replay' || !app.replay || e.target.closest('input, textarea, select, button')) return;
   if (e.key === ' ') {
     e.preventDefault();
@@ -1048,6 +1062,325 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'ArrowRight') jumpCycle(1);
   else if (e.key === 'ArrowLeft') jumpCycle(-1);
 });
+
+// ---------- atlas ----------
+// Its whole mind on one map (atlas.js draws it). Around the map: the controls, a running account of what is
+// happening, and an inspector that follows any node's threads back to the letters and nights that made it.
+
+const ATLAS_SPEEDS = [1, 2, 4];
+const FEED_COLOR = {
+  born: 'var(--text-2)',
+  letter: 'var(--human)',
+  reply: 'var(--mind)',
+  work: 'var(--mind-2)',
+  rest: 'var(--faint)',
+  night: 'var(--night)',
+  memory: 'var(--kept)',
+  forgot: 'var(--gone)',
+  belief: 'var(--night)',
+  unbelief: 'var(--faint)',
+  portrait: 'var(--human)',
+  name: 'var(--paper)',
+  influence: 'var(--human)',
+  version: 'var(--night)',
+};
+
+function stopAtlas() {
+  if (!app.atlas) return;
+  app.atlas.destroy();
+  app.atlas = null;
+}
+
+async function renderAtlas(current) {
+  app.atlasData ??= await api('/api/atlas');
+  if (!current()) return;
+  stopAtlas();
+  const data = app.atlasData;
+  if (!data.cycles.length) {
+    fill($('#view'), intro('Atlas of a mind', null), h('p', { class: 'empty' }, 'Nothing to map yet. It has not lived a whole cycle.'));
+    return;
+  }
+  const canvas = h('canvas', { class: 'atlas-canvas', role: 'img', 'aria-label': 'A map of its mind through time: its beliefs, memories, the people who wrote to it and what their letters changed' });
+  const tip = h('div', { class: 'atlas-tip', hidden: true });
+  const where = h('div', { class: 'atlas-where' });
+  const feed = h('ol', { class: 'atlas-feed' });
+  const inspect = h('div', { class: 'atlas-inspect' });
+  const slider = h('input', { type: 'range', min: 0, max: 1, step: 0.001, value: 0, 'aria-label': 'Moment in its life' });
+  const play = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => (app.atlas.playing ? app.atlas.pause() : app.atlas.play()) }, 'Pause');
+  const pos = h('span', { class: 'meta' });
+  const marks = h('div', { class: 'atlas-marks', 'aria-hidden': 'true' });
+  const speeds = h(
+    'span',
+    { class: 'speeds', role: 'group', 'aria-label': 'Speed' },
+    ATLAS_SPEEDS.map((x) => h('button', { class: 'btn speed', type: 'button', 'data-speed': x, onclick: () => atlasSpeed(x) }, `${x}×`)),
+  );
+  const legend = h(
+    'div',
+    { class: 'atlas-legend' },
+    [
+      ['var(--paper)', 'ring', 'lines its maker wrote'],
+      ['var(--night)', '', 'beliefs it wrote'],
+      ['var(--human)', 'ring', 'its picture of people'],
+      ['var(--human)', '', 'people'],
+      ['var(--mind)', '', 'memories: what happened'],
+      ['var(--curious)', '', 'the world outside'],
+      ['var(--faint)', '', 'forgotten'],
+      ['var(--human)', 'line', 'a letter changed this'],
+      ['var(--gone)', 'line', 'pushed out'],
+    ].map(([c, k, t]) => h('span', {}, h('i', { class: k, style: `--c:${c}` }), t)),
+  );
+
+  fill(
+    $('#view'),
+    intro(
+      'Atlas of a mind',
+      'Everything it has become, on one map. At the centre, the lines its maker wrote; around them, the beliefs it wrote itself; then its three shelves of memory, drifting outward as they fade; then the dust of what it forgot. On the rim are the people who wrote to it. Watch letters fall in, nights rewrite it, and amber threads appear where a letter changed something. Point at anything; click it to follow its threads.',
+    ),
+    h(
+      'div',
+      { class: 'atlas' },
+      h('section', { class: 'card atlas-stage' }, canvas, where, tip, legend),
+      h(
+        'aside',
+        { class: 'atlas-side' },
+        h('div', { class: 'card' }, cardHead('Looking at', null), inspect),
+        h('div', { class: 'card' }, cardHead('What happened', null), feed),
+      ),
+      h('section', { class: 'card atlas-controls' }, h('div', { class: 'rp-row' }, play, pos, speeds), h('div', { class: 'atlas-track' }, marks, slider)),
+    ),
+  );
+
+  let shown = -1;
+  const A = createAtlas(canvas, data, {
+    onTime(t, playing) {
+      if (document.activeElement !== slider) slider.value = String(t);
+      play.textContent = playing ? 'Pause' : t >= A.end ? '↺ Again' : '▶ Play';
+      const w = A.where(t);
+      const night = w.night;
+      where.textContent = night ? `Night ${night.v} · becoming v${night.v}` : `Cycle ${w.cycle} · v${w.version}${w.rec?.part ? ` · ${w.rec.part}` : ''}`;
+      pos.textContent = night ? `night ${night.v} of ${data.nights.length}` : `cycle ${w.cycle} of ${data.end}`;
+      const count = A.events.filter((e) => e.t <= t).length;
+      if (count !== shown) {
+        shown = count;
+        fillAtlasFeed(feed, A.events.slice(0, count));
+        if (A.selected) fillAtlasInspect(inspect, A.selected);
+      }
+    },
+    onHover(info, x, y) {
+      if (!info) {
+        tip.hidden = true;
+        return;
+      }
+      fill(tip, h('div', { class: 'k' }, info.kind), h('div', { class: 't' }, info.text));
+      tip.hidden = false;
+      const box = canvas.getBoundingClientRect();
+      const left = x + 16 + tip.offsetWidth > box.width ? x - 16 - tip.offsetWidth : x + 16;
+      const top = y + 16 + tip.offsetHeight > box.height ? y - 12 - tip.offsetHeight : y + 16;
+      tip.style.transform = `translate(${Math.max(6, left)}px, ${Math.max(6, top)}px)`;
+    },
+    onSelect(id) {
+      fillAtlasInspect(inspect, id);
+    },
+  });
+  app.atlas = A;
+  slider.max = String(A.end);
+  for (const n of data.nights) marks.append(h('i', { style: `--c:var(--night);--x:${A.timeline.ns(n.cycle) / A.end}`, title: `Night ${n.v}` }));
+  for (const l of data.letters) marks.append(h('i', { class: 'short', style: `--c:var(--human);--x:${(A.timeline.cs(l.cycle) + 0.08) / A.end}`, title: `${l.from}'s letter` }));
+  slider.addEventListener('input', () => {
+    A.pause();
+    A.seek(Number(slider.value));
+  });
+
+  const wanted = Number(app.params.get('speed') || local?.getItem('iterant.atlasSpeed'));
+  atlasSpeed(ATLAS_SPEEDS.includes(wanted) ? wanted : 1, false);
+  fillAtlasInspect(inspect, null);
+  const at = app.params.get('at');
+  if (at === 'end' || REDUCED) {
+    A.seek(A.end);
+    A.pause();
+  } else {
+    A.seek(Number(at) || 0);
+    A.play();
+  }
+  if (app.params.get('focus')) A.select(app.params.get('focus'));
+}
+
+function atlasSpeed(x, remember = true) {
+  app.atlas?.setSpeed(x);
+  if (remember) local?.setItem('iterant.atlasSpeed', String(x));
+  for (const b of $$('.atlas-controls .speed')) b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === x));
+}
+
+function fillAtlasFeed(feed, events) {
+  fill(
+    feed,
+    events
+      .slice(-9)
+      .reverse()
+      .map((e) =>
+        h(
+          'li',
+          { 'data-ref': e.ref || null, onclick: e.ref ? () => app.atlas?.select(e.ref) : null },
+          h('i', { style: `--c:${FEED_COLOR[e.kind] || 'var(--dim)'}` }),
+          h('span', {}, e.text),
+        ),
+      ),
+  );
+}
+
+/** A clickable name for anything on the map. */
+function atlasLink(id, text) {
+  return h('button', { class: 'atlas-link', type: 'button', onclick: () => app.atlas?.select(id) }, text);
+}
+function atlasName(id) {
+  const A = app.atlas;
+  const clip = (s, n = 70) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+  if (id === 'portrait') return 'its picture of people';
+  if (id === 'name') return 'its name';
+  const b = A.lookup.belief.get(id);
+  if (b) return `belief “${clip(b.texts.at(-1).text)}”`;
+  const m = A.lookup.memory.get(id);
+  if (m) return `memory “${clip(m.text)}”`;
+  const l = A.lookup.letter.get(id);
+  if (l) return `${l.from}'s letter (cycle ${l.cycle})`;
+  return id;
+}
+
+function fillAtlasInspect(el, id) {
+  const A = app.atlas;
+  if (!A) return;
+  const d = A.data;
+  const L = A.lookup;
+  const vAt = (c) => d.nights.find((n) => n.cycle === c)?.v ?? '?';
+  const into = (to) => [...new Set(d.threads.filter((t) => t.kind === 'influence' && t.to === to).map((t) => t.from))].map((x) => L.letter.get(x)).filter(Boolean);
+  const shapedBy = (to) => {
+    const ls = into(to);
+    return ls.length
+      ? h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, 'Shaped by'), h('ul', { class: 'atlas-list' }, ls.map((l) => h('li', {}, atlasLink(l.id, `${l.from}, cycle ${l.cycle}`), h('span', { class: 'atlas-quote' }, ` “${l.text}”`)))))
+      : null;
+  };
+  const head = (kind, text, cls = 'voice') => [h('div', { class: 'atlas-kind' }, kind), text ? h('p', { class: cls }, text) : null];
+
+  if (!id) {
+    fill(
+      el,
+      h('p', { class: 'atlas-hint' }, 'Point at anything on the map to read it. Click it to see where it came from: the letters that shaped it, the nights that rewrote it, and what it pushed out of the way.'),
+      h('p', { class: 'meta' }, `${d.cycles.length} cycles · ${d.nights.length} nights · ${d.people.length} people · ${d.letters.length} letters · ${d.memories.length} memories kept, ${d.memories.filter((m) => m.gone != null).length} since forgotten`),
+    );
+    return;
+  }
+
+  if (id === 'core') {
+    const w = A.where();
+    const c = w.rec;
+    fill(
+      el,
+      head(d.name ? `${d.name}, itself` : 'Itself', c ? c.diary : null),
+      h('p', { class: 'meta' }, `Version ${w.version} · cycle ${w.cycle}${c?.part ? ` · ${c.part}` : ''}`),
+      c?.mood ? h('div', { class: 'meters' }, FEELINGS.map((f) => meter(f, c.mood[f]))) : null,
+      c ? h('a', { class: 'btn', href: `#/replay?from=${c.n}` }, '▶ Replay this cycle') : null,
+    );
+    return;
+  }
+
+  const seed = d.seed.find((s) => s.id === id);
+  if (seed) {
+    fill(el, head('A line its maker wrote', seed.text), h('p', { class: 'meta' }, 'It can never change these lines. When it reaches for one at night, the drift guard refuses.'));
+    return;
+  }
+
+  const b = L.belief.get(id);
+  if (b) {
+    const t = A.where().cycleTime;
+    const now = [...b.texts].reverse().find((x) => x.from <= t) || b.texts[0];
+    fill(
+      el,
+      head(b.gone != null && A.t >= A.timeline.ns(b.gone) + 0.7 ? 'A belief it let go of' : 'A belief it wrote about itself', now.text),
+      b.because ? h('p', { class: 'meta' }, `Why: ${b.because}`) : null,
+      b.texts.length > 1
+        ? h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, 'Every wording'), h('ol', { class: 'atlas-list' }, b.texts.map((x) => h('li', { class: x === now ? 'now' : null }, h('b', {}, `v${vAt(x.from)} `), x.text))))
+        : h('p', { class: 'meta' }, `Written the night it became v${vAt(b.born)}.`),
+      b.gone != null ? h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, `Let go in v${vAt(b.gone)}`), h('p', { class: 'voice' }, b.why)) : null,
+      shapedBy(b.id),
+    );
+    return;
+  }
+
+  if (id === 'portrait') {
+    fill(
+      el,
+      head('Its picture of what people are', null),
+      h('ol', { class: 'atlas-list' }, d.portrait.map((p) => h('li', {}, h('b', {}, `v${vAt(p.from)} `), h('span', { class: 'voice' }, p.text), p.changed ? h('div', { class: 'meta' }, `What changed: ${p.changed}`) : null))),
+      shapedBy('portrait'),
+    );
+    return;
+  }
+
+  if (id === 'name') {
+    fill(el, head('Its name', null), h('ol', { class: 'atlas-list' }, d.names.map((n) => h('li', {}, h('b', {}, `${n.name} `), `in v${vAt(n.from)}`, n.why ? h('div', { class: 'meta' }, n.why) : null))), shapedBy('name'));
+    return;
+  }
+
+  const m = L.memory.get(id);
+  if (m) {
+    const s = A.strength(m.id);
+    const gone = m.gone != null && A.t >= A.timeline.ns(m.gone) + 0.5;
+    const pushed = d.memories.filter((x) => x.by === m.id);
+    fill(
+      el,
+      head(gone ? 'Forgotten' : `A memory · ${SHELF_TITLE[m.shelf] || m.shelf}`, m.text),
+      gone ? null : h('div', { class: 'meter' }, h('span', {}, 'Strength'), h('div', { class: 'meter-bar' }, h('span', { style: `width:${Math.round(s * 100)}%;--c:var(--kept)` })), h('span', { class: 'meter-val' }, s.toFixed(2))),
+      h(
+        'p',
+        { class: 'meta' },
+        `Noticed in cycle ${m.born}; shelved the night it became v${vAt(m.kept)}. `,
+        m.touches.length ? `Brought back ${m.touches.length} time${m.touches.length === 1 ? '' : 's'} (cycle ${m.touches.join(', ')}).` : 'Never brought back.',
+      ),
+      m.gone != null
+        ? h(
+            'div',
+            { class: 'atlas-block' },
+            h('div', { class: 'label' }, `Forgotten in v${vAt(m.gone)}`),
+            m.by ? h('p', {}, 'Pushed out by ', atlasLink(m.by, atlasName(m.by)), '.') : h('p', {}, 'It faded: nothing brought it back in time.'),
+          )
+        : null,
+      pushed.length ? h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, 'To make room it pushed out'), h('ul', { class: 'atlas-list' }, pushed.map((x) => h('li', {}, atlasLink(x.id, atlasName(x.id)))))) : null,
+      shapedBy(m.id),
+    );
+    return;
+  }
+
+  const p = L.person.get(id);
+  if (p) {
+    const ls = p.letters.map((x) => L.letter.get(x)).filter(Boolean);
+    const changed = [...new Set(d.threads.filter((t) => t.kind === 'influence' && p.letters.includes(t.from)).map((t) => t.to))];
+    const about = d.memories.filter((x) => x.about && x.about.trim().toLowerCase() === p.name.trim().toLowerCase());
+    fill(
+      el,
+      head('Someone who wrote to it', null),
+      h('div', { class: 'atlas-person' }, p.name),
+      h('p', { class: 'meta' }, `First read in cycle ${p.first} · ${ls.length} letter${ls.length === 1 ? '' : 's'}`),
+      h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, 'Letters'), h('ul', { class: 'atlas-list' }, ls.map((l) => h('li', {}, atlasLink(l.id, `Cycle ${l.cycle}`), h('span', { class: 'atlas-quote' }, ` “${l.text}”`))))),
+      changed.length ? h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, 'What their letters changed'), h('ul', { class: 'atlas-list' }, changed.map((x) => h('li', {}, atlasLink(x, atlasName(x)))))) : h('p', { class: 'meta' }, 'Nothing they wrote has changed it yet.'),
+      about.length ? h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, 'What it remembers of them'), h('ul', { class: 'atlas-list' }, about.map((x) => h('li', { class: x.gone != null ? 'gone' : null }, atlasLink(x.id, x.text))))) : null,
+    );
+    return;
+  }
+
+  const l = L.letter.get(id);
+  if (l) {
+    const changed = [...new Set(d.threads.filter((t) => t.kind === 'influence' && t.from === l.id).map((t) => t.to))];
+    fill(
+      el,
+      head(`A letter, read in cycle ${l.cycle}`, null),
+      h('div', { class: 'paper atlas-paper' }, h('div', { class: 'from' }, 'From ', atlasLink(l.person, l.from)), l.question ? h('div', { class: 'from' }, `answering “${l.question}”`) : null, h('p', { class: 'body' }, l.text)),
+      l.reply ? h('div', { class: 'reply-block' }, h('span', { class: 'label' }, 'It wrote back'), h('p', { class: 'voice' }, l.reply)) : null,
+      changed.length ? h('div', { class: 'atlas-block' }, h('div', { class: 'label' }, 'What this letter changed'), h('ul', { class: 'atlas-list' }, changed.map((x) => h('li', {}, atlasLink(x, atlasName(x)))))) : null,
+    );
+    return;
+  }
+  fill(el, h('p', { class: 'meta' }, 'Nothing here.'));
+}
 
 // ---------- journey ----------
 

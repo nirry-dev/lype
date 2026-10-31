@@ -135,6 +135,7 @@ async function api(req, res, url) {
 
   if (path === '/api/works' && method === 'GET') return json(res, 200, views.works(life, store));
   if (path === '/api/life' && method === 'GET') return json(res, 200, views.replay(life, store));
+  if (path === '/api/atlas' && method === 'GET') return json(res, 200, views.atlas(life, store));
 
   if (path === '/api/letters' && method === 'GET') {
     return json(res, 200, views.letters(life, visitorId(url.searchParams.get('visitor'))));

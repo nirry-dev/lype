@@ -1,6 +1,6 @@
 {
   "name": "iterant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "A small autonomous mind that lives on one graphics card, knows the world only through the letters people leave it, and becomes a new version of itself every night.",
   "license": "MIT",

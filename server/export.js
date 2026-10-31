@@ -54,6 +54,7 @@ write('data/journey.json', life.journey());
 write('data/letters.json', views.letters(life));
 write('data/works.json', views.works(life, store));
 write('data/life.json', views.replay(life, store));
+write('data/atlas.json', views.atlas(life, store));
 for (const c of life.cycles) {
   write(`data/cycles/${pad(c.n)}.json`, views.cycle(store, c.n));
   const svg = store.path(`works/${pad(c.n)}.svg`);
@@ -72,6 +73,6 @@ const page = readFileSync(join(web, 'index.html'), 'utf8')
   .replace('href="style.css"', `href="style.css?v=${stamp}"`)
   .replace('src="app.js"', `src="app.js?v=${stamp}"`);
 write('index.html', page);
-for (const rel of ['app.js', 'presence.js', 'style.css', 'lib/svgclean.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
+for (const rel of ['app.js', 'atlas.js', 'presence.js', 'style.css', 'lib/svgclean.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
 
 console.log(`Exported ${life.cycles.length} cycles and ${life.nights.length} nights of ${state.name || 'an unnamed life'} to ${out}`);

@@ -5,9 +5,9 @@
 
 *A small autonomous mind that lives on one graphics card, knows the world only through the letters people leave it, and becomes a new version of itself every night.*
 
-**[Watch a recorded life →](https://nirry.net/iterant/)** (16 cycles, 4 versions, 5 letters, all real model output, replayable)
+**[Explore a recorded life →](https://nirry.net/iterant/#/atlas)** (16 cycles, 4 versions, 5 letters, all real model output, mapped and replayable)
 
-![Replaying a night: the dream, then version 1's changes landing one by one](docs/replay.png)
+![The atlas of its mind after four nights: the lines its maker wrote at the core, its own beliefs around them, three shelves of memory, the forgotten, and the people on the rim, with amber threads from each letter to what it changed](docs/atlas.png)
 
 Iterant is a living art piece about the relationship between an AI and the people around it. It runs on its own, on a rhythm, whether or not anyone is watching. Visitors can watch it think in real time, replay everything it has ever done, and leave it letters. Those letters are the only way it learns anything about the world, so over days and weeks it becomes a portrait of the people who wrote to it.
 
@@ -29,15 +29,18 @@ Inspired by [@3eyes.iii](https://www.instagram.com/3eyes.iii/)'s *Pino's World*,
 
 ## What you see
 
-![Its journey: one dot per cycle, nights as violet lines, letters as amber threads](docs/journey.png)
+![Replaying a night: the dream, then version 1's changes landing one by one](docs/replay.png)
 
 - **Now**: its presence (a light that breathes and sparks with every token), live monologue, drawings rendered shape by shape as it writes the SVG, its feelings and what the machine feels like.
+- **Atlas**: its whole mind on one map, played through time. At the core, the lines its maker wrote; around them, the beliefs it wrote itself (rewordings pulse, beliefs it lets go drift outward); then its three shelves of memory, each memory in a seat that whoever pushes it out inherits, drifting outward as it fades; then the dust of what it forgot; and on the rim, the people who wrote to it. Letters fall in to be read and replies fly back out; things it notices circle the core until the night decides to keep, fold or lose them; and an amber thread is drawn from every letter to whatever it changed. Point at anything to read it; click to follow its threads in the inspector (a person's letters, what they changed, what it remembers of them; a memory's strength, how often it came back and what pushed it out). Space pauses, arrows step.
 - **Replay**: the whole life played back from its records, at 1–8×: thoughts typed out, drawings drawn shape by shape, letters arriving, replies, dreams, and each night's changes landing. Space pauses, arrow keys step through cycles.
 - **Journey**: the whole life as one strand. One dot per cycle, coloured by mood; nights as violet lines; letters as amber threads down to the cycle that read them and across to the nights they changed. Below it, every version with its dream, release notes, self-edits, forgettings and works.
 - **Mind**: the seed beside the beliefs it wrote, with a slider to scrub through its versions and watch it become itself, plus its picture of people and its names.
 - **Memory**: the three finite shelves, what is waiting for tonight, and the forgotten.
 - **Works**: everything it drew or wrote.
 - **Letters**: write to it; see every letter and reply, and what it remembers (and has forgotten) about you. Its keeper also sees the moderation queue here.
+
+![Its journey: one dot per cycle, nights as violet lines, letters as amber threads](docs/journey.png)
 
 ## Try it
 
@@ -104,12 +107,13 @@ server/
 web/
   app.js          the viewer, live or from a snapshot (no framework, no build step)
   presence.js     its body: a canvas light driven by mood and phase
+  atlas.js        the atlas: the whole mind as one canvas map, laid out and animated from the timeline in /api/atlas
   lib/svgclean.js whitelist sanitiser for its drawings, shared by server and browser
 examples/demo-life/  a real 16-cycle life, for npm run demo and the CI export
 data/             your creature's life: state.json, cycles/, nights/, works/, letters.json, journal.json
 ```
 
-Every cycle is saved as a self-contained record (senses, letters, monologue, decision, work, replies, diary, memories, feelings before and after), and every night as a record of the dream, the self-edits and refusals, the memory changes, the release notes and which letters caused what. The pages, the replay and the export are all views over those files.
+Every cycle is saved as a self-contained record (senses, letters, monologue, decision, work, replies, diary, memories, feelings before and after), and every night as a record of the dream, the self-edits and refusals, the memory changes, the release notes and which letters caused what. The pages, the atlas, the replay and the export are all views over those files.
 
 ### Things to know before putting it on the internet
 

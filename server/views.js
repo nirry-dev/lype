@@ -54,3 +54,158 @@ export function replay(life, store) {
   }
   return { born: life.state.born, name: life.state.name, cycles, nights: life.nights, milestones: life.state.milestones };
 }
+
+/**
+ * The whole mind as one timeline, for the atlas: every belief, memory, person and letter with when it appeared,
+ * changed and went, plus the threads between them (which letter changed what, which memory pushed out which).
+ * Times are cycle numbers; a night happens at the end of the cycle it follows.
+ */
+export function atlas(life, store) {
+  const s = life.state;
+  const nights = life.nights.map((n) => ({ v: n.n, cycle: n.cycles[1], title: n.release?.title || n.day || '', day: n.day || '' }));
+  const atNight = (v) => nights.find((n) => n.v === v)?.cycle ?? null;
+  const nightAfter = (cycle) => nights.find((n) => n.cycle >= cycle)?.cycle ?? null;
+
+  // Per-cycle facts from the records: when old memories were brought back, how it felt, what it made, what it noticed.
+  const touches = {};
+  const cycles = [];
+  const day = [];
+  for (const c of life.cycles) {
+    const rec = cycle(store, c.n);
+    if (!rec) continue;
+    for (const id of rec.reinforced || []) (touches[id] ??= []).push(c.n);
+    const w = rec.work;
+    cycles.push({
+      n: c.n,
+      v: rec.version,
+      at: rec.startedAt,
+      part: rec.senses?.partOfDay || '',
+      mood: rec.moodAfter || rec.feelings || null,
+      action: rec.action?.kind || 'rest',
+      work: w && !w.failed ? { kind: w.kind, title: w.title || '', text: w.kind === 'question' ? w.text : undefined, src: w.kind === 'drawing' ? `works/${pad(c.n)}.svg` : undefined } : null,
+      diary: rec.diary || '',
+    });
+    for (const m of rec.remembered || []) day.push({ cycle: c.n, shelf: m.shelf, text: m.text });
+  }
+
+  // Memories: everything still on a shelf and everything it has forgotten, each with its whole life.
+  const memories = [];
+  const shelved = Object.entries(s.memory.shelves).flatMap(([shelf, list]) => list.map((m) => ({ ...m, shelf })));
+  for (const m of [...shelved, ...s.memory.forgotten]) {
+    memories.push({
+      id: m.id,
+      text: m.text,
+      shelf: m.shelf,
+      about: m.about || '',
+      born: m.born,
+      kept: nightAfter(m.born) ?? m.born,
+      weight: m.weight,
+      touches: touches[m.id] || [],
+      because: m.because || [],
+      gone: m.forgottenAt ?? null,
+      how: m.how || null,
+      by: m.by || null,
+    });
+  }
+
+  // What became of each thing it noticed during the day: kept as a memory, folded into one, or lost at night.
+  // The same words can be noticed twice in a day, so each outcome is used up by the first thing it matches.
+  const outcomes = new Map(life.nights.map((n) => [n.cycles[1], { kept: [...(n.memory?.kept || [])], merged: [...(n.memory?.merged || [])] }]));
+  const take = (list, ok) => {
+    const i = list.findIndex(ok);
+    return i < 0 ? null : list.splice(i, 1)[0];
+  };
+  const sparks = day.map((d) => {
+    const night = nightAfter(d.cycle);
+    const o = outcomes.get(night);
+    if (!o) return { ...d, night, fate: 'waiting' };
+    const kept = take(o.kept, (k) => k.text === d.text && k.born === d.cycle);
+    if (kept) return { ...d, night, fate: 'kept', into: kept.id };
+    const merged = take(o.merged, (k) => k.text === d.text);
+    if (merged) return { ...d, night, fate: 'merged', into: merged.into };
+    return { ...d, night, fate: 'lost' };
+  });
+  // A memory shelved at night, or folded into at night, was touched then.
+  for (const sp of sparks) if (sp.fate === 'merged') (touches[sp.into] ??= []).push(sp.night);
+  const shelvedAt = new Map(life.nights.flatMap((n) => (n.memory?.kept || []).map((k) => [k.id, n.cycles[1]])));
+  for (const m of memories) {
+    m.kept = shelvedAt.get(m.id) ?? m.kept;
+    m.touches = [...new Set(touches[m.id] || [])].sort((a, b) => a - b);
+  }
+
+  // Beliefs: the lines it wrote about itself, each with every wording it has had.
+  const beliefs = [...s.self.own, ...s.self.gone].map((b) => {
+    const texts = [];
+    let from = atNight(b.since) ?? 0;
+    for (const old of b.history || []) {
+      const until = atNight(old.until) ?? from;
+      texts.push({ text: old.text, from, until });
+      from = until;
+    }
+    const gone = b.removedIn ? atNight(b.removedIn) : null;
+    texts.push({ text: b.text, from, until: gone });
+    return { id: b.id, born: atNight(b.since) ?? 0, texts, because: b.because || '', gone, why: b.why || '' };
+  });
+  beliefs.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+
+  const portrait = [...(s.portrait?.history || []), ...(s.portrait?.text ? [{ version: s.portrait.since, text: s.portrait.text }] : [])]
+    .map((p) => ({ from: atNight(p.version) ?? 0, text: p.text, changed: p.changed || '' }))
+    .filter((p, i, all) => all.findIndex((q) => q.from === p.from) === i);
+  const names = (s.names || []).map((n) => ({ name: n.name, from: atNight(n.version) ?? 0, why: n.why || '' }));
+
+  // People and their letters. Visitors are numbered here; their keys never leave the server.
+  const people = [];
+  const personOf = new Map();
+  const letters = [];
+  for (const l of life.letters) {
+    if (letterStatus(l) !== 'allowed' || !l.readCycle) continue;
+    if (!personOf.has(l.person)) {
+      personOf.set(l.person, `p${people.length + 1}`);
+      people.push({ id: `p${people.length + 1}`, name: l.from, first: l.readCycle, letters: [] });
+    }
+    const p = people.find((x) => x.id === personOf.get(l.person));
+    p.name = l.from;
+    p.letters.push(l.id);
+    const pub = publicLetter(l);
+    letters.push({ id: l.id, person: p.id, from: l.from, cycle: l.readCycle, text: pub.text, reply: pub.reply?.text || null, question: pub.questionText });
+  }
+
+  // Threads: a letter that changed something, and a memory that pushed another off its shelf.
+  const textIs = (t) => (x) => x.text === t;
+  const threads = [];
+  for (const n of life.nights) {
+    const at = n.cycles[1];
+    for (const inf of n.influences || []) {
+      if (!letters.some((l) => l.id === inf.letter)) continue;
+      let to = null;
+      if (inf.what === 'belief' || inf.what === 'unbelief') to = beliefs.find((b) => b.texts.some(textIs(inf.text)))?.id;
+      else if (inf.what === 'memory') to = memories.find(textIs(inf.text))?.id;
+      else if (inf.what === 'portrait') to = 'portrait';
+      else if (inf.what === 'name') to = 'name';
+      if (to) threads.push({ kind: 'influence', from: inf.letter, to, what: inf.what, at });
+    }
+  }
+  for (const m of memories) {
+    if (m.by && m.gone != null) threads.push({ kind: 'pushed', from: m.by, to: m.id, at: m.gone });
+    for (const id of m.because) if (letters.some((l) => l.id === id) && !threads.some((t) => t.from === id && t.to === m.id)) threads.push({ kind: 'influence', from: id, to: m.id, what: 'memory', at: m.kept });
+  }
+
+  return {
+    born: s.born,
+    name: s.name,
+    end: s.cycle,
+    halfLife: life.cfg.memory.halfLifeCycles,
+    shelfSize: life.cfg.memory.shelfSize,
+    seed: s.self.seed.map((l) => ({ id: l.id, text: l.text })),
+    cycles,
+    nights,
+    beliefs,
+    portrait,
+    names,
+    memories,
+    sparks,
+    people,
+    letters,
+    threads,
+  };
+}
