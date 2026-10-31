@@ -1905,3 +1905,82 @@ a.btn {
   border-radius: 8px;
   flex: none;
 }
+
+/* ---------- its place, walkable ---------- */
+
+.place-modes {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.place-modes .btn {
+  text-decoration: none;
+  color: var(--text-2);
+}
+.place-modes .btn.on {
+  border-color: var(--curious);
+  color: var(--text);
+  background: color-mix(in srgb, var(--curious) 14%, var(--bg-3));
+}
+.walk {
+  position: relative;
+  aspect-ratio: 15 / 10;
+  min-height: 320px;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--sky-top, #10132a) 0%, var(--sky-low, #1c2034) 58%, #14171c 100%);
+  transition: background 2s;
+}
+.walk-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+.walk-canvas:active {
+  cursor: grabbing;
+}
+.walk-canvas:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--curious);
+}
+.walk-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.walk-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(12, 14, 18, 0.62);
+  color: var(--text);
+  font: 500 11px var(--mono);
+  white-space: nowrap;
+  transition: opacity 0.3s;
+}
+.walk-label.selected {
+  background: color-mix(in srgb, var(--curious) 34%, rgba(12, 14, 18, 0.8));
+}
+.walk-label.ruin {
+  color: var(--dim);
+  text-decoration: line-through;
+}
+.walk-label.site {
+  border: 1px dashed var(--curious);
+}
+.walk > p {
+  position: absolute;
+  inset: auto 16px 16px;
+}
+@media (max-width: 720px) {
+  .walk {
+    aspect-ratio: 4 / 5;
+  }
+}

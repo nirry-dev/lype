@@ -81,6 +81,6 @@ const page = readFileSync(join(web, 'index.html'), 'utf8')
   .replace('href="style.css"', `href="style.css?v=${stamp}"`)
   .replace('src="app.js"', `src="app.js?v=${stamp}"`);
 write('index.html', page);
-for (const rel of ['app.js', 'atlas.js', 'presence.js', 'style.css', 'lib/svgclean.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
+for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
 
 console.log(`Exported ${life.cycles.length} cycles and ${life.nights.length} nights of ${state.name || 'an unnamed life'} to ${out}`);

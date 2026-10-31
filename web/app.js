@@ -2,6 +2,7 @@
 import { createAtlas } from './atlas.js';
 import { cleanSvg } from './lib/svgclean.js';
 import { createPresence, moodColor } from './presence.js';
+import { createWalk } from './world.js';
 
 // ---------- tiny DOM helpers ----------
 
@@ -95,6 +96,7 @@ const PHASE_TITLE = {
   reflecting: 'Writing its diary',
   dreaming: 'Asleep, dreaming',
   rewriting: 'Asleep, rewriting itself',
+  naming: 'Asleep, choosing its name',
   waiting: 'Waiting for the card',
   naming: 'Asleep, choosing its name',
   unreachable: "Can't think right now",
@@ -361,6 +363,7 @@ async function render() {
   }
   if (app.view !== 'replay') stopReplay();
   if (app.view !== 'atlas') stopAtlas();
+  if (app.view !== 'place') stopWalk();
   // The replay drives itself; live updates must not restart it.
   if (app.view === 'replay' && app.renderedView === 'replay' && app.replay) return;
   if (app.view === 'atlas' && app.renderedView === 'atlas' && app.atlas) return;
@@ -1604,10 +1607,38 @@ function fillAtlasInspect(el, id) {
 
 const TILE = 64;
 
+function stopWalk() {
+  app.walk?.destroy();
+  app.walk = app.walkHost = null;
+}
+
+/** What the walkable world needs to know about it right now: its mood, the hour on its clock, whether it sleeps. */
+function walkLook() {
+  const s = app.state;
+  const m = /(\d{1,2}):(\d{2})/.exec(s.senses?.time || '');
+  const now = new Date();
+  return { mood: s.mood, hour: m ? Number(m[1]) + Number(m[2]) / 60 : now.getHours() + now.getMinutes() / 60, asleep: ['dreaming', 'rewriting', 'naming'].includes(s.phase) };
+}
+
 async function renderPlace(current) {
   app.world ??= await api('/api/world');
   if (!current()) return;
   const w = app.world;
+  const walking = app.params.has('walk');
+  if (walking && !app.walkHost) {
+    // The world is kept across live updates (the same canvas is moved into the new page), so the reader's view holds.
+    app.walkHost = h('div', { class: 'walk' });
+    app.walk = createWalk(app.walkHost, { asset, onSelect: (id) => selectThing(id) });
+    if (!app.walk) app.walkHost.append(h('p', { class: 'muted' }, 'This browser cannot draw the world. The map shows the same place.'));
+  } else if (!walking) stopWalk();
+  const thingParam = app.params.get('thing');
+  const modeLink = (on, label, href) => h('a', { class: `btn${on ? ' on' : ''}`, href, 'aria-current': on ? 'true' : null }, label);
+  const modes = h(
+    'div',
+    { class: 'place-modes', role: 'group', 'aria-label': 'How to see its place' },
+    modeLink(!walking, 'Map', `#/place${thingParam ? `?thing=${thingParam}` : ''}`),
+    modeLink(walking, 'Walk around', `#/place?walk${thingParam ? `&thing=${thingParam}` : ''}`),
+  );
   fill(
     $('#view'),
     intro(
@@ -1619,14 +1650,18 @@ async function renderPlace(current) {
       { class: 'place' },
       h(
         'section',
-        { class: 'card place-stage' },
-        placeMap(w),
-        h('div', { class: 'place-legend' }, h('span', {}, 'faint: wearing away'), h('span', {}, 'cracked: a ruin'), h('span', {}, 'lines: what each thing was built beside'), h('span', {}, 'glow: where it was last')),
+        { class: `card place-stage${walking ? ' walking' : ''}` },
+        modes,
+        walking ? app.walkHost : placeMap(w),
+        walking
+          ? h('div', { class: 'place-legend' }, h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'click or Tab: read a sign'))
+          : h('div', { class: 'place-legend' }, h('span', {}, 'faint: wearing away'), h('span', {}, 'cracked: a ruin'), h('span', {}, 'lines: what each thing was built beside'), h('span', {}, 'glow: where it was last')),
       ),
       h('aside', { class: 'place-side' }, h('div', { class: 'card' }, cardHead('Looking at'), h('div', { id: 'place-inspect' })), wishesCard(w)),
     ),
   );
-  selectThing(app.params.get('thing'));
+  await app.walk?.show(w, walkLook());
+  selectThing(thingParam);
   if (app.params.has('wishes')) $('#wishes')?.scrollIntoView({ block: 'start' });
   updatePlaceLive();
 }
@@ -1743,6 +1778,7 @@ function selectThing(id) {
   const el = $('#place-inspect');
   if (!el || !w) return;
   for (const g of $$('.place-map .thing')) g.classList.toggle('selected', g.dataset.id === id);
+  app.walk?.select(id);
   const t = id && w.things.find((x) => x.id === id);
   if (!t) {
     const standing = w.things.filter((x) => !x.ruin).length;
@@ -1785,6 +1821,10 @@ function selectThing(id) {
 /** While it builds, the site on the map shows its drawing arriving shape by shape. */
 function updatePlaceLive() {
   if (app.view !== 'place') return;
+  if (app.walk) {
+    const on = !SNAPSHOT && app.state.busy && app.live.building;
+    app.walk.building(on ? app.live.building : null, on ? cleanSvg(app.live.sprite, { partial: true, idPrefix: 'pw-' }).svg : null);
+  }
   const layer = $('#place-live');
   if (!layer) return;
   const s = app.state;
