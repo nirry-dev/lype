@@ -95,7 +95,7 @@ test('wishes: no repeats, no more than five waiting, and answers it is told abou
 });
 
 function makeLife(dir) {
-  const cfg = loadConfig(['--mock', '--data', dir]);
+  const cfg = loadConfig(['--config', 'none.json', '--mock', '--data', dir]);
   cfg.rhythm.nightEvery = 3;
   cfg.courtesy.enabled = false;
   const seed = join(dir, 'seed.md');

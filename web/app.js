@@ -1,5 +1,6 @@
 // The viewer: what it is doing right now, its whole journey, who it has become, and the letter box.
 import { createAtlas } from './atlas.js';
+import { verifyChain } from './lib/seal.js';
 import { cleanSvg } from './lib/svgclean.js';
 import { createPresence, moodColor } from './presence.js';
 import { createWalk } from './world.js';
@@ -164,9 +165,11 @@ if (new URLSearchParams(location.search).has('embed')) document.documentElement.
 
 function snapshotFile(path) {
   const route = path.replace(/^\/?api\//, '').split('?')[0];
-  if (['state', 'journey', 'works', 'life', 'atlas', 'letters', 'world', 'errands'].includes(route)) return `${SNAPSHOT}${route}.json`;
+  if (['state', 'journey', 'works', 'life', 'atlas', 'letters', 'world', 'errands', 'chain'].includes(route)) return `${SNAPSHOT}${route}.json`;
   const m = /^cycle\/(\d+|latest)$/.exec(route);
   if (m) return `${SNAPSHOT}cycles/${pad6(m[1] === 'latest' ? app.state.cycle : m[1])}.json`;
+  const night = /^night\/(\d+)$/.exec(route);
+  if (night) return `${SNAPSHOT}nights/${String(night[1]).padStart(4, '0')}.json`;
   return null;
 }
 
@@ -277,7 +280,7 @@ function connect() {
   });
   es.addEventListener('cycle', async () => {
     [app.latest, app.state] = await Promise.all([api('/api/cycle/latest'), api('/api/state')]);
-    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData', 'world');
+    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData', 'world', 'chain');
     refreshView();
   });
   es.addEventListener('world', (e) => {
@@ -298,7 +301,7 @@ function connect() {
   es.addEventListener('night', async (e) => {
     const night = JSON.parse(e.data);
     app.state = await api('/api/state');
-    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData', 'world');
+    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData', 'world', 'chain');
     app.mindVersion = null;
     toast(`It became version ${night.n}: “${night.release?.title || 'untitled'}”`);
     refreshView();
@@ -1962,6 +1965,7 @@ async function renderJourney(current) {
       'Each dot is one cycle, coloured by how it felt: blue when lonely, amber when warm. Violet lines are nights, and every night made a new version of it. Amber threads are letters, running down to the cycle that read them and across to the nights they changed.',
     ),
     statsRow(j, s),
+    sealedRecord(),
     h('div', { class: 'strand-wrap', id: 'strand-wrap' }, strand(j)),
     h(
       'div',
@@ -1980,6 +1984,53 @@ async function renderJourney(current) {
   wrap.scrollLeft = wrap.scrollWidth;
   const v = app.params.get('v');
   if (v) document.getElementById(`v${v}`)?.scrollIntoView({ block: 'start' });
+}
+
+/** Its sealed record: your browser recomputes the seals itself (web/lib/seal.js) and says whether anything changed. */
+function sealedRecord() {
+  const box = h('section', { class: 'sealed' });
+  const show = (...kids) => fill(box, ...kids);
+  (async () => {
+    app.chain ??= await api('/api/chain').catch(() => []);
+    const chain = app.chain;
+    if (!chain.length) return show(h('p', { class: 'sealed-line muted' }, 'This life began before its record was sealed.'));
+    const head = chain.at(-1).hash;
+    const late = chain.filter((e) => e.late);
+    const intro = h(
+      'p',
+      { class: 'sealed-line' },
+      h('b', {}, 'Its record is sealed. '),
+      `Each of its ${chain.length} cycles and nights is sealed with SHA-256 over what it did and the seal before it, so changing or removing anything breaks every seal after it. This browser checks the seals itself. `,
+      'Latest seal ',
+      h('code', { title: head }, `${head.slice(0, 12)}…`),
+      '.',
+    );
+    const note = late.length
+      ? h(
+          'p',
+          { class: 'meta' },
+          late.length === chain.length
+            ? `All ${late.length} so far were sealed late, on ${dayName(late.at(-1).sealed)}, when sealing began: they are protected from then on, not before. From now on each one is sealed as it happens.`
+            : `The first ${late.length} were sealed late, on ${dayName(late.at(-1).sealed)}, when sealing began: they are protected from then on, not before. Everything since was sealed as it happened.`,
+        )
+      : null;
+    const result = h('p', { class: 'sealed-result' }, 'Checking…');
+    const all = h('button', { class: 'btn', type: 'button' }, `Check all ${chain.length}`);
+    const fetchRecord = (e) => api(e.kind === 'cycle' ? `/api/cycle/${e.n}` : `/api/night/${e.n}`);
+    const check = async (from) => {
+      all.disabled = true;
+      const r = await verifyChain(chain, fetchRecord, { from, onProgress: (n, total) => (result.textContent = `Checking… ${n} of ${total}`) });
+      all.disabled = false;
+      result.className = `sealed-result ${r.ok ? 'ok' : 'broken'}`;
+      result.textContent = r.ok
+        ? `✓ Unbroken. ${from ? `The newest ${r.checked} records` : `All ${r.checked} records`} still match their seals, and every seal links to the one before it.`
+        : `✗ Broken at ${r.problem.at.kind} ${r.problem.at.n}: ${r.problem.why}.`;
+    };
+    all.addEventListener('click', () => check(0));
+    show(intro, h('div', { class: 'sealed-row' }, result, all), note);
+    check(Math.max(0, chain.length - 12));
+  })().catch((err) => show(h('p', { class: 'sealed-line muted' }, `Its record could not be checked: ${err.message}`)));
+  return box;
 }
 
 function statsRow(j, s) {

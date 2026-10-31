@@ -17,7 +17,7 @@ const dir = mkdtempSync(join(tmpdir(), 'iterant-test-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
 function makeLife() {
-  const cfg = loadConfig(['--mock', '--data', dir]);
+  const cfg = loadConfig(['--config', 'none.json', '--mock', '--data', dir]);
   cfg.rhythm.nightEvery = 3;
   cfg.courtesy.enabled = false;
   const seed = join(dir, 'seed.md');
@@ -150,7 +150,7 @@ test('on its second night it chooses a name, once: a description is turned down 
 test('a life that named itself a description is asked once to choose a name it can be called by', async () => {
   const own = mkdtempSync(join(tmpdir(), 'iterant-test-'));
   after(() => rmSync(own, { recursive: true, force: true }));
-  const cfg = loadConfig(['--mock', '--data', own]);
+  const cfg = loadConfig(['--config', 'none.json', '--mock', '--data', own]);
   cfg.courtesy.enabled = false;
   cfg.seedFile = join(dir, 'seed.md');
   const life = new Life({ config: cfg, store: createStore(own), brain: createBrain(cfg.brain) });

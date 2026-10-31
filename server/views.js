@@ -1,5 +1,6 @@
 // What the public may see of a life. Shared by the live server and the static export, so both hide the same things.
 import { letterStatus, publicCycle, publicLetter, publicLook, publicWish } from './life.js';
+import { publicSeal } from '../web/lib/seal.js';
 import { pad } from './store.js';
 import { CARD } from './world.js';
 
@@ -9,6 +10,17 @@ const spriteSrc = (n) => (n ? `works/${pad(n)}.svg` : null);
 export function cycle(store, n) {
   const record = n ? store.read(`cycles/${pad(n)}.json`, null) : null;
   return record ? publicCycle(record) : null;
+}
+
+/** One night record, as it was sealed. */
+export function night(store, n) {
+  const record = n ? store.read(`nights/${pad(n, 4)}.json`, null) : null;
+  return record ? { ...record, ...(record.seal ? { seal: publicSeal(record.seal) } : {}) } : null;
+}
+
+/** Its sealed record: one entry per cycle and night, each linked to the one before (web/lib/seal.js). */
+export function chain(life) {
+  return life.chain;
 }
 
 /** Everything it made, newest first. Drawings are referenced by a path relative to the page. */

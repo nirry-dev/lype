@@ -17,7 +17,7 @@ after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 function makeLife(mode = 'model') {
   const dir = mkdtempSync(join(tmpdir(), 'iterant-mod-'));
   dirs.push(dir);
-  const cfg = loadConfig(['--mock', '--data', dir]);
+  const cfg = loadConfig(['--config', 'none.json', '--mock', '--data', dir]);
   cfg.courtesy.enabled = false;
   cfg.rhythm.nightEvery = 99;
   cfg.moderation.mode = mode;

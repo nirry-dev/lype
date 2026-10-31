@@ -1,6 +1,8 @@
 // Its life: waking on a rhythm, thinking, making, remembering, and every night becoming a new version of itself.
+import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { readFileSync, rmSync } from 'node:fs';
+import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
@@ -14,6 +16,7 @@ const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const clamp01 = (x) => clamp(Number.isFinite(x) ? x : 0.5, 0, 1);
 const sameName = (a, b) => Boolean(a && b) && a.trim().toLowerCase() === b.trim().toLowerCase();
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 const listNames = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
 function ago(iso, now = Date.now()) {
@@ -107,6 +110,7 @@ export function publicCycle(c) {
       ...(replyWithheld ? { reply: null } : {}),
       ...(l.errand ? { errand: { ...l.errand, look: publicLook(l.errand.look) } } : {}),
     })),
+    ...(c.seal ? { seal: publicSeal(c.seal) } : {}),
   };
 }
 
@@ -130,6 +134,7 @@ export class Life extends EventEmitter {
     this.journal = store.read('journal.json', []);
     this.cycles = store.list('cycles').map((f) => cycleSummary(store.read(`cycles/${f}`)));
     this.nights = store.list('nights').map((f) => store.read(`nights/${f}`));
+    this.chain = store.read('chain.json', []); // its sealed record, one entry per cycle and night (web/lib/seal.js)
     this.busy = false;
     this.paused = Boolean(config.paused);
     this.timer = null;
@@ -197,7 +202,41 @@ export class Life extends EventEmitter {
       this.notes.push(`Your keeper asked something of you: "${s.formerName}", what you call yourself, describes something, but it is not a name a person can call you by. On your next night you will choose your name again, once and for good. It can keep something of the old one.`);
       this.journalAdd({ kind: 'gift', text: `Its keeper asked it to choose a name it can be called by, once and for good, in place of "${s.formerName}".` });
     }
+    if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
     this.saveState();
+  }
+
+  // ---------- its sealed record ----------
+
+  /** Seals a record to the one before it and adds it to the chain; anyone can check it (web/lib/seal.js). */
+  seal(kind, n, record, { late = false } = {}) {
+    const prev = this.chain.at(-1)?.hash || GENESIS;
+    const { seal: _old, ...bare } = record;
+    const body = kind === 'cycle' ? publicCycle(bare) : bare;
+    // A reply still held for its keeper is sealed as a salted fingerprint, so it can't be guessed from the seal.
+    const held = kind === 'cycle' ? (bare.replies || []).filter((r) => r.withheld) : [];
+    const salts = held.map(() => randomBytes(16).toString('hex'));
+    const withheld = held.map((r, i) => sha256(salts[i] + canonical(r)));
+    const hash = sha256(sealInput({ prev, kind, n, body, withheld }));
+    const at = new Date().toISOString();
+    record.seal = { v: SEAL_VERSION, prev, hash, at, ...(late ? { late: true } : {}), withheld, ...(salts.length ? { salts } : {}) };
+    this.chain.push({ kind, n, at: kind === 'cycle' ? bare.endedAt || bare.startedAt : bare.at, sealed: at, hash, prev, ...(late ? { late: true } : {}) });
+    this.store.write('chain.json', this.chain);
+    return record;
+  }
+
+  /** A life that began before its record was sealed: all of it is sealed now, in the order it happened, marked late. */
+  sealPast() {
+    const past = [
+      ...this.store.list('cycles').map((f) => ({ kind: 'cycle', file: `cycles/${f}` })),
+      ...this.store.list('nights').map((f) => ({ kind: 'night', file: `nights/${f}` })),
+    ]
+      .map((p) => ({ ...p, record: this.store.read(p.file) }))
+      .map((p) => ({ ...p, when: Date.parse(p.kind === 'cycle' ? p.record.endedAt || p.record.startedAt : p.record.at) }))
+      .sort((a, b) => a.when - b.when);
+    for (const p of past) this.store.write(p.file, this.seal(p.kind, p.record.n, p.record, { late: true }));
+    this.nights = this.store.list('nights').map((f) => this.store.read(`nights/${f}`));
+    this.journalAdd({ kind: 'gift', text: `Its keeper sealed its record: everything it has done so far (${past.length} cycles and nights) was sealed late, and from now on each one is sealed as it happens.` });
   }
 
   stop() {
@@ -671,7 +710,7 @@ export class Life extends EventEmitter {
       moodBefore,
       moodAfter: { ...s.mood },
     };
-    this.store.write(`cycles/${pad(n)}.json`, record);
+    this.store.write(`cycles/${pad(n)}.json`, this.seal('cycle', n, record));
     this.notes = [];
     this.waits = {};
     for (const k of [10, 50, 100, 500, 1000]) if (n === k) this.milestone(`cycle-${k}`, `It reached its ${k}th cycle.`);
@@ -976,7 +1015,7 @@ export class Life extends EventEmitter {
       if (weathered.ruined.length) this.milestone('first-ruin', `Something it built crumbled for the first time: "${weathered.ruined[0].name}". It no longer remembered why it built it.`);
       if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
 
-      this.store.write(`nights/${pad(version, 4)}.json`, record);
+      this.store.write(`nights/${pad(version, 4)}.json`, this.seal('night', version, record));
       this.saveState();
       this.store.write('letters.json', this.letters);
       this.nights.push(record);

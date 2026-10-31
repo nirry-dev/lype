@@ -111,7 +111,8 @@ function broadcast(event, data) {
   relay?.send(event, data);
 }
 for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish', 'errand']) life.on(event, (data) => broadcast(event, data));
-life.on('night', (n) => publish(cfg, `${life.state.name || 'It'} became version ${n.n}: ${n.release?.title || 'a night'}`));
+// Each night's latest seal goes into the commit too, so public git history pins its record as it was.
+life.on('night', (n) => publish(cfg, `${life.state.name || 'It'} became version ${n.n}: ${n.release?.title || 'a night'}\n\nLatest seal: ${life.chain.at(-1)?.hash || 'none'}`));
 setInterval(() => {
   for (const res of clients) res.write(': keep-alive\n\n');
 }, 25000).unref();
@@ -144,9 +145,10 @@ async function api(req, res, url) {
   }
   m = /^\/api\/night\/(\d+)$/.exec(path);
   if (m && method === 'GET') {
-    const record = store.read(`nights/${pad(Number(m[1]), 4)}.json`, null);
+    const record = views.night(store, Number(m[1]));
     return record ? json(res, 200, record) : json(res, 404, { error: 'no such night' });
   }
+  if (path === '/api/chain' && method === 'GET') return json(res, 200, views.chain(life));
 
   if (path === '/api/works' && method === 'GET') return json(res, 200, views.works(life, store));
   if (path === '/api/life' && method === 'GET') return json(res, 200, views.replay(life, store));

@@ -63,6 +63,8 @@ for (const r of errands.flatMap((e) => e.returns)) {
   mkdirSync(join(out, 'data/returns'), { recursive: true });
   copyFileSync(store.path(r.photo), join(out, `data/${r.photo}`));
 }
+write('data/chain.json', views.chain(life));
+for (const night of life.nights) write(`data/nights/${pad(night.n, 4)}.json`, views.night(store, night.n));
 for (const c of life.cycles) {
   write(`data/cycles/${pad(c.n)}.json`, views.cycle(store, c.n));
   const svg = store.path(`works/${pad(c.n)}.svg`);
@@ -84,6 +86,6 @@ const page = readFileSync(join(web, 'index.html'), 'utf8')
   .replace('href="style.css"', `href="style.css?v=${stamp}"`)
   .replace('src="app.js"', `src="app.js?v=${stamp}"`);
 write('index.html', page);
-for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
+for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
 
 console.log(`Exported ${life.cycles.length} cycles and ${life.nights.length} nights of ${state.name || 'an unnamed life'} to ${out}`);

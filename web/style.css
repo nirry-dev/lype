@@ -710,6 +710,46 @@ main {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+.sealed {
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--kept);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.sealed-line {
+  margin: 0 0 8px;
+  color: var(--text-2);
+}
+.sealed-line b {
+  color: var(--text);
+}
+.sealed code {
+  font: 12px var(--mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.sealed-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.sealed-result {
+  margin: 0;
+  font: 13px/1.5 var(--mono);
+  color: var(--dim);
+}
+.sealed-result.ok {
+  color: var(--kept);
+}
+.sealed-result.broken {
+  color: var(--gone);
+}
+.sealed .meta {
+  margin: 8px 0 0;
+}
 .strand-wrap {
   position: relative;
   overflow-x: auto;
