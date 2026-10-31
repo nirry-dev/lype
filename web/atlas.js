@@ -371,6 +371,7 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
     ctx.fillText(text, x, y);
   }
   function glow(x, y, r, rgb, alpha) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !(r > 0)) return; // never let one bad point stop the whole frame
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
     g.addColorStop(0, rgba(rgb, alpha));
     g.addColorStop(1, rgba(rgb, 0));
@@ -632,8 +633,9 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
       const born = tl.cs(s.cycle) + 0.82;
       const a = span(t, born, born + 0.1);
       if (a <= 0) continue;
+      // Not slept on yet (today, while it lives): it keeps circling. (span over an infinite night would be NaN.)
       const nightA = s.night != null ? tl.ns(s.night) + 0.05 : Infinity;
-      const go = span(t, nightA, nightA + 0.33);
+      const go = s.night != null ? span(t, nightA, nightA + 0.33) : 0;
       if (go >= 1) continue;
       const k = hash(`${s.cycle}${s.text}`);
       const spin = (reduced ? 0 : sec * 14) + k * 360;
@@ -642,7 +644,8 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
       let alpha = a;
       if (go > 0) {
         const into = pos.get(s.into);
-        if (s.fate === 'lost' || !into) {
+        // A memory it merged into may not be on the map yet (or any more): then it fades like a lost one.
+        if (s.fate === 'lost' || !into || !Number.isFinite(into.x) || !Number.isFinite(into.y)) {
           target = P(spin, RING.today + go * 0.25);
           alpha = a * (1 - go);
         } else target = into;
