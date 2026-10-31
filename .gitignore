@@ -1,0 +1,10 @@
+# A life belongs to whoever runs it.
+data/
+.dev-life/
+admin.json
+config.json
+
+node_modules/
+*.tmp
+.env
+.claude/

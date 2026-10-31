@@ -1,0 +1,32 @@
+{
+  "host": "127.0.0.1",
+  "port": 8420,
+  "dataDir": "data",
+  "seedFile": "seed.md",
+  "brain": {
+    "backend": "openai",
+    "baseUrl": "http://127.0.0.1:8080/v1",
+    "model": "local",
+    "apiKeyFile": "",
+    "noThinking": true,
+    "temperature": 0.85
+  },
+  "rhythm": {
+    "cycleMinutes": 20,
+    "jitter": 0.2,
+    "nightEvery": 8
+  },
+  "courtesy": {
+    "enabled": true,
+    "maxGpuBusy": 60,
+    "dontSwapModels": true,
+    "retryMinutes": 5
+  },
+  "memory": {
+    "shelfSize": 12,
+    "halfLifeCycles": 36
+  },
+  "moderation": {
+    "mode": "model"
+  }
+}

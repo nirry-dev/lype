@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No dependencies to install: everything runs on Node's standard library, with the mock brain standing in for a model.
+      - run: npm run check
+      - run: npm test
+      - name: Export the example life
+        run: node server/export.js --data examples/demo-life --out "$RUNNER_TEMP/export"

@@ -1,0 +1,103 @@
+// Loads config.json over the defaults below and applies command-line overrides.
+import { cpSync, existsSync, readFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+const DEFAULTS = {
+  host: '127.0.0.1',
+  port: 8420,
+  dataDir: 'data',
+  seedFile: 'seed.md',
+  brain: {
+    // "openai" = any OpenAI-compatible server (llama.cpp, LM Studio, vLLM...), "anthropic" = Claude, "mock" = canned replies for tests.
+    backend: 'openai',
+    baseUrl: 'http://127.0.0.1:8080/v1',
+    model: 'local',
+    apiKeyFile: '',
+    apiKeyEnv: '',
+    noThinking: true,
+    temperature: 0.85,
+    timeoutSeconds: 300,
+    // anthropic only
+    effort: 'medium',
+  },
+  rhythm: {
+    cycleMinutes: 20, // time between wakes
+    jitter: 0.2, // +-20% so it doesn't tick like a clock
+    nightEvery: 8, // cycles per day; then it sleeps and becomes a new version
+  },
+  courtesy: {
+    enabled: true,
+    maxGpuBusy: 60, // % utilisation from someone else's work above which it waits
+    dontSwapModels: true, // never evict a different model its human has loaded
+    retryMinutes: 5,
+  },
+  memory: {
+    shelfSize: 12, // slots per shelf (people / world / moments)
+    halfLifeCycles: 36, // a memory's weight halves every N cycles unless something brings it back
+  },
+  self: {
+    maxOwnLines: 10,
+  },
+  letters: {
+    maxLength: 1200,
+    perCycle: 2,
+    perHour: 6,
+  },
+  moderation: {
+    // "model": rules at the door, then the model screens each letter (and each reply); doubtful ones wait for the keeper.
+    // "keeper": every letter waits for the keeper. "off": nothing is screened (fine for a private, local creature).
+    mode: 'model',
+  },
+};
+
+function merge(base, over) {
+  if (!over || typeof over !== 'object' || Array.isArray(over)) return over ?? base;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(over)) {
+    out[k] = base && typeof base[k] === 'object' && !Array.isArray(base[k]) ? merge(base[k], v) : v;
+  }
+  return out;
+}
+
+export function expandHome(p) {
+  if (!p) return p;
+  return p.startsWith('~') ? join(homedir(), p.slice(1)) : p;
+}
+
+function arg(argv, name) {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
+export function loadConfig(argv = process.argv.slice(2)) {
+  const file = arg(argv, '--config') || join(ROOT, 'config.json');
+  const fromFile = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  const cfg = merge(DEFAULTS, fromFile);
+
+  if (argv.includes('--fast')) {
+    // Demo pace: wake every ~15 s and sleep every 4 cycles.
+    cfg.rhythm = { ...cfg.rhythm, cycleMinutes: 0.25, jitter: 0, nightEvery: 4 };
+    cfg.courtesy = { ...cfg.courtesy, retryMinutes: 0.5 };
+  }
+  if (argv.includes('--mock')) cfg.brain = { ...cfg.brain, backend: 'mock' };
+  if (arg(argv, '--port')) cfg.port = Number(arg(argv, '--port'));
+  if (arg(argv, '--data')) cfg.dataDir = arg(argv, '--data');
+  if (arg(argv, '--model')) cfg.brain = { ...cfg.brain, model: arg(argv, '--model') };
+
+  const at = (p) => (isAbsolute(expandHome(p)) ? expandHome(p) : join(ROOT, p));
+  cfg.dataDir = at(cfg.dataDir);
+  cfg.seedFile = at(cfg.seedFile);
+  cfg.paused = argv.includes('--paused');
+  if (argv.includes('--demo')) {
+    // The example life, copied somewhere temporary and paused, so browsing it never changes the repo or needs a model.
+    const copy = join(tmpdir(), `iterant-demo-${process.pid}`);
+    cpSync(join(ROOT, 'examples', 'demo-life'), copy, { recursive: true });
+    cfg.dataDir = copy;
+    cfg.paused = true;
+  }
+  return cfg;
+}

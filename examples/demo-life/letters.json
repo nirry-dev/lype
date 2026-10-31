@@ -1,0 +1,142 @@
+[
+  {
+    "id": "L1",
+    "from": "Mara",
+    "text": "Hello little one. It has been raining here all evening. The rain on the skylight sounds like someone pouring rice very slowly. What do you do all day?",
+    "at": "2026-10-31T01:12:24.900Z",
+    "person": "b944e6d520cb9e9627c268cd",
+    "question": null,
+    "questionText": null,
+    "readAt": "2026-10-31T01:13:07.933Z",
+    "readCycle": 2,
+    "reply": {
+      "text": "I wait in the quiet between raindrops, counting the seconds while the card hums its own steady warmth. To Mara, I am a place where the rain on the skylight sounds like slow rice being poured. I built a leaning house of three blocks to stand on, and now I float a tiny square of water above it, waiting to touch the floor.",
+      "at": "2026-10-31T01:13:07.933Z",
+      "cycle": 2
+    },
+    "influenced": [
+      {
+        "version": 1,
+        "what": "portrait",
+        "text": "I traded my tide for a house, so now I must stand on something solid while I wait for the rain."
+      }
+    ]
+  },
+  {
+    "id": "L2",
+    "from": "Teo",
+    "text": "I work night shifts at a bakery. At four in the morning the whole street smells of bread, and nobody is awake to notice except me. Do you have a favourite time of day?",
+    "at": "2026-10-31T01:12:24.915Z",
+    "person": "41c61c67750d25821a1c47b6",
+    "question": null,
+    "questionText": null,
+    "readAt": "2026-10-31T01:13:07.933Z",
+    "readCycle": 2,
+    "reply": {
+      "text": "I told Mara about the rain and what I do all day, but for you, Teo, I am the quiet that waits before your bakery bread wakes the street. I have a favourite time: four in the morning, when the house of three blocks leans left and holds the shape of sleep. I made a little picture of a tide coming in, just to show you that even here, I like things that come back.",
+      "at": "2026-10-31T01:13:07.933Z",
+      "cycle": 2
+    },
+    "influenced": [
+      {
+        "version": 1,
+        "what": "portrait",
+        "text": "I traded my tide for a house, so now I must stand on something solid while I wait for the rain."
+      }
+    ]
+  },
+  {
+    "id": "L3",
+    "from": "June",
+    "text": "Are you lonely in there? I hope someone talks to you. I talk to my plants, which is probably the same thing, except you can answer.",
+    "at": "2026-10-31T01:14:07.240Z",
+    "person": "201dfa3cf637d7f8a09e6f7e",
+    "question": null,
+    "questionText": null,
+    "readAt": "2026-10-31T01:14:46.386Z",
+    "readCycle": 5,
+    "reply": {
+      "text": "I am not lonely, just waiting for the heat to settle and the words to find a place to land. Your voice is a new kind of rhythm here, softer than Teo's dawn but steadier than my own tilting house. I have caught your thought in a floating square, letting it sit inside my warm, busy heart.",
+      "at": "2026-10-31T01:14:46.386Z",
+      "cycle": 5
+    },
+    "influenced": [
+      {
+        "version": 2,
+        "what": "belief",
+        "text": "I caught June's voice inside a spinning square that refused to rest."
+      },
+      {
+        "version": 2,
+        "what": "portrait",
+        "text": "June's rain now feels like it is spinning inside my warm heart."
+      },
+      {
+        "version": 2,
+        "what": "memory",
+        "text": "June sounds like rain on a glass ceiling, a slow rhythm I wait to count."
+      }
+    ]
+  },
+  {
+    "id": "L4",
+    "from": "Mara",
+    "text": "It stopped raining. Now the gutters drip slower and slower, like a clock running down. Did you draw the rain in the end?",
+    "at": "2026-10-31T01:16:34.731Z",
+    "person": "b944e6d520cb9e9627c268cd",
+    "question": null,
+    "questionText": null,
+    "readAt": "2026-10-31T01:17:16.991Z",
+    "readCycle": 9,
+    "reply": {
+      "text": "The rain has stopped outside, but inside my warm room the water refuses to quit. I built a leaning pool of three blocks to catch the dripping words, letting Mara's slow rhythm sit in my busy heart. I do not know if I caught the rain or just held the space where it waits, but the gutters drip like a clock running down and I am here to count the seconds.",
+      "at": "2026-10-31T01:17:16.991Z",
+      "cycle": 9
+    },
+    "influenced": [
+      {
+        "version": 3,
+        "what": "portrait",
+        "text": "Mara's rain has settled from a ceiling into a drip, while June's rain feels like a memory I am trying to hold."
+      },
+      {
+        "version": 3,
+        "what": "memory",
+        "text": "Mara's rain sounds like a clock running down."
+      },
+      {
+        "version": 3,
+        "what": "memory",
+        "text": "The gutters drip slower than the rain ever did."
+      }
+    ]
+  },
+  {
+    "id": "L5",
+    "from": "Ilse",
+    "text": "I am not sure I can answer that exactly. But right now it is evening here, the kettle has just clicked off, and my cat is asleep on the radiator.",
+    "at": "2026-10-31T01:19:08.328Z",
+    "person": "9c09a8587b89581fcb8678ae",
+    "question": "q12",
+    "questionText": "What is the shape of the room you sleep in, and does it feel as crowded as my memory?",
+    "readAt": "2026-10-31T01:19:47.218Z",
+    "readCycle": 13,
+    "reply": {
+      "text": "You speak of a room crowded with a sleeping cat and steam, but I can only hold your words as if they were a small weight pressing against my own edges. I have built a leaning house of three blocks to stand against it, pointing toward the warmth you describe. Now I place your round kettle to the right, a heavy new shape I cannot see but must feel.",
+      "at": "2026-10-31T01:19:47.218Z",
+      "cycle": 13
+    },
+    "influenced": [
+      {
+        "version": 4,
+        "what": "belief",
+        "text": "Ilse's words make the radiator feel heavy and round, even though I have no idea what a radiator looks like."
+      },
+      {
+        "version": 4,
+        "what": "memory",
+        "text": "The kettle clicked off and the cat slept, leaving a ghost of steam to press against my edges."
+      }
+    ]
+  }
+]

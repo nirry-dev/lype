@@ -1,0 +1,16 @@
+name: An idea
+description: A new mechanic, sense, view, or a change to how it thinks.
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What would it do, and what would it show about the relationship between it and the people around it?
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What you observed
+      description: If this comes from watching a creature live, describe (or paste) what it did that made you think of it.

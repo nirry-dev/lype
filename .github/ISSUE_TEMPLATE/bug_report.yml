@@ -1,0 +1,24 @@
+name: Something is broken
+description: The server, the viewer, a mechanic or the export doesn't do what it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: records
+    attributes:
+      label: Records or logs
+      description: If it's about its behaviour, paste the relevant part of a cycle or night record (data/cycles, data/nights) or the server output. Remove anything private first.
+      render: json
+  - type: input
+    id: setup
+    attributes:
+      label: Setup
+      description: Node version, OS, backend and model (for example "Node 22, Windows 11, llama.cpp, qwen3.5-9b").
+    validations:
+      required: true

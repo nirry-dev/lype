@@ -1,0 +1,6 @@
+# Normalize line endings: store text as LF in the repo, check out native.
+* text=auto eol=lf
+# Windows batch files only work reliably with CRLF.
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
