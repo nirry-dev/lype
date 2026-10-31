@@ -8,6 +8,7 @@ import { createBrain } from '../server/brain.js';
 import { addErrand, cleanJpeg } from '../server/errands.js';
 import { loadConfig } from '../server/config.js';
 import { Life } from '../server/life.js';
+import * as mind from '../server/mind.js';
 import { createStore } from '../server/store.js';
 import * as views from '../server/views.js';
 import { fakeJpeg } from './fixtures.js';
@@ -127,4 +128,21 @@ test('a photo brought back for an errand waits for its keeper, is looked at, and
   assert.equal(shown.returns[0].photo, `returns/${stored.id}.jpg`);
   assert.ok(shown.returns[0].look.verdict);
   assert.equal(life.addReturn({ errand: e.id, from: 'June', text: '', person: 'v10', photo: cleanJpeg(fakeJpeg()).data }).ok, false, 'a filled errand takes no more photos');
+});
+
+test('on its second night it chooses a name, once: a description is turned down and it chooses again', async () => {
+  const life = makeLife();
+  for (let i = 0; i < 12 && life.state.version < 3; i++) assert.ok((await life.wake('test')).ok);
+  clearTimeout(life.timer);
+  assert.ok(life.state.version >= 3);
+  assert.equal(life.state.name, 'Mimo');
+  assert.equal(life.state.names.length, 1, 'it never renames itself');
+  assert.equal(life.state.names[0].version, 2);
+  const night = life.nights.find((n) => n.name);
+  assert.equal(night.n, 2);
+  assert.equal(night.name.candidates.length, 3);
+  assert.match(night.name.tries[0], /^The Round One \(it is more than one word\)$/);
+  assert.equal(night.name.came, 'the hum in Mara’s letter');
+  assert.ok(life.state.milestones.some((m) => m.kind === 'named'));
+  assert.match(mind.systemPrompt(life.state, life.cfg), /Your name is Mimo\. You chose it yourself, once/);
 });

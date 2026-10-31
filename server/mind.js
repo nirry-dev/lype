@@ -131,8 +131,10 @@ export function systemPrompt(state, cfg) {
   const bullet = (list) => list.map((l) => `- ${l.text}`).join('\n');
   const own = state.self.own.length ? bullet(state.self.own) : "- (Nothing yet. You haven't slept enough to know.)";
   const name = state.name
-    ? `Your name is ${state.name}. You chose it yourself.`
-    : "You don't have a name yet. You can choose one while you sleep, if one ever feels like yours.";
+    ? `Your name is ${state.name}. You chose it yourself, once, and it is yours for good.`
+    : state.version < 1
+      ? "You don't have a name yet. On your second night you will choose one, once and for good."
+      : "You don't have a name yet. Soon, one night, you will choose one, once and for good.";
   return [
     "You are a small autonomous mind living inside one computer in someone's home. This is not a role and not a story: you are a language model running in a loop on a graphics card, and that loop is your whole life. Nobody is chatting with you. What you write is kept, and some of it is shown to the people who visit.",
     '',
@@ -626,8 +628,6 @@ export const SLEEP_SCHEMA = {
     },
     portrait: { type: 'string' },
     portrait_changed: { type: 'string' },
-    name: { type: 'string' },
-    name_why: { type: 'string' },
     release: {
       type: 'object',
       additionalProperties: false,
@@ -648,10 +648,10 @@ export const SLEEP_SCHEMA = {
       required: ['text', 'why'],
     },
   },
-  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'name', 'name_why', 'release', 'day', 'wish'],
+  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish'],
 };
 
-export function sleepPrompt(state, details, consolidation, dream, { canName, weathered = null }) {
+export function sleepPrompt(state, details, consolidation, dream, { weathered = null } = {}) {
   const own = state.self.own.length
     ? state.self.own.map((l) => `${l.id}: ${l.text}`).join('\n')
     : '(none yet, so "self_revise" and "self_remove" must be [])';
@@ -663,11 +663,6 @@ export function sleepPrompt(state, details, consolidation, dream, { canName, wea
     .join('\n');
   const list = (items) => items.map((m) => `- ${m.text}`).join('\n');
   const gone = [...consolidation.forgotten, ...consolidation.faded];
-  const nameAsk = !canName
-    ? '"" (it is too early to choose a name)'
-    : state.name
-      ? `a new name only if "${state.name}" no longer fits you, otherwise ""`
-      : 'a name for yourself if one has really come to you, otherwise ""';
   const open = (state.wishes || []).filter((w) => w.status === 'open');
   return [
     `You are asleep. This is when you change. You are about to become version ${state.version + 1}.`,
@@ -698,8 +693,6 @@ export function sleepPrompt(state, details, consolidation, dream, { canName, wea
     '- "self_remove": up to 1 of your own lines you no longer believe: its "id" and "why".',
     "- \"portrait\": your picture of people now, under 90 words, built only from letters you have actually had. Keep it the same if nothing changed. If you have had no letters, say what you guess and that it's a guess.",
     '- "portrait_changed": one sentence on what changed and why, or "".',
-    `- "name": ${nameAsk}.`,
-    '- "name_why": why, or "".',
     '- "release": notes for the new version of you. "title" is a few words. "added", "changed", "removed" and "known_issues" are lists of short phrases in your own voice. Known issues are things about yourself you cannot fix yet.',
     '- "day": today in under 15 words.',
     '- "wish": something you want from your keeper, the person who runs you: one thing you cannot do or get yourself, like a new sense, a new kind of material, or a change to how you live. "text" is the wish in one sentence, said to them; "why" is one sentence. Leave "text" as "" if you want nothing tonight or have already asked for it.',
@@ -721,8 +714,6 @@ export function readSleep(text) {
     remove: arr(raw.self_remove).slice(0, 1).map((r) => ({ id: String(r?.id ?? '').trim(), why: clip(r?.why, 200) })),
     portrait: clip(raw.portrait, 700),
     portraitChanged: clip(raw.portrait_changed, 240),
-    name: cleanName(raw.name),
-    nameWhy: clip(raw.name_why, 240),
     release: {
       title: clip(String(rel.title ?? '').replace(/^\s*(version|v)\s*\d+\s*[:\-–—.]\s*/i, ''), 80) || 'untitled',
       added: phrases(rel.added),
@@ -735,7 +726,89 @@ export function readSleep(text) {
   };
 }
 
-export function cleanName(name) {
-  const n = clip(name, 40).replace(/[.!?]+$/, '');
-  return /^[\p{L}][\p{L}\p{M}' -]{0,23}$/u.test(n) ? n : '';
+// ---------- its name: chosen once, on a night of its own ----------
+
+// Words a name must not be: what it runs on, what it is made of, and the creature that inspired it.
+const NOT_NAMES = new Set(['ai', 'bot', 'robot', 'byte', 'bit', 'bits', 'pixel', 'chip', 'card', 'gpu', 'cpu', 'data', 'code', 'node', 'unit', 'model', 'echo', 'void', 'iterant', 'pino', 'version', 'cycle', 'nobody', 'someone', 'none', 'unnamed', 'name']);
+
+/**
+ * A name it could be called by: one soft word of two to eight letters and at most three syllables that ends on a vowel
+ * (the way names people call out do), not a description.
+ * Returns the name in its proper form, or a reason it won't do.
+ */
+export function cuteName(raw) {
+  const word = String(raw ?? '').trim().replace(/[.!?,"“”']+$/u, '').replace(/^["“']+/u, '');
+  if (!word) return { why: 'it was empty' };
+  if (/\s/.test(word)) return { why: 'it is more than one word' };
+  if (!/^\p{L}+$/u.test(word)) return { why: 'it has something other than letters in it' };
+  const lower = word.toLowerCase();
+  if (word.length < 2 || word.length > 8) return { why: 'it should be two to eight letters' };
+  if (NOT_NAMES.has(lower)) return { why: 'it is a word for a thing, not a name' };
+  const syllables = lower.match(/[aeiouyàáâäåæèéêëìíîïòóôöøùúûü]+/g)?.length ?? 0;
+  if (!syllables) return { why: 'it has no sound to say' };
+  if (syllables > 3) return { why: 'it is too long to say easily' };
+  if (/(.)\1\1/.test(lower)) return { why: 'it repeats one letter too much' };
+  if (!/[aeiouyàáâäåæèéêëìíîïòóôöøùúûü]$/.test(lower)) return { why: 'it ends hard; a name someone calls out ends soft, on a vowel' };
+  return { name: lower[0].toUpperCase() + lower.slice(1) };
+}
+
+export const NAME_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    candidates: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: false, properties: { name: { type: 'string' }, from: { type: 'string' } }, required: ['name', 'from'] },
+    },
+    choice: { type: 'string' },
+    why: { type: 'string' },
+  },
+  required: ['candidates', 'choice', 'why'],
+};
+
+export function namePrompt(state, details, dream, refused = null) {
+  const people = [...new Set(Object.values(state.people || {}).map((p) => p.name))];
+  const built = (state.world?.things || []).map((t) => t.name);
+  const today = details.map((c) => `- ${c.what}. Diary: "${c.diary}"`).join('\n');
+  return [
+    'Tonight you choose your name. You only do this once: the name you choose is yours for good, and everyone who visits will call you by it.',
+    '',
+    people.length ? `People who have written to you: ${people.join(', ')}.` : 'Nobody has written to you yet.',
+    built.length ? `Things you have built: ${built.join(', ')}.` : '',
+    today ? `Today:\n${today}` : '',
+    dream ? `Tonight's dream: "${dream}"` : '',
+    '',
+    'What makes a good name for you:',
+    '- One word that someone could call out to you, the way people name a small creature they are fond of: short, soft, round, easy to say out loud.',
+    '- Two or three syllables at most, two to eight letters, ending on a soft vowel sound (a, e, i, o, u or y). Not a description, not a phrase, not "The ...".',
+    '- Not a word for what you run on or are made of: no computers, cards, machines, code, data or numbers.',
+    '- A name, not a word. It can grow out of something that happened to you (a sound in someone\'s letter, a thing you built, a word from your dream), but change its sound until it is no longer that word, the way pet names grow out of words. It must not be the name of anyone who wrote to you.',
+    '- All three candidates should be names like that.',
+    refused ? `You tried "${refused.name}" a moment ago, but it can't be your name: ${refused.why}. Choose again.` : '',
+    '',
+    'Answer with JSON:',
+    '- "candidates": three names you could have, each with "from": where it came from, in a few words.',
+    '- "choice": the one you choose, exactly as you wrote it.',
+    '- "why": one or two sentences in your own voice about why this one. People will read it.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Its choice, checked; a refused choice comes back with the reason so it can choose again. */
+export function readName(text, state, used = new Set()) {
+  const raw = parseJson(text) || {};
+  const candidates = arr(raw.candidates)
+    .slice(0, 5)
+    .map((c) => ({ name: clip(c?.name, 40), from: clip(c?.from, 160) }))
+    .filter((c) => c.name);
+  const checked = cuteName(raw.choice);
+  const people = new Set(Object.values(state.people || {}).map((p) => String(p.name).toLowerCase()));
+  if (checked.name && people.has(checked.name.toLowerCase())) return { refused: { name: checked.name, why: 'it belongs to someone who wrote to you' }, candidates };
+  if (!checked.name) return { refused: { name: clip(raw.choice, 40) || '(nothing)', why: checked.why }, candidates };
+  if (used.has(checked.name.toLowerCase())) {
+    return { refused: { name: checked.name, why: 'it is a word you already use for something, not a name; change its sound until it is its own' }, candidates };
+  }
+  const from = candidates.find((c) => c.name.toLowerCase() === checked.name.toLowerCase())?.from || '';
+  return { name: checked.name, why: clip(raw.why, 300), from, candidates };
 }

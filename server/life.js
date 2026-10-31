@@ -894,16 +894,17 @@ export class Life extends EventEmitter {
       const dream = mind.cleanProse(dreamRaw.text, 900);
 
       this.setPhase('rewriting', `becoming version ${version}`);
-      const canName = version >= 2 && (!s.names.length || version - s.names.at(-1).version >= 3);
       const sleepRaw = await this.brain.complete({
         kind: 'sleep',
         system,
-        user: mind.sleepPrompt(s, details, consolidation, dream, { canName, weathered }),
+        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered }),
         maxTokens: 1600,
         temperature: 0.7,
         schema: mind.SLEEP_SCHEMA,
       });
       const plan = mind.readSleep(sleepRaw.text);
+      // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
+      const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
 
       // ---- commit ----
       const at = new Date().toISOString();
@@ -916,10 +917,10 @@ export class Life extends EventEmitter {
         s.portrait.since = version;
       }
       let name = null;
-      if (canName && plan.name && plan.name !== s.name) {
-        name = { from: s.name, to: plan.name, why: plan.nameWhy };
-        s.names.push({ name: plan.name, version, why: plan.nameWhy, at });
-        s.name = plan.name;
+      if (chosen?.name) {
+        name = { from: null, to: chosen.name, why: chosen.why, came: chosen.from, candidates: chosen.candidates, tries: chosen.tries };
+        s.names.push({ name: chosen.name, version, why: chosen.why, at });
+        s.name = chosen.name;
       }
       const wished = addWish(s.wishes, plan.wish, { version, cycle: s.cycle, at });
       s.mood.calm = clamp01(s.mood.calm + 0.15);
@@ -942,6 +943,7 @@ export class Life extends EventEmitter {
         self,
         portrait,
         name,
+        ...(chosen && !chosen.name ? { naming: { tries: chosen.tries, candidates: chosen.candidates } } : {}),
         influences,
         world: weathered,
         wish,
@@ -956,10 +958,7 @@ export class Life extends EventEmitter {
       const gone = [...consolidation.forgotten, ...consolidation.faded];
       if (gone.length) this.milestone('first-forgetting', `It forgot something for the first time: "${gone[0].text}"`);
       if (portrait && !portrait.from) this.milestone('first-portrait', 'It wrote its first picture of what people are.');
-      if (name) {
-        if (s.names.length === 1) this.milestone('named', `It named itself ${name.to}.`);
-        else this.milestone(`renamed-${s.names.length}`, `It renamed itself from ${name.from} to ${name.to}.`);
-      }
+      if (name) this.milestone('named', `It chose its name: ${name.to}.`);
       if (weathered.ruined.length) this.milestone('first-ruin', `Something it built crumbled for the first time: "${weathered.ruined[0].name}". It no longer remembered why it built it.`);
       if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
 
@@ -974,6 +973,25 @@ export class Life extends EventEmitter {
       s.world = worldBefore;
       throw err;
     }
+  }
+
+  /** It chooses its name: three candidates, then one. A choice that won't do gets two more tries; then it waits a night. */
+  async chooseName(system, details, dream) {
+    this.setPhase('naming', 'choosing its name');
+    const tries = [];
+    let refused = null;
+    let candidates = [];
+    // Words it already uses (in what it knows, its day and its dream) are words, not names.
+    const used = words([system, ...details.map((d) => `${d.what} ${d.diary}`), dream].join(' '));
+    for (let i = 0; i < 3; i++) {
+      const raw = await this.brain.complete({ kind: 'name', system, user: mind.namePrompt(this.state, details, dream, refused), maxTokens: 500, temperature: 0.9, schema: mind.NAME_SCHEMA });
+      const got = mind.readName(raw.text, this.state, used);
+      candidates = got.candidates;
+      if (got.name) return { ...got, tries: [...tries, got.name] };
+      refused = got.refused;
+      tries.push(`${refused.name} (${refused.why})`);
+    }
+    return { name: null, candidates, tries };
   }
 
   /** Apply the night's self-edits behind a drift guard: the seed is untouchable, near-duplicates and overflow are refused. */
@@ -1047,7 +1065,7 @@ export class Life extends EventEmitter {
     for (const r of self.revised) check('belief', `${r.to} ${r.because}`, r.to);
     for (const r of self.removed) check('unbelief', `${r.text} ${r.why}`, r.text);
     if (portrait) check('portrait', `${portrait.to} ${portrait.changed}`, portrait.changed || portrait.to);
-    if (name) check('name', `${name.to} ${name.why}`, name.to);
+    if (name) check('name', `${name.to} ${name.why} ${name.came || ''}`, name.to);
     if (wish) check('wish', `${wish.text} ${wish.why}`, wish.text);
     for (const m of consolidation.kept) {
       for (const id of m.because || []) {

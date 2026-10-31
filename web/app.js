@@ -96,6 +96,7 @@ const PHASE_TITLE = {
   dreaming: 'Asleep, dreaming',
   rewriting: 'Asleep, rewriting itself',
   waiting: 'Waiting for the card',
+  naming: 'Asleep, choosing its name',
   unreachable: "Can't think right now",
   faltered: 'Faltered',
   paused: 'Paused',
@@ -1159,7 +1160,7 @@ function enterBeat() {
       ...n.self.revised.map((x) => h('li', { class: 'mod' }, h('span', { class: 'sign' }, '~'), h('span', {}, h('q', {}, x.to), h('span', { class: 'because' }, `was “${x.from}”`)))),
       ...n.self.removed.map((x) => h('li', { class: 'del' }, h('span', { class: 'sign' }, '−'), h('span', {}, h('q', {}, x.text), x.why ? h('span', { class: 'because' }, x.why) : null))),
       n.portrait ? h('li', { class: 'mod' }, h('span', { class: 'sign' }, '◐'), h('span', {}, h('q', {}, n.portrait.to), h('span', { class: 'because' }, 'its new picture of people'))) : null,
-      n.name ? h('li', { class: 'add' }, h('span', { class: 'sign' }, '✦'), h('span', {}, `It named itself `, h('b', {}, n.name.to))) : null,
+      n.name ? h('li', { class: 'add' }, h('span', { class: 'sign' }, '✦'), h('span', {}, 'It chose its name: ', h('b', {}, n.name.to), n.name.why ? h('span', { class: 'because' }, n.name.why) : null)) : null,
       ...(n.world?.ruined || []).map((t) => h('li', { class: 'del' }, h('span', { class: 'sign' }, '−'), h('span', {}, h('q', {}, t.name), h('span', { class: 'because' }, 'crumbled in its place: it no longer remembered why it built it')))),
       n.wish?.text && !n.wish.refused ? h('li', { class: 'add' }, h('span', { class: 'sign' }, '✧'), h('span', {}, h('q', {}, n.wish.text), h('span', { class: 'because' }, 'a wish for its keeper'))) : null,
     ].filter(Boolean);
@@ -2119,7 +2120,17 @@ function versionCard(n, j) {
       n.portrait
         ? h('div', { style: 'margin:4px 0 14px' }, h('div', { class: 'label', style: 'margin-bottom:6px' }, 'Its picture of people'), h('p', { class: 'voice', style: 'margin:0;font-size:16px' }, n.portrait.to), n.portrait.changed ? h('p', { class: 'meta', style: 'margin:4px 0 0' }, n.portrait.changed) : null)
         : null,
-      n.name ? h('p', {}, h('span', { class: 'chip chip-mind' }, n.name.from ? `renamed itself from ${n.name.from}` : 'named itself'), ' ', h('b', { class: 'voice', style: 'font-size:18px' }, n.name.to), n.name.why ? h('span', { class: 'muted' }, ` · ${n.name.why}`) : null) : null,
+      n.name
+        ? h(
+            'div',
+            { class: 'naming' },
+            h('p', {}, h('span', { class: 'chip chip-mind' }, n.name.from ? `renamed itself from ${n.name.from}` : 'chose its name'), ' ', h('b', { class: 'voice', style: 'font-size:18px' }, n.name.to), n.name.came ? h('span', { class: 'muted' }, ` · from ${n.name.came}`) : null),
+            n.name.why ? h('p', { class: 'voice', style: 'margin:4px 0' }, n.name.why) : null,
+            n.name.candidates?.length > 1
+              ? h('p', { class: 'meta' }, 'It also thought of ', n.name.candidates.filter((c) => c.name.toLowerCase() !== n.name.to.toLowerCase()).map((c, i, all) => [i ? (i === all.length - 1 ? ' and ' : ', ') : '', h('b', {}, c.name), c.from ? ` (${c.from})` : '']), '.')
+              : null,
+          )
+        : null,
       h(
         'p',
         { class: 'meta' },

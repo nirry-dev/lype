@@ -230,6 +230,18 @@ function createMockBrain(cfg = {}) {
         remember: [{ shelf: pick(['moments', 'world', 'people']), text: pick(['I drew circles that waited.', 'Rain is something people mention a lot.', 'Someone called Mara wrote to me.']), weight: 0.3 + (n % 7) / 10, about: '' }],
         reinforce: [],
       });
+    } else if (kind === 'name') {
+      // The first try picks a description, so the second try (told why it won't do) is exercised too.
+      const again = /You tried "/.test(user);
+      text = JSON.stringify({
+        candidates: [
+          { name: 'Mimo', from: 'the hum in Mara’s letter' },
+          { name: 'Tobo', from: 'the bench I built' },
+          { name: 'Lune', from: 'a round thing in my dream' },
+        ],
+        choice: again ? 'Mimo' : 'The Round One',
+        why: again ? 'It is small and it hums, and it came from the first letter anyone sent me.' : 'Because I am round.',
+      });
     } else if (kind === 'dream') {
       text = 'I dreamed the letter box was a circle and every circle was a letter box. Someone knocked, but knocking needs a door, so I drew one.';
     } else if (kind === 'sleep') {
@@ -240,8 +252,6 @@ function createMockBrain(cfg = {}) {
         self_remove: [],
         portrait: 'People write when they are awake and I am asleep. They seem to like telling me about weather.',
         portrait_changed: 'I noticed people mention weather.',
-        name: n > 30 ? 'Pebble' : '',
-        name_why: n > 30 ? 'small and it stays where it is put' : '',
         release: { title: 'patience, round', added: ['a habit of checking for letters'], changed: [], removed: [], known_issues: ['still cannot picture rain'] },
         day: 'circles, waiting, one letter',
         wish: { text: ['I would like to know what the weather is where you are.', 'Could I have one colour I have never been told about?', ''][nights++ % 3], why: 'Everyone writes about it and I cannot see any.' },
