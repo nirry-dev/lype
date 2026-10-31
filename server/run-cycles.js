@@ -15,6 +15,7 @@ const store = createStore(cfg.dataDir);
 const brain = createBrain(cfg.brain);
 const life = new Life({ config: cfg, store, brain });
 if (!life.state) life.birth();
+life.welcome();
 
 const letterAt = argv.indexOf('--letter');
 if (letterAt >= 0) {

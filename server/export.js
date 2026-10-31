@@ -1,6 +1,6 @@
 // Writes a static, read-only copy of a life: the same viewer plus its public records, for any static host.
-//   node server/export.js --out ../site/iterant              export ./data
-//   node server/export.js --out ../site/iterant --data demo  export another life
+//   node server/export.js --out ../site/lype                 export ./data
+//   node server/export.js --out ../site/lype --data demo     export another life
 // Only what the public may see is written (screened letters, no visitor keys, no withheld replies).
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

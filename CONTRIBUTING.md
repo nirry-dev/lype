@@ -1,14 +1,14 @@
-# Contributing to Iterant
+# Contributing to Lype
 
-Thanks for wanting to help a small mind grow up. Iterant is an art piece and an experiment at the same time, so contributions can be code, prompts, design, or careful observation of how it behaves.
+Thanks for wanting to help a small mind grow up. Lype is an art piece and an experiment at the same time, so contributions can be code, prompts, design, or careful observation of how it behaves.
 
 ## Getting started (no GPU needed)
 
 You need Node 22 or newer. There is nothing to install.
 
 ```bash
-git clone https://github.com/nirry-dev/iterant.git
-cd iterant
+git clone https://github.com/nirry-dev/lype.git
+cd lype
 npm test          # unit tests and a short mock life
 npm run dev       # a mock creature at http://127.0.0.1:8421, waking every 15 s with canned thoughts
 npm run demo      # a real recorded life (examples/demo-life) at http://127.0.0.1:8422, paused

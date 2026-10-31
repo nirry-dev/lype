@@ -161,18 +161,7 @@ export class Life extends EventEmitter {
   start() {
     if (!this.state) this.birth();
     this.noticeGap();
-    if (!this.cfg.recording && !this.state.abilities?.includes('world')) {
-      // It lived before it had these; it is told once, the next time it wakes.
-      this.state.abilities = [...(this.state.abilities || []), 'world', 'wishes'];
-      this.notes.push('Since you last woke, your keeper gave you two new things: a place of your own that you can build in, and a way to leave them wishes.');
-      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it a place of its own to build in, and a way to leave wishes.' });
-      this.milestone('given-a-place', 'Its keeper gave it a place of its own to build in, and a way to leave wishes.');
-    }
-    if (!this.cfg.recording && !this.state.abilities.includes('errands')) {
-      this.state.abilities = [...this.state.abilities, 'errands'];
-      this.notes.push('Since you last woke, your keeper gave you a new thing: you can send the people who visit on errands, and they bring you back a photo. For the first time you will be able to see something.');
-      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it errands: people can bring it photos of what it asks for.' });
-    }
+    this.welcome();
     this.state.lastAlive = new Date().toISOString();
     this.saveState();
     this.heartbeat = setInterval(() => {
@@ -184,6 +173,31 @@ export class Life extends EventEmitter {
     const due = last ? Date.parse(last.at) + interval - Date.now() : 0;
     if (this.paused) this.setPhase('paused');
     this.schedule(clamp(due, 5000, interval));
+  }
+
+  /** What changed while it was off: things its keeper gave it since, each told once, the next time it wakes. */
+  welcome() {
+    const s = this.state;
+    if (this.cfg.recording) return;
+    if (!s.abilities?.includes('world')) {
+      s.abilities = [...(s.abilities || []), 'world', 'wishes'];
+      this.notes.push('Since you last woke, your keeper gave you two new things: a place of your own that you can build in, and a way to leave them wishes.');
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it a place of its own to build in, and a way to leave wishes.' });
+      this.milestone('given-a-place', 'Its keeper gave it a place of its own to build in, and a way to leave wishes.');
+    }
+    if (!s.abilities.includes('errands')) {
+      s.abilities = [...s.abilities, 'errands'];
+      this.notes.push('Since you last woke, your keeper gave you a new thing: you can send the people who visit on errands, and they bring you back a photo. For the first time you will be able to see something.');
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it errands: people can bring it photos of what it asks for.' });
+    }
+    // It named itself before a name had to be one you can call it by. It is asked once to choose again, and that one stays.
+    if (s.name && !s.formerName && mind.cuteName(s.name).why) {
+      s.formerName = s.name;
+      s.name = null;
+      this.notes.push(`Your keeper asked something of you: "${s.formerName}", what you call yourself, describes something, but it is not a name a person can call you by. On your next night you will choose your name again, once and for good. It can keep something of the old one.`);
+      this.journalAdd({ kind: 'gift', text: `Its keeper asked it to choose a name it can be called by, once and for good, in place of "${s.formerName}".` });
+    }
+    this.saveState();
   }
 
   stop() {
@@ -918,7 +932,7 @@ export class Life extends EventEmitter {
       }
       let name = null;
       if (chosen?.name) {
-        name = { from: null, to: chosen.name, why: chosen.why, came: chosen.from, candidates: chosen.candidates, tries: chosen.tries };
+        name = { from: s.formerName ?? null, to: chosen.name, why: chosen.why, came: chosen.from, candidates: chosen.candidates, tries: chosen.tries };
         s.names.push({ name: chosen.name, version, why: chosen.why, at });
         s.name = chosen.name;
       }
@@ -958,7 +972,7 @@ export class Life extends EventEmitter {
       const gone = [...consolidation.forgotten, ...consolidation.faded];
       if (gone.length) this.milestone('first-forgetting', `It forgot something for the first time: "${gone[0].text}"`);
       if (portrait && !portrait.from) this.milestone('first-portrait', 'It wrote its first picture of what people are.');
-      if (name) this.milestone('named', `It chose its name: ${name.to}.`);
+      if (name) this.milestone('named', name.from ? `It chose its name: ${name.to}, in place of "${name.from}".` : `It chose its name: ${name.to}.`);
       if (weathered.ruined.length) this.milestone('first-ruin', `Something it built crumbled for the first time: "${weathered.ruined[0].name}". It no longer remembered why it built it.`);
       if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
 

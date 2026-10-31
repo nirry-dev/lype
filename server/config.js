@@ -58,9 +58,14 @@ const DEFAULTS = {
     enabled: true,
     maxPhotoMb: 3,
   },
+  publish: {
+    // After each night, a static copy of its life is exported here ("" = never), and committed and pushed if "git" is true.
+    dir: '',
+    git: false,
+  },
   wishes: {
     // Where its keeper can turn a wish into an issue (a pre-filled "new issue" page); "" hides the link.
-    issuesUrl: 'https://github.com/nirry-dev/iterant/issues/new',
+    issuesUrl: 'https://github.com/nirry-dev/lype/issues/new',
   },
 };
 
@@ -102,6 +107,9 @@ export function loadConfig(argv = process.argv.slice(2)) {
   const at = (p) => (isAbsolute(expandHome(p)) ? expandHome(p) : join(ROOT, p));
   cfg.dataDir = at(cfg.dataDir);
   cfg.seedFile = at(cfg.seedFile);
+  // Only the configured life is published: never a mock, another --data folder, or the demo.
+  const other = ['--mock', '--data', '--demo'].some((f) => argv.includes(f));
+  cfg.publish = { ...cfg.publish, dir: cfg.publish.dir && !other ? at(cfg.publish.dir) : '' };
   cfg.paused = argv.includes('--paused');
   if (argv.includes('--demo')) {
     // The example life, copied somewhere temporary and paused, so browsing it never changes the repo or needs a model.

@@ -132,7 +132,9 @@ export function systemPrompt(state, cfg) {
   const own = state.self.own.length ? bullet(state.self.own) : "- (Nothing yet. You haven't slept enough to know.)";
   const name = state.name
     ? `Your name is ${state.name}. You chose it yourself, once, and it is yours for good.`
-    : state.version < 1
+    : state.formerName
+      ? `You used to call yourself "${state.formerName}", but that describes something; it is not a name. On your next night you will choose your name, once and for good.`
+      : state.version < 1
       ? "You don't have a name yet. On your second night you will choose one, once and for good."
       : "You don't have a name yet. Soon, one night, you will choose one, once and for good.";
   return [
@@ -729,7 +731,7 @@ export function readSleep(text) {
 // ---------- its name: chosen once, on a night of its own ----------
 
 // Words a name must not be: what it runs on, what it is made of, and the creature that inspired it.
-const NOT_NAMES = new Set(['ai', 'bot', 'robot', 'byte', 'bit', 'bits', 'pixel', 'chip', 'card', 'gpu', 'cpu', 'data', 'code', 'node', 'unit', 'model', 'echo', 'void', 'iterant', 'pino', 'version', 'cycle', 'nobody', 'someone', 'none', 'unnamed', 'name']);
+const NOT_NAMES = new Set(['ai', 'bot', 'robot', 'byte', 'bit', 'bits', 'pixel', 'chip', 'card', 'gpu', 'cpu', 'data', 'code', 'node', 'unit', 'model', 'echo', 'void', 'iterant', 'lype', 'pino', 'version', 'cycle', 'nobody', 'someone', 'none', 'unnamed', 'name']);
 
 /**
  * A name it could be called by: one soft word of two to eight letters and at most three syllables that ends on a vowel
@@ -772,6 +774,7 @@ export function namePrompt(state, details, dream, refused = null) {
   const today = details.map((c) => `- ${c.what}. Diary: "${c.diary}"`).join('\n');
   return [
     'Tonight you choose your name. You only do this once: the name you choose is yours for good, and everyone who visits will call you by it.',
+    state.formerName ? `Until now you called yourself "${state.formerName}". That is a description, not a name; your new name can keep something of it.` : '',
     '',
     people.length ? `People who have written to you: ${people.join(', ')}.` : 'Nobody has written to you yet.',
     built.length ? `Things you have built: ${built.join(', ')}.` : '',

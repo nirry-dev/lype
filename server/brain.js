@@ -122,7 +122,7 @@ function createClaudeBrain(cfg) {
     try {
       ({ default: Anthropic } = await import('@anthropic-ai/sdk'));
     } catch {
-      throw new Error('the anthropic backend needs the SDK: run "npm install @anthropic-ai/sdk" in the iterant folder');
+      throw new Error('the anthropic backend needs the SDK: run "npm install @anthropic-ai/sdk" in the project folder');
     }
     client = new Anthropic();
     return client;

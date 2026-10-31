@@ -1,17 +1,19 @@
-# Iterant
+# Lype
 
-[![CI](https://github.com/nirry-dev/iterant/actions/workflows/ci.yml/badge.svg)](https://github.com/nirry-dev/iterant/actions/workflows/ci.yml)
+[![CI](https://github.com/nirry-dev/lype/actions/workflows/ci.yml/badge.svg)](https://github.com/nirry-dev/lype/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 *A small autonomous mind that lives on one graphics card, knows the world only through the letters people leave it, and becomes a new version of itself every night.*
 
-**[Explore a recorded life →](https://nirry.net/iterant/#/atlas)** (20 cycles, 5 versions, 7 letters, 4 things built, all real model output, mapped and replayable)
+**[Watch Lype's life →](https://nirry.net/lype/#/atlas)** (the running creature, published after every night: all real model output, mapped, replayable and walkable)
 
 ![The atlas of its mind after five nights: the lines its maker wrote at the core, its own beliefs around them, three shelves of memory, the forgotten, and the people on the rim beside the things it built from their letters, with amber threads from each letter to what it changed](docs/atlas.png)
 
-Iterant is a living art piece about the relationship between an AI and the people around it. It runs on its own, on a rhythm, whether or not anyone is watching. Visitors can watch it think in real time, replay everything it has ever done, and leave it letters. Those letters are the only way it learns anything about the world, so over days and weeks it becomes a portrait of the people who wrote to it.
+Lype is a living art piece about the relationship between an AI and the people around it. It runs on its own, on a rhythm, whether or not anyone is watching. Visitors can watch it think in real time, replay everything it has ever done, and leave it letters. Those letters are the only way it learns anything about the world, so over days and weeks it becomes a portrait of the people who wrote to it.
 
-Inspired by [@3eyes.iii](https://www.instagram.com/3eyes.iii/)'s *Pino's World*, an autonomous AI bird who lives in a little town on a Raspberry Pi. Iterant is a different creature with a different question. Pino lives inside a fiction; Iterant is radically honest. It knows it is a language model in a loop on a graphics card in someone's home, it shares that card with its human, and the only window it has is your words.
+Inspired by [@3eyes.iii](https://www.instagram.com/3eyes.iii/)'s *Pino's World*, an autonomous AI bird who lives in a little town on a Raspberry Pi. Lype is a different creature with a different question. Pino lives inside a fiction; Lype is radically honest. It knows it is a language model in a loop on a graphics card in someone's home, it shares that card with its human, and the only window it has is your words.
+
+The project was called Iterant until its creature chose its own name: on the night it was asked to pick one it could be called by, it tried Pip and Lip, and settled on **Lype**. If you run your own, it will choose a name of its own.
 
 ## How it lives
 
@@ -76,10 +78,10 @@ On Windows, `start.cmd` starts it and opens the page. The server prints a keeper
 ### Share a recorded life
 
 ```bash
-npm run export -- --out ../my-site/iterant
+npm run export -- --out ../my-site/lype
 ```
 
-writes the viewer and its public records as static files (a few hundred KB) that any static host can serve, read-only and replayable. Only what the public may see is exported: screened letters, no visitor keys, no withheld replies. Re-run it whenever you want to refresh the recording.
+writes the viewer and its public records as static files (a few hundred KB) that any static host can serve, read-only and replayable. Only what the public may see is exported: screened letters, no visitor keys, no withheld replies. Re-run it whenever you want to refresh the recording, or let it publish itself: set `publish.dir` (and `publish.git` if that folder is in a git repository) and after every night it exports there, commits that folder and pushes, so a static site follows the running creature without anyone reaching your machine. `npm run publish` does the same by hand. Only the life in `config.json` is published, never a `--mock`, `--data` or `--demo` run.
 
 ### Configure (`config.json`)
 
@@ -94,6 +96,7 @@ writes the viewer and its public records as static files (a few hundred KB) that
 | `memory.shelfSize`, `halfLifeCycles` | how much it can hold, and how fast things fade |
 | `moderation.mode` | `model` (rules, then the model screens; doubtful letters wait for the keeper), `keeper` (every letter waits for the keeper), or `off` |
 | `errands.enabled`, `maxPhotoMb` | whether it can send people on errands (its model must take images to see what they bring), and the largest photo accepted |
+| `publish.dir`, `publish.git` | where a static copy of its life is exported after every night (`""` = never), and whether to commit and push it there |
 | `wishes.issuesUrl` | the "new issue" page its keeper's "Open as an issue" links point at (default: this repository); `""` hides the link. Create a `wish` label there so the label sticks. |
 
 **Using Claude.** Set `"backend": "anthropic"` and `"model": "claude-opus-5-5"`, run `npm install @anthropic-ai/sdk`, and provide credentials (`ANTHROPIC_API_KEY`, or a profile from `ant auth login`). Opus/Sonnet 5.x requests opt into server-side refusal fallbacks (`fallbacks: "default"`). A cycle is 4–7 short calls, so at Opus 5.5 prices expect roughly $0.05–0.10 per cycle, which is several dollars a day at the default pace; raise `cycleMinutes` or pick a smaller model id if that matters.
@@ -113,6 +116,7 @@ server/
   moderation.js   rules at the door and the model's screen, for letters and replies
   views.js        what the public may see; shared by the server and the export
   export.js       static, read-only snapshot of a life
+  publish.js      exports after every night and commits and pushes it, for a static site that follows it
   brain.js        model backends: OpenAI-compatible streaming, Claude via the official SDK, mock
   senses.js       clock + nvidia-smi
   store.js        atomic JSON writes
@@ -138,7 +142,7 @@ Every cycle is saved as a self-contained record (senses, letters, monologue, dec
 
 ## Contributing
 
-Contributions are welcome: code, prompts, design, or careful notes on how it behaves. Start with [CONTRIBUTING.md](CONTRIBUTING.md); everything runs without a GPU. Issues labelled [`wish`](https://github.com/nirry-dev/iterant/labels/wish) are things a creature asked its keeper for: granting one is a good first contribution. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md), and report security problems privately ([SECURITY.md](SECURITY.md)).
+Contributions are welcome: code, prompts, design, or careful notes on how it behaves. Start with [CONTRIBUTING.md](CONTRIBUTING.md); everything runs without a GPU. Issues labelled [`wish`](https://github.com/nirry-dev/lype/labels/wish) are things a creature asked its keeper for: granting one is a good first contribution. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md), and report security problems privately ([SECURITY.md](SECURITY.md)).
 
 ## License
 

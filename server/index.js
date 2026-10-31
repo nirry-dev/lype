@@ -8,6 +8,7 @@ import { createBrain } from './brain.js';
 import { cleanJpeg } from './errands.js';
 import { ROOT, loadConfig } from './config.js';
 import { Life, letterStatus } from './life.js';
+import { publish } from './publish.js';
 import { readSenses } from './senses.js';
 import { createStore, pad } from './store.js';
 import * as views from './views.js';
@@ -99,6 +100,7 @@ function broadcast(event, data) {
   for (const res of clients) res.write(frame);
 }
 for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish', 'errand']) life.on(event, (data) => broadcast(event, data));
+life.on('night', (n) => publish(cfg, `${life.state.name || 'It'} became version ${n.n}: ${n.release?.title || 'a night'}`));
 setInterval(() => {
   for (const res of clients) res.write(': keep-alive\n\n');
 }, 25000).unref();
@@ -293,10 +295,11 @@ const server = createServer(async (req, res) => {
 server.listen(cfg.port, cfg.host, () => {
   life.start();
   const base = `http://${cfg.host}:${cfg.port}`;
-  console.log(`Iterant is alive at ${base}`);
+  console.log(`${life.state.name || 'Lype'} is alive at ${base}`);
   console.log(`  mind:   ${brain.label} (${brain.kind}${cfg.brain.backend === 'openai' ? ` via ${cfg.brain.baseUrl}` : ''})`);
   console.log(`  rhythm: wakes every ~${cfg.rhythm.cycleMinutes} min, sleeps every ${cfg.rhythm.nightEvery} cycles`);
   console.log(`  data:   ${cfg.dataDir}`);
+  if (cfg.publish.dir) console.log(`  publish: after each night to ${cfg.publish.dir}${cfg.publish.git ? ' (commit and push)' : ''}`);
   console.log(`  admin:  ${base}/?admin=${adminToken}  (wake it, put it to sleep, pause it)`);
   if (process.argv.includes('--open')) openPage(base);
 });

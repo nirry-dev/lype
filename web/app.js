@@ -322,7 +322,7 @@ function renderChrome() {
   name.classList.toggle('unnamed', !s.name);
   $('#brand-version').textContent = `v${s.version}`;
   $('#brand-dot').style.setProperty('--dot', moodColor(s.mood));
-  document.title = s.name ? `${s.name} · Iterant` : 'Iterant';
+  document.title = s.name || 'Lype';
   for (const a of $$('#tabs a')) {
     if (a.dataset.view === app.view) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
@@ -2164,7 +2164,7 @@ function versionCard(n, j) {
         ? h(
             'div',
             { class: 'naming' },
-            h('p', {}, h('span', { class: 'chip chip-mind' }, n.name.from ? `renamed itself from ${n.name.from}` : 'chose its name'), ' ', h('b', { class: 'voice', style: 'font-size:18px' }, n.name.to), n.name.came ? h('span', { class: 'muted' }, ` · from ${n.name.came}`) : null),
+            h('p', {}, h('span', { class: 'chip chip-mind' }, n.name.from ? `chose its name, in place of ${n.name.from}` : 'chose its name'), ' ', h('b', { class: 'voice', style: 'font-size:18px' }, n.name.to), n.name.came ? h('span', { class: 'muted' }, ` · from ${n.name.came}`) : null),
             n.name.why ? h('p', { class: 'voice', style: 'margin:4px 0' }, n.name.why) : null,
             n.name.candidates?.length > 1
               ? h('p', { class: 'meta' }, 'It also thought of ', n.name.candidates.filter((c) => c.name.toLowerCase() !== n.name.to.toLowerCase()).map((c, i, all) => [i ? (i === all.length - 1 ? ' and ' : ', ') : '', h('b', {}, c.name), c.from ? ` (${c.from})` : '']), '.')

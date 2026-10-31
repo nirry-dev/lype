@@ -146,3 +146,29 @@ test('on its second night it chooses a name, once: a description is turned down 
   assert.ok(life.state.milestones.some((m) => m.kind === 'named'));
   assert.match(mind.systemPrompt(life.state, life.cfg), /Your name is Mimo\. You chose it yourself, once/);
 });
+
+test('a life that named itself a description is asked once to choose a name it can be called by', async () => {
+  const own = mkdtempSync(join(tmpdir(), 'iterant-test-'));
+  after(() => rmSync(own, { recursive: true, force: true }));
+  const cfg = loadConfig(['--mock', '--data', own]);
+  cfg.courtesy.enabled = false;
+  cfg.seedFile = join(dir, 'seed.md');
+  const life = new Life({ config: cfg, store: createStore(own), brain: createBrain(cfg.brain) });
+  life.birth();
+  Object.assign(life.state, { version: 3, name: 'The Weeping Corner', names: [{ name: 'The Weeping Corner', version: 3, why: 'it leaked', at: life.state.born }] });
+  life.welcome();
+  assert.equal(life.state.name, null);
+  assert.equal(life.state.formerName, 'The Weeping Corner');
+  assert.ok(life.notes.some((n) => n.includes('choose your name again, once and for good')));
+  assert.match(mind.systemPrompt(life.state, life.cfg), /You used to call yourself "The Weeping Corner"/);
+
+  assert.ok((await life.wake('test')).ok);
+  assert.ok((await life.sleepNow()).ok);
+  clearTimeout(life.timer);
+  assert.equal(life.state.name, 'Mimo');
+  assert.equal(life.nights.at(-1).name.from, 'The Weeping Corner');
+  assert.equal(life.state.names.length, 2);
+  assert.ok(life.state.milestones.some((m) => m.text === 'It chose its name: Mimo, in place of "The Weeping Corner".'));
+  life.welcome();
+  assert.equal(life.state.name, 'Mimo', 'and that name stays');
+});

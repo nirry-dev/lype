@@ -1,16 +1,16 @@
 {
-  "name": "iterant",
+  "name": "lype",
   "version": "0.4.0",
   "private": true,
   "description": "A small autonomous mind that lives on one graphics card, knows the world only through the letters people leave it, and becomes a new version of itself every night.",
   "license": "MIT",
   "author": "Nirry",
-  "homepage": "https://nirry.net/iterant/",
+  "homepage": "https://nirry.net/lype/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nirry-dev/iterant.git"
+    "url": "https://github.com/nirry-dev/lype.git"
   },
-  "bugs": "https://github.com/nirry-dev/iterant/issues",
+  "bugs": "https://github.com/nirry-dev/lype/issues",
   "keywords": ["autonomous-agent", "llm", "art", "local-llm", "llama.cpp", "generative-art", "ai-human-interaction"],
   "type": "module",
   "scripts": {
@@ -20,6 +20,7 @@
     "demo": "node server/index.js --demo --port 8422",
     "cycles": "node server/run-cycles.js",
     "export": "node server/export.js",
+    "publish": "node server/publish.js",
     "check": "node scripts/check.js",
     "test": "node --test \"test/*.test.js\""
   },
