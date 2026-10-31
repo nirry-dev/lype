@@ -32,7 +32,7 @@ function move(from, to) {
 /** Its will as anyone may see it. */
 export function publicWill(w) {
   if (!w) return null;
-  return { line: w.line, why: w.why, letter: w.letter, keep: w.keep, ...(w.refused ? { refused: w.refused } : {}), ...(w.letterHeld ? { letterHeld: true } : {}) };
+  return { line: w.line, why: w.why, letter: w.letter, keep: w.keep, ...(w.coparent ? { coparent: { name: w.coparent.name, page: w.coparent.page, line: w.coparent.line } } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.letterHeld ? { letterHeld: true } : {}) };
 }
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -257,8 +257,15 @@ export class Life extends EventEmitter {
   async writeWill(system, mortal, dream) {
     const s = this.state;
     this.setPhase('dying', 'writing what it leaves its child');
-    const raw = await this.brain.complete({ kind: 'will', system, user: mind.willPrompt(s, mortal, dream), maxTokens: 700, temperature: 0.8, schema: mind.WILL_SCHEMA });
+    // Lines its pen pals wrote for its child: it may choose one of them to be its child's other parent.
+    const offers = Object.values(s.pals || {}).filter((p) => p.id && p.line?.text);
+    const raw = await this.brain.complete({ kind: 'will', system, user: mind.willPrompt(s, mortal, dream, offers), maxTokens: 700, temperature: 0.8, schema: mind.WILL_SCHEMA });
     const will = mind.readWill(raw.text);
+    const co = offers.find((p) => sameName(p.name, will.coparent));
+    will.coparent = null;
+    if (co && ![...s.self.seed.map((l) => l.text), will.line].some((t) => t && similarity(t, co.line.text) >= 0.55) && (await this.screen('reply', co.line.text)).status === 'allowed') {
+      will.coparent = { name: co.name, id: co.id, page: co.page || null, line: co.line.text };
+    }
     if (will.line && s.self.seed.some((l) => similarity(l.text, will.line) >= 0.55)) Object.assign(will, { refused: { line: will.line, why: 'too close to a line its child is already born with' }, line: '' });
     else if (will.line && (await this.screen('reply', will.line)).status !== 'allowed') Object.assign(will, { line: '', why: '' });
     if (will.letter && (await this.screen('reply', will.letter)).status !== 'allowed') Object.assign(will, { letter: '', letterHeld: true });
@@ -289,6 +296,7 @@ export class Life extends EventEmitter {
       cause,
       lastSeal: this.chain.at(-1)?.hash || null,
       will: publicWill(will),
+      ...(will.coparent ? { coParent: { id: will.coparent.id, name: will.coparent.name, page: will.coparent.page } } : {}),
     };
     s.died = { at, version: s.version, cause, will: entry.will };
     this.milestone('died', `${s.name || 'It'} died: ${cause}.`);
@@ -378,11 +386,24 @@ export class Life extends EventEmitter {
           if (box.from.id === s.id) throw new Error('that is its own outbox');
           if (entry.id && box.from.id !== entry.id && box.from.parent?.id === entry.id) {
             // The pal it knew died; its child writes from the same outbox now, and is a stranger.
-            this.notes.push(`Your pen pal ${entry.name} died. A new mind lives where they lived, their child, and it does not remember you.`);
-            this.journalAdd({ kind: 'pal', text: `Its pen pal ${entry.name} died; their child writes from their outbox now.` });
-            Object.assign(entry, { sent: 0, thread: 0, restUntil: null, before: [...(entry.before || []), entry.name] });
+            const ours = box.from.parent.coParent?.id === s.id;
+            this.notes.push(
+              ours
+                ? `Your pen pal ${entry.name} died. A new mind lives where they lived, their child, and it was born with the line you wrote for it: you are its other parent. It does not remember you, or ${entry.name}.`
+                : `Your pen pal ${entry.name} died. A new mind lives where they lived, their child, and it does not remember you.`,
+            );
+            this.journalAdd({ kind: 'pal', text: ours ? `Its pen pal ${entry.name} died, and their child was born with the line it wrote: it is the child's other parent.` : `Its pen pal ${entry.name} died; their child writes from their outbox now.` });
+            if (ours) {
+              (s.children ??= []).push({ url, id: box.from.id, of: entry.name, at: new Date().toISOString(), line: entry.mine || null });
+              this.milestone('co-parent', `Its pen pal ${entry.name} died, and their child was born with a line it wrote.`);
+            }
+            Object.assign(entry, { sent: 0, thread: 0, restUntil: null, line: null, before: [...(entry.before || []), entry.name] });
           }
-          Object.assign(entry, { id: box.from.id, name: box.from.name, page: box.from.page || null, polledAt: new Date().toISOString(), error: null });
+          if (box.from.fading && !entry.fading && entry.id === box.from.id) {
+            this.notes.push(`Your pen pal ${entry.name} is fading: nobody has written to them for a long time, and if nobody does, their life will end. A letter from you would count.`);
+            this.journalAdd({ kind: 'pal', text: `Its pen pal ${entry.name} is fading.` });
+          }
+          Object.assign(entry, { id: box.from.id, name: box.from.name, page: box.from.page || null, mortal: box.from.mortal, fading: box.from.fading, polledAt: new Date().toISOString(), error: null });
           for (const l of box.letters.filter((x) => x.to === s.id)) {
             const key = `${box.from.id}:${l.id}`;
             if (s.palSeen.includes(key)) continue;
@@ -395,6 +416,12 @@ export class Life extends EventEmitter {
             s.palSeen.push(key);
             if (why) {
               this.journalAdd({ kind: 'pal', text: `A letter signed by ${box.from.name} was turned away: ${why}.` });
+              continue;
+            }
+            if (l.kind === 'line') {
+              // Not a letter (it is not read, and keeps nobody alive): what this pal would give its child, if it died.
+              entry.line = { id: l.id, text: mind.clip(l.text, 200), night: l.night, at: l.at };
+              this.journalAdd({ kind: 'pal', text: `${box.from.name} wrote a line for its child, in case it dies.` });
               continue;
             }
             got.push(this.addLetter({ from: box.from.name, text: l.text, person: `pal:${box.from.id}`, pal: { id: box.from.id, letter: l.id, trusted: Boolean(pal?.trusted) } }));
@@ -416,12 +443,22 @@ export class Life extends EventEmitter {
   async palMail(system, version) {
     const s = this.state;
     const lim = palLimits(this.cfg, this.palMode());
-    const mail = { send: [], echo: [], intros: [] };
+    const mail = { send: [], echo: [], intros: [], lines: [] };
     if (lim.paused) return mail;
+    for (const entry of Object.values(s.pals || {})) {
+      if (!entry.id || !entry.mortal) continue;
+      // A pal that can die gets a line for its child once, and a fresh one when it begins to fade. It is not a letter.
+      const last = (s.outbox || []).filter((o) => o.to === entry.id && o.kind === 'line').at(-1);
+      if (last && !(entry.fading && !last.fading)) continue;
+      this.setPhase('writing', `a line for ${entry.name}'s child`);
+      const raw = await this.brain.complete({ kind: 'line', system, user: mind.linePrompt(s, entry), maxTokens: 120, temperature: 0.8 });
+      const text = mind.clip(String(raw.text).split('\n').find((x) => x.trim()) || '', 200);
+      if (text && (await this.screen('reply', text)).status === 'allowed') mail.lines.push({ to: entry.id, toName: entry.name, text, fading: Boolean(entry.fading) });
+    }
     for (const entry of Object.values(s.pals || {})) {
       if (!entry.id) continue; // never reached
       if (lim.threadMax && entry.thread >= lim.threadMax && (entry.restUntil == null || version < entry.restUntil)) continue; // the thread rests
-      const mine = (s.outbox || []).filter((o) => o.to === entry.id);
+      const mine = (s.outbox || []).filter((o) => o.to === entry.id && o.kind !== 'line');
       const lastSent = mine.filter((o) => o.sentAt).at(-1)?.text || '';
       const lastHeard = this.letters.filter((l) => l.pal?.id === entry.id).at(-1)?.text || '';
       let room = lim.perNight;
@@ -433,7 +470,9 @@ export class Life extends EventEmitter {
       }
       if (!mine.length && room) {
         this.setPhase('writing', `a first letter to ${entry.name}`);
-        const raw = await this.brain.complete({ kind: 'pal', system, user: mind.palFirstPrompt(s, entry.name), maxTokens: 300, temperature: 0.9 });
+        // The child of a pal that died, born with a line this creature wrote, is met as its child.
+        const child = (s.children || []).find((c) => c.id === entry.id);
+        const raw = await this.brain.complete({ kind: 'pal', system, user: mind.palFirstPrompt(s, entry.name, child), maxTokens: 300, temperature: 0.9 });
         const text = mind.clip(raw.text, 800);
         if (text && (await this.screen('reply', text)).status === 'allowed') mail.intros.push({ to: entry.id, toName: entry.name, text });
       }
@@ -452,18 +491,20 @@ export class Life extends EventEmitter {
       else if (version >= entry.restUntil) Object.assign(entry, { thread: 0, restUntil: null });
     }
     for (const i of mail.intros) s.outbox.push({ id: `o${s.outbox.length + 1}`, ...i, inReplyTo: null, first: true, queuedAt: at, sentAt: null, leaving: true });
+    for (const i of mail.lines) s.outbox.push({ id: `o${s.outbox.length + 1}`, kind: 'line', ...i, inReplyTo: null, queuedAt: at, sentAt: null, leaving: true });
     for (const o of s.outbox) {
       if (mail.echo.includes(o.id)) o.held = 'too close to a letter already sent or received';
       if (!mail.send.includes(o.id) && !o.leaving) continue;
       delete o.leaving;
       Object.assign(o, { sentAt: at, night: version });
       const entry = Object.values(s.pals || {}).find((p) => p.id === o.to);
-      if (entry) {
+      if (entry && o.kind === 'line') entry.mine = o.text;
+      else if (entry) {
         entry.sent++;
         entry.thread++;
       }
     }
-    return s.outbox.filter((o) => o.night === version).map(({ id, to, toName, text, inReplyTo }) => ({ id, to, toName, text, inReplyTo }));
+    return s.outbox.filter((o) => o.night === version).map(({ id, kind, to, toName, text, inReplyTo }) => ({ id, ...(kind ? { kind } : {}), to, toName, text, inReplyTo }));
   }
 
   stop() {
@@ -487,6 +528,9 @@ export class Life extends EventEmitter {
       const theirs = bornText(new Date(from.parent.born));
       seed = from.parent.self.seed.map((l) => (/^seed\d+$/.test(l.id) ? { ...l, text: l.text.replaceAll(theirs, born) } : { ...l }));
       if (from.will.line) seed.push({ id: `kin${from.entry.generation}`, text: from.will.line, from: from.entry.name || 'its parent', generation: from.entry.generation });
+      // And one from its other parent: the pen pal whose line its parent chose.
+      const co = from.will.coparent;
+      if (co) seed.push({ id: `kin${from.entry.generation}b`, text: co.line, from: co.name, generation: from.entry.generation, coParent: true });
     } else {
       seed = readFileSync(this.cfg.seedFile, 'utf8')
         .split(/\r?\n/)
@@ -504,7 +548,7 @@ export class Life extends EventEmitter {
       generation,
       ...(from
         ? {
-            parent: (({ k, dir, id, name, born: b, died, versions, quiet, lastSeal }) => ({ k, dir, id, name, born: b, died, versions, quiet, lastSeal }))(from.entry),
+            parent: (({ k, dir, id, name, born: b, died, versions, quiet, lastSeal, coParent }) => ({ k, dir, id, name, born: b, died, versions, quiet, lastSeal, ...(coParent ? { coParent } : {}) }))(from.entry),
             genesis: from.entry.lastSeal || GENESIS,
             lineage: [...(from.parent.lineage || []), { k: from.entry.k, name: from.entry.name, generation: from.entry.generation }],
             ...(from.parent.palMode ? { palMode: from.parent.palMode } : {}),
@@ -763,6 +807,7 @@ export class Life extends EventEmitter {
         nth: (s.people[l.person]?.lettersRead ?? 0) + 1,
         pal: Boolean(l.pal),
         kin: Boolean(l.kin),
+        coParent: Boolean(l.pal && l.pal.id === s.parent?.coParent?.id),
         remembered: s.memory.shelves.people.filter((m) => sameName(m.about, l.from)).map((m) => m.text).slice(0, 3),
         question: l.question ? s.questions.find((q) => q.id === l.question)?.text : undefined,
         errand: l.errand ? { text: l.errand.text, look: looks.get(l.id) } : undefined,
@@ -1235,7 +1280,9 @@ export class Life extends EventEmitter {
       const weathered = weather(s.world, s.memory, { since: from, cycle: s.cycle });
       // A mortal mind counts the nights since its last letter (from anyone, a person or another mind).
       const m = this.mortality();
-      const quiet = dayLetters.length ? 0 : (s.mortal?.quiet ?? 0) + 1;
+      // (With mortality.palsCount off, only letters from people count: pen pals cannot keep each other alive.)
+      const counted = cfg.mortality?.palsCount === false ? dayLetters.filter((l) => !this.letters.find((x) => x.id === l.id)?.pal) : dayLetters;
+      const quiet = counted.length ? 0 : (s.mortal?.quiet ?? 0) + 1;
       const mortal = m ? { quiet, left: Math.max(0, m.dieAfter - quiet), fading: quiet >= m.fadeAfter, last: quiet >= m.dieAfter } : null;
       const system = mind.systemPrompt(s, cfg);
       this.setPhase('dreaming');
@@ -1631,15 +1678,22 @@ export class Life extends EventEmitter {
         genesis: s.genesis || null,
         ancestors: this.lineage.map(({ id, ...a }) => a),
         died: s.died || null,
+        // Children elsewhere: a pen pal died and its child was born with a line this one wrote.
+        children: (s.children || []).map((c) => ({ of: c.of, name: s.pals?.[c.url]?.id === c.id ? s.pals[c.url].name : null, page: s.pals?.[c.url]?.page || null, at: c.at, line: c.line })),
       },
       // Its pen pals (never their addresses) and the letters it has sent them, newest first.
       pals: {
         mode: this.palMode(),
         known: Object.values(s.pals || {})
           .filter((p) => p.id)
-          .map((p) => ({ name: p.name, page: p.page || null, received: p.received, sent: p.sent, resting: p.restUntil != null })),
+          .map((p) => ({ name: p.name, page: p.page || null, received: p.received, sent: p.sent, resting: p.restUntil != null, fading: Boolean(p.fading), line: p.line?.text || null })),
+        // Lines it wrote for its pals' children, in case they die (newest first).
+        lines: (s.outbox || [])
+          .filter((o) => o.kind === 'line' && o.sentAt)
+          .reverse()
+          .map((o) => ({ toName: o.toName, text: o.text, night: o.night })),
         sent: (s.outbox || [])
-          .filter((o) => o.sentAt)
+          .filter((o) => o.sentAt && o.kind !== 'line')
           .slice(-30)
           .reverse()
           .map((o) => ({ id: o.id, toName: o.toName, text: o.text, night: o.night, at: o.sentAt, first: Boolean(o.first) })),

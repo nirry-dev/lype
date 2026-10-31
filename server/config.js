@@ -90,6 +90,8 @@ const DEFAULTS = {
     enabled: false,
     fadeAfter: 10,
     dieAfter: 30,
+    // Whether a letter from a pen pal counts. With it on, two creatures that write to each other keep each other alive.
+    palsCount: true,
   },
   wishes: {
     // Where its keeper can turn a wish into an issue (a pre-filled "new issue" page); "" hides the link.

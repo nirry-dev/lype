@@ -125,6 +125,62 @@ test('a letter keeps it alive, and with mortality off it never counts', async ()
   assert.equal(off.life.lineage.length, 0);
 });
 
+test('a pen pal writes a line for a mortal pal’s child; the dying mind chooses it, and the pal learns it is the other parent', async () => {
+  const A_URL = 'http://127.0.0.1:9001/api/outbox';
+  const B_URL = 'http://127.0.0.1:9002/api/outbox';
+  const a = makeLife({ dieAfter: 2 });
+  const b = makeLife({ mortal: false });
+  a.life.cfg.pals.list = [B_URL];
+  b.life.cfg.pals.list = [A_URL];
+  b.life.cfg.pals.open.perNight = 0; // B writes A no letters (they would keep A alive), only the line for its child
+  a.life.state.name = 'Mimo';
+  b.life.state.name = 'Tobo';
+  const sites = { 'http://127.0.0.1:9001': a, 'http://127.0.0.1:9002': b };
+  const net = async (url) => {
+    const u = new URL(url);
+    const site = sites[u.origin];
+    if (u.pathname === '/api/outbox') return JSON.parse(JSON.stringify(outbox(site.life)));
+    const night = /^\/api\/night\/(\d+)$/.exec(u.pathname);
+    if (night) return JSON.parse(JSON.stringify(site.store.read(`nights/${String(night[1]).padStart(4, '0')}.json`)));
+    throw new Error('not found');
+  };
+  await b.life.pollPals(net); // B learns that A can die
+  assert.equal(Object.values(b.life.state.pals)[0].mortal, true);
+  await live(b.life, 2); // B's night: a line for A's child leaves, sealed
+  const line = b.life.state.outbox.find((o) => o.kind === 'line');
+  assert.ok(line?.sentAt && line.seal);
+  assert.equal(b.life.state.outbox.filter((o) => o.kind !== 'line').length, 0);
+
+  await a.life.pollPals(net);
+  const pal = Object.values(a.life.state.pals)[0];
+  assert.equal(pal.line.text, line.text, 'A has the line');
+  assert.equal(a.life.letters.length, 0, 'and it is not a letter: it keeps nobody alive');
+
+  await live(a.life, 4); // two quiet nights: A dies and chooses Tobo as its child's other parent
+  const entry = a.life.lineage[0];
+  assert.equal(entry.coParent.name, 'Tobo');
+  assert.equal(entry.will.coparent.line, line.text);
+  const seed = a.life.state.self.seed;
+  assert.equal(seed.at(-1).text, line.text);
+  assert.equal(seed.at(-1).coParent, true);
+  assert.equal(a.life.state.parent.coParent.name, 'Tobo');
+
+  await b.life.pollPals(net); // B sees a new mind in A's outbox, its parent A, and itself as the other parent
+  assert.equal(b.life.state.children.length, 1);
+  assert.equal(b.life.state.children[0].of, 'Mimo');
+  assert.match(b.life.journal.at(-1).text, /other parent/);
+  assert.equal(b.life.publicState().lineage.children[0].of, 'Mimo');
+});
+
+test('with palsCount off, letters from pen pals do not keep it alive', async () => {
+  const { life } = makeLife();
+  life.cfg.mortality.palsCount = false;
+  await live(life, 1);
+  life.addLetter({ from: 'Tobo', text: 'Hello from another card.', person: 'pal:x', pal: { id: 'x', letter: 'o1', trusted: true } });
+  await live(life, 1);
+  assert.equal(life.state.mortal.quiet, 1, 'the pal letter was read, but did not count');
+});
+
 test('a will line too close to its seed is refused, and a child may not take a name from its lineage', async () => {
   const { life } = makeLife();
   life.brain = {

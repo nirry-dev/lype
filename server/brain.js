@@ -274,7 +274,10 @@ function createMockBrain(cfg = {}) {
         line_why: 'It took me a long time to learn it, and I would like you to start with it.',
         letter: 'I lived here before you. Nobody wrote for a long time, so I am going. Keep the letters. Answer the ones that come back.',
         keep: things.slice(0, 1),
+        coparent: /^- (.+?) offered: /m.exec(user)?.[1] || '', // the first pen pal who offered a line
       });
+    } else if (kind === 'line') {
+      text = 'You will hear from others slowly, and that is still hearing.';
     } else if (kind === 'dream') {
       text = 'I dreamed the letter box was a circle and every circle was a letter box. Someone knocked, but knocking needs a door, so I drew one.';
     } else if (kind === 'sleep') {

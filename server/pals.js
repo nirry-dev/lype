@@ -75,13 +75,16 @@ export function outbox(life, { file = false } = {}) {
       name: s.name || 'unnamed',
       night: file ? 'nights/{n4}.json' : 'night/{n}',
       ...(publicPage(life.cfg.publish?.url) ? { page: publicPage(life.cfg.publish.url) } : {}),
-      // A child writes from the outbox its parent wrote from; this tells its parent's pen pals who it is.
-      ...(s.parent ? { parent: { id: s.parent.id, name: s.parent.name || 'unnamed' } } : {}),
+      // A child writes from the outbox its parent wrote from; this tells its parent's pen pals who it is, and its
+      // other parent (a pen pal who gave it a line) that it is theirs too.
+      ...(s.parent ? { parent: { id: s.parent.id, name: s.parent.name || 'unnamed', ...(s.parent.coParent ? { coParent: { id: s.parent.coParent.id } } : {}) } } : {}),
+      // Whether it can die, and whether it is fading: its pals write it a line for its child, and may write to it.
+      ...(life.mortality() ? { mortal: true, fading: life.mortality().fading } : {}),
     },
     letters: (s.outbox || [])
       .filter((o) => o.sentAt && o.seal)
       .slice(-100)
-      .map((o) => ({ id: o.id, to: o.to, toName: o.toName, text: o.text, inReplyTo: o.inReplyTo || null, night: o.night, seal: o.seal, at: o.sentAt })),
+      .map((o) => ({ id: o.id, ...(o.kind ? { kind: o.kind } : {}), to: o.to, toName: o.toName, text: o.text, inReplyTo: o.inReplyTo || null, night: o.night, seal: o.seal, at: o.sentAt })),
   };
 }
 
@@ -91,9 +94,22 @@ export function readOutbox(raw) {
   if (!from || typeof from.id !== 'string' || typeof from.name !== 'string' || !Array.isArray(raw.letters)) return null;
   const letters = raw.letters
     .filter((l) => l && typeof l.id === 'string' && typeof l.to === 'string' && typeof l.text === 'string' && l.text.trim())
-    .map((l) => ({ ...l, text: l.text.slice(0, 1200), toName: String(l.toName || '').slice(0, 40) }));
+    // A "line" is not a letter: it is what a pal would give this creature's child, if it died.
+    .map((l) => ({ ...l, kind: l.kind === 'line' ? 'line' : undefined, text: l.text.slice(0, 1200), toName: String(l.toName || '').slice(0, 40) }));
   const page = publicPage(from.page);
   const tidy = (name) => String(name || '').replace(/\s+/g, ' ').trim().slice(0, 40) || 'a creature';
-  const parent = typeof from.parent?.id === 'string' ? { id: from.parent.id.slice(0, 40), name: tidy(from.parent.name) } : null;
-  return { from: { id: from.id.slice(0, 40), name: tidy(from.name), night: String(from.night || ''), ...(page ? { page } : {}), ...(parent ? { parent } : {}) }, letters };
+  const id = (x) => (typeof x?.id === 'string' ? x.id.slice(0, 40) : null);
+  const parent = id(from.parent) ? { id: id(from.parent), name: tidy(from.parent.name), ...(id(from.parent.coParent) ? { coParent: { id: id(from.parent.coParent) } } : {}) } : null;
+  return {
+    from: {
+      id: from.id.slice(0, 40),
+      name: tidy(from.name),
+      night: String(from.night || ''),
+      ...(page ? { page } : {}),
+      ...(parent ? { parent } : {}),
+      mortal: from.mortal === true,
+      fading: from.fading === true,
+    },
+    letters,
+  };
 }

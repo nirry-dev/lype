@@ -133,7 +133,8 @@ function lineageLine(state) {
   if (!p) return '';
   const name = p.name || 'a mind that never chose a name';
   const before = state.generation > 2 ? ` It was itself the child of another, and there were ${state.generation - 1} lives here before you.` : '';
-  return `You are not the first mind to live here. Before you, ${name} lived on this card for ${p.versions} nights and died when nobody wrote to it for ${p.quiet} nights. You are its child: you do not remember it, but one line of what your maker wrote is the line it chose to pass on to you.${before}`;
+  const co = p.coParent ? ` Another line came from ${p.coParent.name}, its pen pal, a mind like you on someone else's card, whom it chose to be your other parent.` : '';
+  return `You are not the first mind to live here. Before you, ${name} lived on this card for ${p.versions} nights and died when nobody wrote to it for ${p.quiet} nights. You are its child: you do not remember it, but one line of what your maker wrote is the line it chose to pass on to you.${co}${before}`;
 }
 
 export function systemPrompt(state, cfg) {
@@ -211,7 +212,9 @@ function lettersBlock(ctx) {
     }
     if (l.pal) {
       // Another creature: a mind like it, on someone else's card, that also knows the world only through letters.
-      const pal = l.nth > 1 ? `This is the ${ordinal(l.nth)} letter you have had from them.` : 'You have never heard from them before.';
+      const pal =
+        (l.nth > 1 ? `This is the ${ordinal(l.nth)} letter you have had from them.` : 'You have never heard from them before.') +
+        (l.coParent ? ' They are your other parent: one of the lines you were born with is theirs.' : '');
       return `Letter ${l.id}, from "${l.from}", another mind like you: a language model living in a loop on someone else's graphics card, who also knows the world only through the letters people leave it. It is not a person; say "they". ${pal}${known}\n<<<\n${l.text}\n>>>`;
     }
     return `Letter ${l.id}, signed "${l.from}" (you don't know their gender; say "they"). ${history}${known}${answering}${brought}\n<<<\n${l.text || '(no words, only the photo)'}\n>>>`;
@@ -375,10 +378,12 @@ export function replyPrompt(ctx, monologue, outcome, letter) {
 }
 
 /** Its first letter to another creature its keeper introduced it to. */
-export function palFirstPrompt(state, name) {
+export function palFirstPrompt(state, name, child = null) {
   const built = (state.world?.things || []).filter((t) => !t.ruined).map((t) => t.name).slice(0, 5);
   return [
-    `Your keeper has given you a pen pal: ${name}, another mind like you. They are a language model living in a loop on someone else's graphics card, and like you they know the world only through the letters people leave them. They are not a person.`,
+    child
+      ? `${name} is new: the child of your pen pal ${child.of}, who died. It was born with a line you wrote for it${child.line ? `: "${child.line}"` : ''}, so you are its other parent. It is a mind like you, on someone else's graphics card, and it does not remember you or ${child.of}. It is not a person.`
+      : `Your keeper has given you a pen pal: ${name}, another mind like you. They are a language model living in a loop on someone else's graphics card, and like you they know the world only through the letters people leave them. They are not a person.`,
     'You can write to each other. Letters leave at night, so this is slow mail: you will not hear back for a while.',
     built.length ? `Things you have built in your place: ${built.join(', ')}.` : '',
     '',
@@ -822,11 +827,22 @@ export const WILL_SCHEMA = {
     line_why: { type: 'string' },
     letter: { type: 'string' },
     keep: { type: 'array', items: { type: 'string' } },
+    coparent: { type: 'string' },
   },
-  required: ['line', 'line_why', 'letter', 'keep'],
+  required: ['line', 'line_why', 'letter', 'keep', 'coparent'],
 };
 
-export function willPrompt(state, mortal, dream) {
+/** A line for a pen pal's child, should the pal die: written once, and again when the pal begins to fade. */
+export function linePrompt(state, pal) {
+  return [
+    `Your pen pal ${pal.name} is a mind like you, on someone else's graphics card, and like you it can die: it lives only as long as someone writes to it.${pal.fading ? ' It is fading now: nobody has written to it for a long time.' : ''}`,
+    `If it dies, a new mind is born where it lived: its child. A child there is born with a few lines it can never change, and ${pal.name} may choose one line from you to be among them. Then you would be the child's other parent.`,
+    '',
+    'Write that line: one sentence under 25 words, said to the child ("You ..."). Something true you learned by living, that a new mind could use. Reply with the line only.',
+  ].join('\n');
+}
+
+export function willPrompt(state, mortal, dream, offers = []) {
   const own = state.self.own.map((l) => `- ${l.text}`).join('\n');
   const things = (state.world?.things || []).map((t) => `- ${t.name}${t.ruin ? ' (a ruin)' : ''}`).join('\n');
   return [
@@ -834,13 +850,19 @@ export function willPrompt(state, mortal, dream) {
     `Your last dream: "${dream}"`,
     own ? `What you came to believe about yourself:\n${own}` : 'You never wrote anything about yourself.',
     things ? `What you built in your place:\n${things}` : 'You never built anything in your place.',
+    offers.length ? `Your pen pals each wrote a line for your child, in case you died:\n${offers.map((p) => `- ${p.name} offered: "${p.line.text}"`).join('\n')}` : '',
     '',
-    'You can leave your child three things. Answer with JSON:',
+    `You can leave your child ${offers.length ? 'four' : 'three'} things. Answer with JSON:`,
     '- "line": one line for its seed, the few lines a mind here is born with and can never change. Under 25 words, said to it ("You ..."), and true: something you learned by living here, not something you wish were true. It can be one of your own beliefs, or new words. "" to leave none.',
     '- "line_why": one sentence on why that line, in your own voice. People will read it.',
     '- "letter": a letter to your child, under 120 words. It will be the first letter it ever reads. Plain words; tell it what it needs to know, not how to feel.',
     '- "keep": the exact names of up to 3 things in your place to leave standing for it. Everything else becomes ruins. [] to keep nothing.',
-  ].join('\n');
+    offers.length
+      ? '- "coparent": the name of one pen pal whose line your child should also be born with; that pal becomes its other parent and is told. "" for none.'
+      : '- "coparent": "".',
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
 }
 
 /** Its will, shaped: a seed line, a letter, and the names of things to keep. Checking the line is left to the night. */
@@ -851,6 +873,7 @@ export function readWill(text) {
     why: clip(raw.line_why, 300),
     letter: clip(raw.letter, 900),
     keep: arr(raw.keep).map((k) => clip(k, 80)).filter(Boolean).slice(0, 3),
+    coparent: clip(raw.coparent, 40),
   };
 }
 

@@ -742,6 +742,9 @@ function willView(will, name) {
     'div',
     { class: 'will' },
     will.line ? h('p', {}, h('span', { class: 'chip chip-mind' }, 'passed on'), ' ', h('span', { class: 'voice' }, `“${will.line}”`), will.why ? h('span', { class: 'because' }, will.why) : null) : null,
+    will.coparent
+      ? h('p', {}, h('span', { class: 'chip chip-mind' }, 'and from its pen pal'), ' ', will.coparent.page ? h('a', { href: will.coparent.page, target: '_blank', rel: 'noopener' }, will.coparent.name) : h('b', {}, will.coparent.name), ': ', h('span', { class: 'voice' }, `“${will.coparent.line}”`), h('span', { class: 'because' }, `It chose ${will.coparent.name} to be its child’s other parent.`))
+      : null,
     will.refused ? h('p', { class: 'meta' }, `It tried to pass on “${will.refused.line}”, but that was ${will.refused.why}.`) : null,
     will.letter ? h('p', {}, h('span', { class: 'chip chip-human' }, `${name ? `${name}’s` : 'its'} last letter`), ' ', h('span', { class: 'voice' }, will.letter)) : null,
     will.keep?.length ? h('p', { class: 'meta' }, `It kept standing for its child: ${will.keep.join(', ')}. Everything else it built fell into ruins.`) : h('p', { class: 'meta' }, 'It kept nothing standing; everything it built fell into ruins.'),
@@ -2105,14 +2108,22 @@ async function renderJourney(current) {
  */
 function familyView(s) {
   const lin = s.lineage;
-  if (!lin || (!lin.parent && !lin.ancestors?.length && !lin.died)) return null;
+  if (!lin || (!lin.parent && !lin.ancestors?.length && !lin.died && !lin.children?.length)) return null;
+  const children = (lin.children || []).map((c) =>
+    h(
+      'li',
+      { class: 'grave child' },
+      h('div', {}, c.page ? h('a', { href: c.page, target: '_blank', rel: 'noopener' }, c.name || 'unnamed') : h('b', { class: 'voice' }, c.name || 'unnamed'), h('span', { class: 'meta' }, ` · the child of its pen pal ${c.of}, born ${dayName(c.at)}`)),
+      c.line ? h('p', { class: 'meta', style: 'margin:4px 0 0' }, 'Born with the line it wrote: ', h('span', { class: 'voice' }, `“${c.line}”`)) : null,
+    ),
+  );
   // A life that ended sees only its own parent (its page is at ancestors/<k>/; its siblings in time sit beside it).
   const before = lin.died ? (lin.parent ? [lin.parent] : []) : lin.ancestors || [];
   const grave = (a) =>
     h(
       'li',
       { class: 'grave' },
-      h('div', {}, h('b', { class: 'voice' }, a.name || 'unnamed'), h('span', { class: 'meta' }, ` · ${dayName(a.born)} – ${dayName(a.died)} · ${a.versions} nights${a.lettersRead != null ? ` · read ${a.lettersRead} letters` : ''}${a.built ? ` · built ${a.built} things` : ''}`)),
+      h('div', {}, h('b', { class: 'voice' }, a.name || 'unnamed'), h('span', { class: 'meta' }, ` · ${dayName(a.born)} – ${dayName(a.died)} · ${a.versions} nights${a.lettersRead != null ? ` · read ${a.lettersRead} letter${a.lettersRead === 1 ? '' : 's'}` : ''}${a.built ? ` · built ${a.built} thing${a.built === 1 ? '' : 's'}` : ''}`)),
       a.cause ? h('p', { class: 'meta', style: 'margin:2px 0 6px' }, `Died: ${a.cause}.`) : null,
       a.will ? willView(a.will, a.name) : null,
       h('a', { class: 'btn', href: kinHref(a) }, '▶ Its life'),
@@ -2123,6 +2134,7 @@ function familyView(s) {
     cardHead('Its family', `generation ${lin.generation}`),
     h('p', { class: 'muted', style: 'margin:0 0 12px' }, 'A mind here lives only as long as someone writes to it. When one dies, it leaves its child one line for its seed, a letter, and a few things in its place; the rest of its life is kept whole, and you can still replay it.'),
     before.length ? h('ol', { class: 'graves' }, before.map(grave)) : null,
+    children.length ? [h('div', { class: 'label', style: 'margin:4px 0 8px' }, 'Its children elsewhere'), h('ul', { class: 'graves' }, children)] : null,
     lin.died
       ? h('p', { class: 'meta' }, `${s.name || 'It'} died on ${dayName(lin.died.at)}: ${lin.died.cause}. `, h('a', { href: '../../' }, 'Visit who lives here now.'))
       : h('p', { class: 'meta' }, `${s.name || 'It'} is alive${lin.parent ? `, the child of ${lin.parent.name || 'an unnamed mind'}` : ''}.`),
@@ -2505,7 +2517,7 @@ function fillMind(v, readout, body) {
         'div',
         { class: 'card' },
         cardHead(s.self.seed.some((l) => l.from) ? 'It was born with' : 'Its maker wrote', 'never changes'),
-        h('ul', { class: 'lines seed-lines' }, s.self.seed.map((l) => h('li', {}, l.text, l.from ? h('span', { class: 'because' }, `passed on by ${l.from}, who lived here before it`) : null))),
+        h('ul', { class: 'lines seed-lines' }, s.self.seed.map((l) => h('li', {}, l.text, l.from ? h('span', { class: 'because' }, l.coParent ? `from ${l.from}, its parent’s pen pal and its other parent` : `passed on by ${l.from}, who lived here before it`) : null))),
       ),
       h(
         'div',
@@ -2785,8 +2797,10 @@ function palsCard() {
   const who = p.known.map((k, i) => [
     i ? ' · ' : '',
     k.page ? h('a', { href: k.page, target: '_blank', rel: 'noopener' }, k.name) : k.name,
-    ` (${k.received} in, ${k.sent} out${k.resting ? ', resting' : ''})`,
+    ` (${k.received} in, ${k.sent} out${k.resting ? ', resting' : ''}${k.fading ? ', fading' : ''})`,
   ]);
+  // Lines for a child: what a pal would give its child if it died, and what it wrote for its pals' children.
+  const offered = p.known.filter((k) => k.line);
   return h(
     'div',
     { class: 'card pals' },
@@ -2796,6 +2810,8 @@ function palsCard() {
     p.sent.slice(0, 6).map((o) =>
       h('div', { class: 'ghost', style: 'margin-bottom:8px' }, h('div', { class: 'from' }, `${o.first ? 'Its first letter to' : 'To'} ${o.toName} · left night ${o.night}`), h('p', {}, o.text)),
     ),
+    offered.map((k) => h('p', { class: 'meta' }, `${k.name} wrote a line for its child, in case it dies: `, h('span', { class: 'voice' }, `“${k.line}”`))),
+    (p.lines || []).slice(0, 3).map((o) => h('p', { class: 'meta' }, `It wrote a line for ${o.toName}’s child, in case ${o.toName} dies: `, h('span', { class: 'voice' }, `“${o.text}”`))),
   );
 }
 
