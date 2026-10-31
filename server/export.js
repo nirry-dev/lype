@@ -76,8 +76,11 @@ for (const c of life.cycles) {
 const web = join(ROOT, 'web');
 // Stamped URLs, so a browser (or a CDN) holding the previous export's files can't pair them with this page.
 const stamp = snapshotAt.replace(/\D/g, '').slice(0, 14);
+// --relay <url>: when the creature is reachable through that relay, the page goes live; when not, it plays this copy.
+const relayUrl = argv.includes('--relay') ? argv[argv.indexOf('--relay') + 1] : '';
+const relayMeta = /^https:\/\/[\w.-]+(:\d+)?\/?$|^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(relayUrl || '') ? `\n    <meta name="iterant-relay" content="${relayUrl.replace(/\/$/, '')}" />` : '';
 const page = readFileSync(join(web, 'index.html'), 'utf8')
-  .replace('<meta name="color-scheme" content="dark" />', '<meta name="color-scheme" content="dark" />\n    <meta name="iterant-snapshot" content="data/" />')
+  .replace('<meta name="color-scheme" content="dark" />', `<meta name="color-scheme" content="dark" />\n    <meta name="iterant-snapshot" content="data/" />${relayMeta}`)
   .replace('href="style.css"', `href="style.css?v=${stamp}"`)
   .replace('src="app.js"', `src="app.js?v=${stamp}"`);
 write('index.html', page);

@@ -9,6 +9,7 @@ import { cleanJpeg } from './errands.js';
 import { ROOT, loadConfig } from './config.js';
 import { Life, letterStatus } from './life.js';
 import { publish } from './publish.js';
+import { RELAY_KEY, connectRelay } from './relay.js';
 import { readSenses } from './senses.js';
 import { createStore, pad } from './store.js';
 import * as views from './views.js';
@@ -80,6 +81,14 @@ function isAdmin(req) {
   return given.length === want.length && timingSafeEqual(given, want);
 }
 
+/** A request its relay passed on: counted by the visitor's hashed address the relay gives, not by this machine's. */
+function fromRelay(req) {
+  const given = Buffer.from(String(req.headers['x-relay-key'] || ''));
+  const want = Buffer.from(RELAY_KEY);
+  const client = String(req.headers['x-relay-client'] || '');
+  return given.length === want.length && timingSafeEqual(given, want) && /^[0-9a-f]{8,64}$/.test(client) ? `relay:${client}` : null;
+}
+
 const recentLetters = new Map(); // ip or visitor -> timestamps
 function rateLimited(keys) {
   const hour = Date.now() - 3600000;
@@ -95,9 +104,11 @@ function rateLimited(keys) {
 // ---------- live stream ----------
 
 const clients = new Set();
+let relay = null; // the outbound connection to a relay, when there is one
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of clients) res.write(frame);
+  relay?.send(event, data);
 }
 for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish', 'errand']) life.on(event, (data) => broadcast(event, data));
 life.on('night', (n) => publish(cfg, `${life.state.name || 'It'} became version ${n.n}: ${n.release?.title || 'a night'}`));
@@ -105,7 +116,7 @@ setInterval(() => {
   for (const res of clients) res.write(': keep-alive\n\n');
 }, 25000).unref();
 setInterval(async () => {
-  if (!clients.size || life.busy) return;
+  if ((!clients.size && !relay) || life.busy) return;
   life.lastSenses = await readSenses(new Date(), { sample: false });
   broadcast('senses', life.lastSenses);
 }, 20000).unref();
@@ -151,7 +162,7 @@ async function api(req, res, url) {
     const from = tidy(body.from, 40).replace(/\n/g, ' ') || 'someone';
     const vid = visitorId(body.visitor);
     if (!text) return json(res, 400, { error: 'A letter needs some words.' });
-    const ip = req.socket.remoteAddress || 'unknown';
+    const ip = fromRelay(req) || req.socket.remoteAddress || 'unknown';
     if (rateLimited([`ip:${ip}`, ...(vid ? [`v:${vid}`] : [])])) return json(res, 429, { error: 'That is a lot of letters for one hour. It reads slowly; give it time.' });
     const letter = life.addLetter({ from, text, person: vid || `name:${from.toLowerCase()}`, question: typeof body.question === 'string' ? body.question : null });
     return json(res, 201, letter);
@@ -168,7 +179,7 @@ async function api(req, res, url) {
     const photo = cleanJpeg(raw).data;
     const from = tidy(body.from, 40).replace(/\n/g, ' ') || 'someone';
     const vid = visitorId(body.visitor);
-    const ip = req.socket.remoteAddress || 'unknown';
+    const ip = fromRelay(req) || req.socket.remoteAddress || 'unknown';
     if (rateLimited([`ip:${ip}`, ...(vid ? [`v:${vid}`] : [])])) return json(res, 429, { error: 'That is a lot for one hour. It reads slowly; give it time.' });
     const result = life.addReturn({ errand: brought[1], from, text: tidy(body.note, 400), person: vid || `name:${from.toLowerCase()}`, photo });
     return result.ok ? json(res, 201, result.letter) : json(res, 409, { error: result.reason });
@@ -301,6 +312,10 @@ server.listen(cfg.port, cfg.host, () => {
   console.log(`  data:   ${cfg.dataDir}`);
   if (cfg.publish.dir) console.log(`  publish: after each night to ${cfg.publish.dir}${cfg.publish.git ? ' (commit and push)' : ''}`);
   console.log(`  admin:  ${base}/?admin=${adminToken}  (wake it, put it to sleep, pause it)`);
+  if (cfg.relay.connect) {
+    console.log(`  relay:  ${cfg.relay.url} (outbound only)`);
+    relay = connectRelay(cfg, { local: base });
+  }
   if (process.argv.includes('--open')) openPage(base);
 });
 
@@ -312,6 +327,7 @@ function openPage(url) {
 
 function shutdown() {
   life.stop();
+  relay?.close();
   for (const res of clients) res.end();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1500).unref();

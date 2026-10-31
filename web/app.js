@@ -154,7 +154,11 @@ const app = {
 
 // A static snapshot (npm run export) carries <meta name="iterant-snapshot" content="data/">: the same viewer then
 // reads files instead of the API and is read-only. Paths stay relative so it also works under a sub-path (/iterant/).
-const SNAPSHOT = document.querySelector('meta[name="iterant-snapshot"]')?.getAttribute('content') ?? null;
+let SNAPSHOT = document.querySelector('meta[name="iterant-snapshot"]')?.getAttribute('content') ?? null;
+// A snapshot can also name a relay (<meta name="iterant-relay">): while the creature is reachable through it, the page
+// is live from there (BASE is the relay) instead of playing the copy; when it is away, the copy plays as before.
+const RELAY = document.querySelector('meta[name="iterant-relay"]')?.getAttribute('content') ?? null;
+let BASE = '';
 // Framed inside another page (?embed): no header or keeper bar; the host page supplies the context.
 if (new URLSearchParams(location.search).has('embed')) document.documentElement.classList.add('embed');
 
@@ -172,14 +176,14 @@ async function api(path, opts = {}) {
     url = (!opts.method || opts.method === 'GET') && snapshotFile(path);
     if (!url) throw Object.assign(new Error('This is a recording; it only plays back.'), { status: 405 });
   }
-  const res = await fetch(url, opts);
+  const res = await fetch(BASE + url, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status });
   return data;
 }
 
 /** Drawings and other files referenced by a page-relative path. */
-const asset = (p) => (SNAPSHOT ? `${SNAPSHOT}${p}` : p);
+const asset = (p) => (SNAPSHOT ? `${SNAPSHOT}${p}` : BASE + p);
 const workSrc = (n) => asset(`works/${pad6(n)}.svg`);
 const invalidate = (...keys) => keys.forEach((k) => (app[k] = null));
 
@@ -201,8 +205,41 @@ function scheduleLive() {
   });
 }
 
+/** Its live events: from its own server, or (through a relay) over a WebSocket that delivers the same events. */
+function liveSource() {
+  if (!BASE) return new EventSource('api/stream');
+  const target = new EventTarget();
+  let delay = 1000;
+  let away = 0;
+  const open = () => {
+    const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}live`);
+    ws.addEventListener('open', () => (delay = 1000));
+    ws.addEventListener('message', (m) => {
+      const { event, data } = JSON.parse(m.data);
+      if (event === 'offline') {
+        // It went away. If it doesn't come back soon, show the copy it last published instead.
+        target.dispatchEvent(new Event('error'));
+        away ||= setTimeout(() => location.reload(), 15000);
+        return;
+      }
+      if (event === 'hello') {
+        clearTimeout(away);
+        away = 0;
+        target.dispatchEvent(new Event('open'));
+      }
+      target.dispatchEvent(new MessageEvent(event, { data: JSON.stringify(data) }));
+    });
+    ws.addEventListener('close', () => {
+      target.dispatchEvent(new Event('error'));
+      setTimeout(open, (delay = Math.min(delay * 2, 30000)));
+    });
+  };
+  open();
+  return target;
+}
+
 function connect() {
-  const es = new EventSource('api/stream');
+  const es = liveSource();
   es.addEventListener('open', () => {
     app.connected = true;
     renderStatus();
@@ -2738,7 +2775,17 @@ setInterval(() => {
   if (app.view === 'now' && !app.state.busy) updateNow();
 }, 20000);
 
-if (SNAPSHOT) {
+/** Whether the creature answers through its relay right now. */
+async function relayAwake() {
+  try {
+    const res = await fetch(`${RELAY}/api/state`, { signal: AbortSignal.timeout(5000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function playSnapshot() {
   // A recording: one read of its state, no live connection, no keeper.
   api('/api/state')
     .then((state) => {
@@ -2746,6 +2793,22 @@ if (SNAPSHOT) {
       route();
     })
     .catch((err) => fill($('#view'), h('p', { class: 'empty' }, `Couldn't load this recording: ${err.message}`)));
+}
+
+if (SNAPSHOT && RELAY) {
+  relayAwake().then((awake) => {
+    if (!awake) {
+      playSnapshot();
+      // When it wakes up for the world again, the page goes live.
+      const check = setInterval(async () => (await relayAwake()) && (clearInterval(check), location.reload()), 60000);
+      return;
+    }
+    SNAPSHOT = null;
+    BASE = `${RELAY}/`;
+    connect(); // no keeper through a relay: its keeper uses its own page
+  });
+} else if (SNAPSHOT) {
+  playSnapshot();
 } else {
   initAdmin();
   connect();

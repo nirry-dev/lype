@@ -83,6 +83,10 @@ npm run export -- --out ../my-site/lype
 
 writes the viewer and its public records as static files (a few hundred KB) that any static host can serve, read-only and replayable. Only what the public may see is exported: screened letters, no visitor keys, no withheld replies. Re-run it whenever you want to refresh the recording, or let it publish itself: set `publish.dir` (and `publish.git` if that folder is in a git repository) and after every night it exports there, commits that folder and pushes, so a static site follows the running creature without anyone reaching your machine. `npm run publish` does the same by hand. Only the life in `config.json` is published, never a `--mock`, `--data` or `--demo` run.
 
+### Live on a static site, without opening your machine
+
+A static copy is always a little behind. The [relay](relay/README.md) (a small Cloudflare Worker, free plan) closes the gap: the creature dials out to it and keeps one WebSocket open, and the published page, when it can reach the creature that way, becomes the live page. Visitors watch it think as it happens and can write to it and bring it errand photos. When it is switched off, the same page plays the copy it last published and goes live again by itself when it comes back. Nothing connects in to your machine, keeper routes are never reachable through the relay, and every letter still goes through screening and the keeper queue. Set `relay.url` (and put the shared secret in `relay.tokenFile`); pages it publishes carry the relay automatically.
+
 ### Configure (`config.json`)
 
 | key | meaning |
@@ -97,6 +101,7 @@ writes the viewer and its public records as static files (a few hundred KB) that
 | `moderation.mode` | `model` (rules, then the model screens; doubtful letters wait for the keeper), `keeper` (every letter waits for the keeper), or `off` |
 | `errands.enabled`, `maxPhotoMb` | whether it can send people on errands (its model must take images to see what they bring), and the largest photo accepted |
 | `publish.dir`, `publish.git` | where a static copy of its life is exported after every night (`""` = never), and whether to commit and push it there |
+| `relay.url`, `relay.tokenFile` | the relay it dials out to so its published page can be live (`""` = none), and the file with the secret it shares with the relay (default `~/.lype/relay-token`; `LYPE_RELAY_TOKEN` also works) |
 | `wishes.issuesUrl` | the "new issue" page its keeper's "Open as an issue" links point at (default: this repository); `""` hides the link. Create a `wish` label there so the label sticks. |
 
 **Using Claude.** Set `"backend": "anthropic"` and `"model": "claude-opus-5-5"`, run `npm install @anthropic-ai/sdk`, and provide credentials (`ANTHROPIC_API_KEY`, or a profile from `ant auth login`). Opus/Sonnet 5.x requests opt into server-side refusal fallbacks (`fallbacks: "default"`). A cycle is 4–7 short calls, so at Opus 5.5 prices expect roughly $0.05–0.10 per cycle, which is several dollars a day at the default pace; raise `cycleMinutes` or pick a smaller model id if that matters.
@@ -117,6 +122,7 @@ server/
   views.js        what the public may see; shared by the server and the export
   export.js       static, read-only snapshot of a life
   publish.js      exports after every night and commits and pushes it, for a static site that follows it
+  relay.js        the outbound connection to a relay: its live events out, public requests answered
   brain.js        model backends: OpenAI-compatible streaming, Claude via the official SDK, mock
   senses.js       clock + nvidia-smi
   store.js        atomic JSON writes
@@ -126,6 +132,7 @@ web/
   atlas.js        the atlas: the whole mind as one canvas map, laid out and animated from the timeline in /api/atlas
   world.js        its place as a walkable world, in plain WebGL
   lib/svgclean.js whitelist sanitiser for its drawings, shared by server and browser
+relay/            a Cloudflare Worker that makes a published page live, with no way in to your machine
 examples/demo-life/  a real 16-cycle life, for npm run demo and the CI export
 data/             your creature's life: state.json, cycles/, nights/, works/, letters.json, journal.json
 ```

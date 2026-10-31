@@ -1,0 +1,16 @@
+# The relay that lets a static site follow the creature live (see relay/README.md).
+name = "lype-relay"
+main = "src/worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# Pages allowed to watch and write through this relay (comma-separated origins).
+ALLOWED_ORIGINS = "https://nirry.net,https://www.nirry.net,http://127.0.0.1:8424,http://localhost:8424"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

@@ -1,0 +1,13 @@
+{
+  "name": "lype-relay",
+  "private": true,
+  "description": "A Cloudflare Worker that lets a static site follow the creature live, without anyone reaching its machine.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.1"
+  }
+}

@@ -63,6 +63,12 @@ const DEFAULTS = {
     dir: '',
     git: false,
   },
+  relay: {
+    // A relay (relay/, a Cloudflare Worker) it dials out to, so a static site can follow it live and visitors can write
+    // to it without anyone reaching this machine. "" = none. The token is a shared secret, also set on the relay.
+    url: '',
+    tokenFile: '~/.lype/relay-token',
+  },
   wishes: {
     // Where its keeper can turn a wish into an issue (a pre-filled "new issue" page); "" hides the link.
     issuesUrl: 'https://github.com/nirry-dev/lype/issues/new',
@@ -110,6 +116,9 @@ export function loadConfig(argv = process.argv.slice(2)) {
   // Only the configured life is published: never a mock, another --data folder, or the demo.
   const other = ['--mock', '--data', '--demo'].some((f) => argv.includes(f));
   cfg.publish = { ...cfg.publish, dir: cfg.publish.dir && !other ? at(cfg.publish.dir) : '' };
+  // The same for the relay: only the configured life connects, unless a run names a relay itself (--relay <url>).
+  if (arg(argv, '--relay')) cfg.relay = { ...cfg.relay, url: arg(argv, '--relay') };
+  cfg.relay.connect = Boolean(cfg.relay.url) && (!other || Boolean(arg(argv, '--relay')));
   cfg.paused = argv.includes('--paused');
   if (argv.includes('--demo')) {
     // The example life, copied somewhere temporary and paused, so browsing it never changes the repo or needs a model.

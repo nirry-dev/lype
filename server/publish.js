@@ -18,7 +18,8 @@ export function publish(cfg, message = 'Its life, published') {
   if (!dir) return Promise.resolve(false);
   queue = queue.then(async () => {
     try {
-      await run(process.execPath, [join(ROOT, 'server', 'export.js'), '--out', dir, '--data', cfg.dataDir], { windowsHide: true });
+      const relay = cfg.relay?.url ? ['--relay', cfg.relay.url] : [];
+      await run(process.execPath, [join(ROOT, 'server', 'export.js'), '--out', dir, '--data', cfg.dataDir, ...relay], { windowsHide: true });
       if (!useGit) return true;
       await git(dir, 'add', '-A', '--', '.');
       const changed = await git(dir, 'diff', '--cached', '--quiet', '--', '.').then(() => false, () => true);

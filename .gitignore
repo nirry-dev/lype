@@ -8,3 +8,7 @@ node_modules/
 *.tmp
 .env
 .claude/
+
+# The relay's local secrets and build state
+relay/.dev.vars
+relay/.wrangler/
