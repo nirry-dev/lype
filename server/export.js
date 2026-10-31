@@ -56,6 +56,13 @@ write('data/works.json', views.works(life, store));
 write('data/life.json', views.replay(life, store));
 write('data/atlas.json', views.atlas(life, store));
 write('data/world.json', views.world(life));
+const errands = views.errands(life);
+write('data/errands.json', errands);
+for (const r of errands.flatMap((e) => e.returns)) {
+  if (!r.photo) continue;
+  mkdirSync(join(out, 'data/returns'), { recursive: true });
+  copyFileSync(store.path(r.photo), join(out, `data/${r.photo}`));
+}
 for (const c of life.cycles) {
   write(`data/cycles/${pad(c.n)}.json`, views.cycle(store, c.n));
   const svg = store.path(`works/${pad(c.n)}.svg`);

@@ -1810,3 +1810,98 @@ a.btn {
     animation: none;
   }
 }
+
+/* ---------- errands: photos people bring back ---------- */
+
+.section-title {
+  font: 500 22px/1.2 var(--serif);
+  margin: 28px 0 12px;
+}
+.errands-open,
+.errands-open + section {
+  display: grid;
+  gap: 16px;
+}
+.card.errand.closed {
+  opacity: 0.7;
+}
+.errand-slot:not(:empty) {
+  margin-top: 14px;
+  max-width: 560px;
+}
+.errand-form input[type='file'] {
+  color: var(--ink-2);
+  font: 13px var(--sans);
+}
+.return-preview,
+.paper .return-photo {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+  margin: 8px 0;
+  box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.6);
+}
+.held .return-photo {
+  display: block;
+  max-width: 260px;
+  max-height: 220px;
+  border-radius: 8px;
+  margin: 8px 0;
+}
+.returns {
+  margin-top: 16px;
+}
+.return-grid,
+.filled-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  margin-top: 8px;
+}
+.filled-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.return {
+  margin: 0;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.return img,
+.filled-photo {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--bg-3);
+}
+.filled-photo {
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+.return figcaption {
+  padding: 10px 12px 12px;
+}
+.return-note {
+  margin: 6px 0 0;
+  color: var(--text-2);
+}
+.return-verdict {
+  margin: 8px 0 4px;
+  font-size: 17px;
+  color: var(--mind);
+}
+.filled-errand {
+  font: 600 13px/1.4 var(--mono);
+  letter-spacing: 0.02em;
+  margin: 0 0 4px;
+}
+.return-thumb {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex: none;
+}

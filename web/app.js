@@ -75,12 +75,14 @@ function lifeSpan(iso) {
 
 const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'Lonely', curious: 'Curious', calm: 'Calm', warm: 'Warm to people', restless: 'Restless' };
-const AWAKE = new Set(['waking', 'reading', 'thinking', 'deciding', 'drawing', 'writing', 'asking', 'building', 'tending', 'resting', 'replying', 'reflecting']);
+const AWAKE = new Set(['waking', 'reading', 'looking', 'thinking', 'deciding', 'drawing', 'writing', 'asking', 'sending', 'building', 'tending', 'resting', 'replying', 'reflecting']);
 const NIGHT = new Set(['dreaming', 'rewriting']);
 const PHASE_TITLE = {
   quiet: 'Resting between cycles',
   waking: 'Waking up',
   reading: 'Reading a letter',
+  looking: 'Looking at a photo someone brought',
+  sending: 'Sending people on an errand',
   thinking: 'Thinking',
   deciding: 'Deciding what to do',
   drawing: 'Drawing',
@@ -102,7 +104,7 @@ const PHASE_TITLE = {
 const SHELF_TITLE = { people: 'People', world: 'The world outside', moments: 'Things that happened' };
 const SHELF_NOTE = { people: 'the people who wrote to it', world: 'only what it was told', moments: 'what it did and what happened to it' };
 const INFLUENCE = { belief: 'a belief', unbelief: 'a belief it let go', portrait: 'its picture of people', name: 'its name', memory: 'a memory', thing: 'something it built', wish: 'a wish' };
-const VERB = { draw: 'drew', write: 'wrote', ask: 'asked', build: 'built', tend: 'tended', rest: 'rested' };
+const VERB = { draw: 'drew', write: 'wrote', ask: 'asked', errand: 'sent people on an errand', build: 'built', tend: 'tended', rest: 'rested' };
 const WISH_STATUS = { open: 'waiting', granted: 'granted', declined: 'declined' };
 
 // ---------- identity (a random key in this browser, so it can recognise you if you write again) ----------
@@ -155,7 +157,7 @@ if (new URLSearchParams(location.search).has('embed')) document.documentElement.
 
 function snapshotFile(path) {
   const route = path.replace(/^\/?api\//, '').split('?')[0];
-  if (['state', 'journey', 'works', 'life', 'atlas', 'letters', 'world'].includes(route)) return `${SNAPSHOT}${route}.json`;
+  if (['state', 'journey', 'works', 'life', 'atlas', 'letters', 'world', 'errands'].includes(route)) return `${SNAPSHOT}${route}.json`;
   const m = /^cycle\/(\d+|latest)$/.exec(route);
   if (m) return `${SNAPSHOT}cycles/${pad6(m[1] === 'latest' ? app.state.cycle : m[1])}.json`;
   return null;
@@ -248,6 +250,11 @@ function connect() {
     invalidate('world', 'atlasData');
     if (app.view === 'place' || app.view === 'now') refreshView();
   });
+  es.addEventListener('errand', async () => {
+    app.state = await api('/api/state');
+    invalidate('errands', 'errandQueue', 'queue', 'letters');
+    if (['errands', 'now', 'letters'].includes(app.view)) refreshView();
+  });
   es.addEventListener('night', async (e) => {
     const night = JSON.parse(e.data);
     app.state = await api('/api/state');
@@ -258,12 +265,12 @@ function connect() {
   });
   es.addEventListener('letter', async () => {
     app.state = await api('/api/state');
-    invalidate('journey', 'letters', 'you', 'queue');
-    if (app.view === 'letters' || app.view === 'now') refreshView();
+    invalidate('journey', 'letters', 'you', 'queue', 'errands');
+    if (['letters', 'now', 'errands'].includes(app.view)) refreshView();
   });
   es.addEventListener('letter-queued', () => {
-    invalidate('queue', 'letters', 'you');
-    if (app.view === 'letters') render();
+    invalidate('queue', 'letters', 'you', 'errands');
+    if (app.view === 'letters' || app.view === 'errands') render();
   });
   es.addEventListener('journal', () => invalidate('journey'));
   es.addEventListener('milestone', (e) => toast(`◆ ${JSON.parse(e.data).text}`));
@@ -326,7 +333,7 @@ function renderChrome() {
 
 // ---------- router ----------
 
-const VIEWS = { now: renderNow, replay: renderReplay, atlas: renderAtlas, place: renderPlace, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters };
+const VIEWS = { now: renderNow, replay: renderReplay, atlas: renderAtlas, place: renderPlace, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters, errands: renderErrands };
 
 function route() {
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
@@ -414,6 +421,7 @@ function whatText(c) {
   if (c.action === 'draw') return c.work?.failed ? `tried to draw “${c.title}”` : `drew “${c.title}”`;
   if (c.action === 'write') return `wrote “${c.title}”`;
   if (c.action === 'ask') return `asked “${c.question}”`;
+  if (c.action === 'errand') return c.errand ? `sent people on an errand: “${c.errand}”` : 'thought of an errand';
   if (c.action === 'build') return c.work?.failed ? `tried to build “${c.title}”` : `built “${c.title}”`;
   if (c.action === 'tend') return c.work?.failed ? `tried to tend “${c.title}”` : `tended “${c.title}”`;
   return 'rested';
@@ -444,9 +452,12 @@ function letterView(l) {
       { class: 'paper' },
       h('div', { class: 'from' }, `From ${l.from}`, l.at ? ` · ${dayTime(l.at)}` : '', l.mine ? ' · you' : ''),
       l.questionText ? h('div', { class: 'from' }, `answering “${l.questionText}”`) : null,
-      h('p', { class: 'body' }, l.text),
+      l.errand ? h('div', { class: 'from' }, `brought back for its errand “${l.errand.text}”`) : null,
+      l.errand?.photo ? h('img', { class: 'return-photo', src: asset(l.errand.photo), alt: `The photo ${l.from} brought back`, loading: 'lazy' }) : null,
+      l.text ? h('p', { class: 'body' }, l.text) : null,
       'readCycle' in l || l.readAt !== undefined ? h('div', { class: 'status-line' }, letterLine(l)) : null,
     ),
+    l.errand?.look ? lookBlock(l.errand.look) : null,
     reply ? h('div', { class: 'reply-block' }, h('span', { class: 'label' }, `It wrote back${reply.cycle ? ` · cycle ${reply.cycle}` : ''}`), h('p', { class: 'voice' }, reply.text)) : null,
     l.influenced?.length
       ? h(
@@ -459,6 +470,19 @@ function letterView(l) {
   );
 }
 
+/** What it made of a photo someone brought it. */
+function lookBlock(look) {
+  if (look.failed) return h('div', { class: 'reply-block' }, h('span', { class: 'label' }, 'It looked'), h('p', { class: 'muted', style: 'margin:0' }, 'It could not make anything of it.'));
+  if (look.withheld) return h('div', { class: 'reply-block' }, h('span', { class: 'label' }, 'It looked'), h('p', { class: 'muted', style: 'margin:0' }, 'What it said about it was held back.'));
+  return h(
+    'div',
+    { class: 'reply-block' },
+    h('span', { class: 'label' }, look.answers ? 'It looked: this is what it asked for' : 'It looked: not quite what it asked for'),
+    h('p', { class: 'voice' }, look.verdict),
+    look.see ? h('p', { class: 'meta', style: 'margin:6px 0 0' }, `What it saw: ${look.see}`) : null,
+  );
+}
+
 function drawingFrame(src, title) {
   return h('div', { class: 'canvas-frame' }, h('img', { src, alt: title ? `Its drawing “${title}”` : 'Its drawing', loading: 'lazy' }));
 }
@@ -468,6 +492,10 @@ function workView(c) {
   const why = c.action?.why ? h('p', { class: 'meta' }, `Why: ${c.action.why}`) : null;
   if (!w) return [h('p', { class: 'voice' }, 'It rested and let the cycle pass.'), why];
   if (w.kind === 'question') return [h('p', { class: 'question-big' }, `“${w.text}”`), why];
+  if (w.kind === 'errand') {
+    const state = w.duplicate ? 'It already had an errand like this out, so it let this one go.' : w.held ? 'Its keeper reads an errand like this before anyone sees it.' : null;
+    return [h('p', { class: 'question-big' }, `“${w.text}”`), state ? h('p', { class: 'meta' }, state) : null, why, w.duplicate || w.held ? null : h('a', { class: 'btn', href: '#/errands', onclick: () => $('#detail').open && $('#detail').close() }, 'Bring it this')];
+  }
   const drawn = w.svg || w.src ? workSrc(c.n) : null;
   const visit = w.thing ? h('a', { class: 'btn', href: `#/place?thing=${w.thing}`, onclick: () => $('#detail').open && $('#detail').close() }, 'See it in its place') : null;
   if (w.kind === 'building') {
@@ -541,7 +569,7 @@ async function openCycle(n) {
     section('The machine', h('div', { class: 'senses', style: 'border:0;padding:0' }, sensesLine(c.senses))),
     c.letters.length ? section('It read', h('div', { class: 'feed' }, c.letters.map(letterView))) : null,
     section('It thought', h('p', { class: 'monologue' }, c.monologue)),
-    section({ drawing: 'It drew', writing: 'It wrote', question: 'It asked', building: 'It built', tending: 'It tended its place' }[c.work?.kind] || 'It rested', workView(c)),
+    section({ drawing: 'It drew', writing: 'It wrote', question: 'It asked', errand: 'It sent people on an errand', building: 'It built', tending: 'It tended its place' }[c.work?.kind] || 'It rested', workView(c)),
     section('Its diary', h('p', { class: 'voice', style: 'font-size:18px;margin:0' }, c.diary)),
     c.remembered.length
       ? section(
@@ -754,7 +782,7 @@ function renderMaking() {
     return;
   }
   card.hidden = false;
-  const label = { drawing: 'Its latest drawing', writing: 'Its latest writing', question: 'It asked', building: 'It built', tending: 'It tended its place' }[latest.work?.kind] || 'Last cycle';
+  const label = { drawing: 'Its latest drawing', writing: 'Its latest writing', question: 'It asked', errand: 'It sent people on an errand', building: 'It built', tending: 'It tended its place' }[latest.work?.kind] || 'Last cycle';
   fill(card, cardHead(label, `cycle ${latest.n}`), workView(latest));
 }
 
@@ -830,6 +858,25 @@ function renderBelow() {
           h('a', { class: 'btn', href: '#/place?wishes', style: 'display:inline-block;text-decoration:none' }, 'All its wishes'),
         )
       : null,
+    s.errands?.enabled
+      ? h(
+          'div',
+          { class: 'card' },
+          cardHead('Its errands', s.errands.open.length ? `${s.errands.open.length} out now` : null),
+          s.errands.latestFilled
+            ? h(
+                'div',
+                { class: 'place-peek' },
+                h('img', { class: 'return-thumb', src: asset(s.errands.latestFilled.photo), alt: `What ${s.errands.latestFilled.from} brought back`, loading: 'lazy' }),
+                h('p', { class: 'muted', style: 'margin:0' }, `${s.errands.latestFilled.from} answered “${s.errands.latestFilled.text}” `, h('span', { class: 'voice' }, s.errands.latestFilled.verdict)),
+              )
+            : null,
+          s.errands.open[0]
+            ? h('p', { class: 'voice', style: 'font-size:17px;margin:8px 0 10px' }, `“${s.errands.open[0].text}”`)
+            : h('p', { class: 'muted', style: 'margin:0 0 10px' }, 'It has no errands out right now. It sends people out for photos of what it cannot see.'),
+          h('a', { class: 'btn', href: '#/errands', style: 'display:inline-block;text-decoration:none' }, s.errands.open.length && !SNAPSHOT ? 'Bring it something' : 'All its errands'),
+        )
+      : null,
     h(
       'div',
       { class: 'card' },
@@ -879,6 +926,7 @@ function buildBeats(life) {
     if (w?.kind === 'drawing' && !w.failed) beats.push({ ...at, kind: 'draw', ms: 5600 });
     else if (w?.kind === 'writing') beats.push({ ...at, kind: 'write', text: w.text, ms: typeMs(w.text, 26) });
     else if (w?.kind === 'question') beats.push({ ...at, kind: 'ask', text: w.text, ms: typeMs(w.text, 34) + 1600 });
+    else if (w?.kind === 'errand') beats.push({ ...at, kind: 'errand', text: w.text, ms: typeMs(w.text, 34) + 1600 });
     else if (w?.kind === 'building' && !w.failed) beats.push({ ...at, kind: 'build', text: w.plaque, ms: 4200 + typeMs(w.plaque, 18) });
     else if (w?.kind === 'tending' && !w.failed) beats.push({ ...at, kind: 'tend', text: w.change, ms: typeMs(w.change, 26) + (w.src ? 3200 : 0) });
     else beats.push({ ...at, kind: 'rest', ms: 1800 });
@@ -1028,8 +1076,8 @@ function replayControls(ended = false) {
   for (const b of $$('.speed')) b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === r.speed));
 }
 
-const BEAT_LOOK = { wake: 'waking', read: 'reading', think: 'thinking', draw: 'drawing', write: 'writing', ask: 'asking', build: 'building', tend: 'tending', rest: 'resting', reply: 'replying', diary: 'reflecting', dream: 'dreaming', become: 'rewriting' };
-const BEAT_TITLE = { wake: 'Waking up', read: 'Reading', think: 'Thinking', draw: 'Drawing', write: 'Writing', ask: 'Asking', build: 'Building in its place', tend: 'Tending its place', rest: 'Letting the cycle pass', reply: 'Writing back', diary: 'Writing its diary', dream: 'Asleep, dreaming', become: 'Asleep, rewriting itself' };
+const BEAT_LOOK = { wake: 'waking', read: 'reading', think: 'thinking', draw: 'drawing', write: 'writing', ask: 'asking', errand: 'sending', build: 'building', tend: 'tending', rest: 'resting', reply: 'replying', diary: 'reflecting', dream: 'dreaming', become: 'rewriting' };
+const BEAT_TITLE = { wake: 'Waking up', read: 'Reading', think: 'Thinking', draw: 'Drawing', write: 'Writing', ask: 'Asking', errand: 'Sending people on an errand', build: 'Building in its place', tend: 'Tending its place', rest: 'Letting the cycle pass', reply: 'Writing back', diary: 'Writing its diary', dream: 'Asleep, dreaming', become: 'Asleep, rewriting itself' };
 const MAKES = ['draw', 'write', 'ask', 'build', 'tend', 'rest']; // beats that put what it made on screen
 /** Beats whose drawing is drawn shape by shape. */
 const drawsShapes = (beat) => beat.kind === 'draw' || ((beat.kind === 'build' || beat.kind === 'tend') && beat.c.work?.src);
@@ -1085,6 +1133,8 @@ function enterBeat() {
     fill(work, cardHead('Writing', `cycle ${c.n}`), h('div', { class: 'work-title' }, c.work.title), h('p', { class: 'work-text', id: 'rp-work-text' }));
   } else if (beat.kind === 'ask') {
     fill(work, cardHead('Asking the people who visit', `cycle ${c.n}`), h('p', { class: 'question-big', id: 'rp-work-text' }));
+  } else if (beat.kind === 'errand') {
+    fill(work, cardHead('Sending the people who visit on an errand', `cycle ${c.n}`), h('p', { class: 'question-big', id: 'rp-work-text' }));
   } else if (beat.kind === 'rest') {
     fill(work, cardHead('Resting', `cycle ${c.n}`), h('p', { class: 'voice' }, 'It let the cycle pass.'));
   }
@@ -1094,7 +1144,7 @@ function enterBeat() {
 
   const letters = $('#rp-letters');
   if (beat.kind === 'wake' || night) fill(letters);
-  else if (beat.kind === 'read') fill(letters, c.letters.map((l) => letterView({ from: l.from, text: l.text })));
+  else if (beat.kind === 'read') fill(letters, c.letters.map((l) => letterView({ from: l.from, text: l.text, errand: l.errand })));
   else if (beat.kind === 'reply') {
     fill(letters, letterView({ from: beat.letter.from, text: beat.letter.text }), h('div', { class: 'reply-block' }, h('span', { class: 'label' }, `It wrote back to ${beat.letter.from}`), h('p', { class: 'voice', id: 'rp-reply' })));
   }
@@ -1135,10 +1185,10 @@ function enterBeat() {
 function drawBeat(beat, p) {
   const r = app.replay;
   const typed = (text) => text.slice(0, Math.ceil(text.length * Math.min(1, p * 1.15)));
-  const target = { think: '#rp-text', dream: '#rp-text', diary: '#rp-text', write: '#rp-work-text', ask: '#rp-work-text', build: '#rp-work-text', tend: '#rp-work-text', reply: '#rp-reply' }[beat.kind];
+  const target = { think: '#rp-text', dream: '#rp-text', diary: '#rp-text', write: '#rp-work-text', ask: '#rp-work-text', errand: '#rp-work-text', build: '#rp-work-text', tend: '#rp-work-text', reply: '#rp-reply' }[beat.kind];
   if (target && beat.text) {
     const el = $(target);
-    const shown = typed(beat.kind === 'ask' ? `“${beat.text}”` : beat.text);
+    const shown = typed(beat.kind === 'ask' || beat.kind === 'errand' ? `“${beat.text}”` : beat.text);
     if (shown !== r.shown) {
       if (el) el.textContent = shown;
       if (r.shown != null && shown.length > r.shown.length) r.presence.pulse();
@@ -1841,7 +1891,7 @@ async function renderJourney(current) {
       h('span', {}, h('i', { style: `background:${moodColor({ lonely: 1, warm: 0 })}` }), 'lonely'),
       h('span', {}, h('i', { style: `background:${moodColor({ lonely: 0.5, warm: 0.5 })}` }), 'neither'),
       h('span', {}, h('i', { style: `background:${moodColor({ lonely: 0, warm: 1 })}` }), 'warm'),
-      h('span', {}, '● drew  ■ wrote  ? asked  ▲ built  ◇ tended  ○ rested'),
+      h('span', {}, '● drew  ■ wrote  ? asked  ▣ errand  ▲ built  ◇ tended  ○ rested'),
       h('span', {}, h('i', { style: 'background:var(--human)' }), 'letter'),
       h('span', {}, h('i', { style: 'background:var(--night)' }), 'milestone'),
       h('span', {}, '▮ waited for the card'),
@@ -1959,6 +2009,7 @@ function strand(j) {
     if (c.action === 'rest') g.append(sv('circle', { cx, cy: baseY, r: 4.5, fill: 'var(--bg)', stroke: fill, 'stroke-width': 1.6 }));
     else if (c.action === 'write') g.append(sv('rect', { x: cx - 5, y: baseY - 5, width: 10, height: 10, rx: 2, fill }));
     else if (c.action === 'ask') g.append(sv('circle', { cx, cy: baseY, r: 6, fill }), sv('text', { x: cx, y: baseY + 3.5, 'text-anchor': 'middle', style: 'font:700 9px var(--mono);fill:var(--bg)' }, '?'));
+    else if (c.action === 'errand') g.append(sv('rect', { x: cx - 6, y: baseY - 4.5, width: 12, height: 9, rx: 1.5, fill: 'var(--bg)', stroke: fill, 'stroke-width': 1.6 }), sv('circle', { cx, cy: baseY, r: 2.2, fill }));
     else if (c.action === 'build') g.append(sv('path', { d: `M${cx - 6.5} ${baseY + 5.5} L${cx} ${baseY - 6.5} L${cx + 6.5} ${baseY + 5.5} Z`, fill, opacity: c.work?.failed ? 0.4 : 1 }));
     else if (c.action === 'tend') g.append(sv('path', { d: `M${cx} ${baseY - 6} l6 6 l-6 6 l-6 -6 z`, fill: 'var(--bg)', stroke: fill, 'stroke-width': 1.6 }));
     else g.append(sv('circle', { cx, cy: baseY, r: c.work?.failed ? 3.5 : 6.5, fill }));
@@ -2381,7 +2432,9 @@ function keeperCard() {
         'div',
         { class: 'held' },
         h('div', { class: 'meta' }, `From ${l.from} · ${dayTime(l.at)} · ${l.heldReply ? 'its reply was held' : l.status}${l.heldReply ? ` (${l.heldReply.reason})` : l.statusReason ? ` · ${l.statusReason}` : ''}`),
-        h('p', { class: 'body' }, l.text),
+        l.errand ? h('p', { class: 'meta' }, `A photo for its errand “${l.errand.text}”`) : null,
+        l.heldPhoto ? h('img', { class: 'return-photo', src: `${l.heldPhoto}?key=${encodeURIComponent(app.admin)}`, alt: 'The photo waiting for you' }) : null,
+        l.text ? h('p', { class: 'body' }, l.text) : null,
         l.heldReply ? h('p', { class: 'voice' }, `It wrote back: ${l.heldReply.text}`) : null,
         h(
           'div',
@@ -2414,6 +2467,185 @@ function lettersFeed() {
 
   const letters = app.letters;
   return [keeperCard(), youCard, letters.length ? letters.map(letterView) : h('p', { class: 'empty' }, 'Nobody has written to it yet. You could be the first.')];
+}
+
+// ---------- errands ----------
+
+/** A photo from a phone, made small and re-encoded in the browser: no location, camera or time travels with it. */
+async function photoForErrand(file) {
+  const img = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null);
+  if (!img) throw new Error('That file is not a picture this browser can read.');
+  const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  img.close();
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+function returnView(r) {
+  return h(
+    'figure',
+    { class: 'return' },
+    r.photo ? h('img', { src: asset(r.photo), alt: `What ${r.from} brought back`, loading: 'lazy' }) : null,
+    h(
+      'figcaption',
+      {},
+      h('div', { class: 'meta' }, `by ${r.from}${r.seenCycle ? ` · it looked in cycle ${r.seenCycle}` : ' · it has not looked yet'}`),
+      r.note ? h('p', { class: 'return-note' }, r.note) : null,
+      r.look && !r.look.failed && !r.look.withheld ? h('p', { class: 'voice return-verdict' }, `“${r.look.verdict}”`) : r.look ? h('p', { class: 'muted' }, r.look.failed ? 'It could not make anything of it.' : 'What it said was held back.') : null,
+    ),
+  );
+}
+
+async function keeperErrand(id, action) {
+  try {
+    await api(`/api/admin/errands/${id}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': app.admin }, body: JSON.stringify({ action }) });
+  } catch (err) {
+    toast(err.message);
+  }
+  invalidate('errands', 'errandQueue');
+  render();
+}
+
+function errandForm(e) {
+  const name = h('input', { name: 'from', maxlength: 40, placeholder: 'a name, or leave it blank', autocomplete: 'nickname', value: local?.getItem('iterant.name') || '' });
+  const file = h('input', { type: 'file', accept: 'image/*', required: true });
+  const preview = h('img', { class: 'return-preview', alt: 'Your photo', hidden: true });
+  const note = h('textarea', { maxlength: 400, placeholder: 'A few words about it, if you like.' });
+  const msg = h('div', { class: 'form-msg', role: 'status' });
+  const send = h('button', { class: 'send', type: 'submit' }, 'Bring it this');
+  let photo = null;
+  file.addEventListener('change', async () => {
+    photo = null;
+    preview.hidden = true;
+    if (!file.files[0]) return;
+    msg.textContent = 'Making it small…';
+    try {
+      photo = await photoForErrand(file.files[0]);
+      preview.src = photo;
+      preview.hidden = false;
+      msg.textContent = '';
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+  });
+  const form = h(
+    'form',
+    { class: 'paper compose errand-form' },
+    h('div', { class: 'from' }, `For “${e.text}”`),
+    h('label', {}, h('span', { class: 'label' }, 'Your photo'), file),
+    preview,
+    h('label', {}, h('span', { class: 'label' }, 'Sign as'), name),
+    h('label', {}, h('span', { class: 'label' }, 'A note'), note),
+    send,
+    msg,
+    h('p', { class: 'hint' }, 'Its keeper looks at every photo before it, or anyone, sees it. Leave out people and faces, and anything that shows who you are or where you live. Your photo is made small and stripped of its location and camera details before it leaves this page. If it is let through, it is shown here with your name.'),
+  );
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!photo) {
+      msg.textContent = 'Choose a photo first.';
+      return;
+    }
+    send.disabled = true;
+    msg.textContent = 'Taking it over…';
+    try {
+      local?.setItem('iterant.name', name.value.trim());
+      await api(`/api/errands/${e.id}/returns`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ visitor, from: name.value, note: note.value, photo: photo.replace(/^data:image\/jpeg;base64,/, '') }),
+      });
+      fill(form, h('div', { class: 'from' }, `For “${e.text}”`), h('p', { class: 'body' }, 'Thank you. Its keeper will look at it first; then it looks, in its own time, and says what it makes of it here.'));
+      invalidate('letters', 'you', 'errands');
+    } catch (err) {
+      msg.textContent = err.message;
+      send.disabled = false;
+    }
+  });
+  return form;
+}
+
+function errandCard(e) {
+  const tries = e.returns.filter((r) => r.id !== e.filledBy);
+  const slot = h('div', { class: 'errand-slot' });
+  return h(
+    'div',
+    { class: `card errand ${e.status}` },
+    cardHead(e.status === 'open' ? 'Out now' : 'Let go', `cycle ${e.cycle} · v${e.version}`),
+    h('p', { class: 'question-big' }, `“${e.text}”`),
+    e.why ? h('p', { class: 'meta' }, `Why: ${e.why}`) : null,
+    e.closedBecause ? h('p', { class: 'meta' }, e.closedBecause) : null,
+    h(
+      'div',
+      { class: 'rp-row' },
+      e.status === 'open' && !SNAPSHOT
+        ? h('button', { class: 'btn', type: 'button', onclick: (ev) => { ev.currentTarget.remove(); fill(slot, errandForm(e)); } }, 'Bring it this')
+        : null,
+      e.status === 'open' && app.admin ? h('button', { class: 'btn', type: 'button', onclick: () => keeperErrand(e.id, 'close') }, 'Close it') : null,
+    ),
+    slot,
+    tries.length ? h('div', { class: 'returns' }, h('div', { class: 'label' }, 'Brought so far'), h('div', { class: 'return-grid' }, tries.map(returnView))) : null,
+  );
+}
+
+function filledCard(e) {
+  const r = e.returns.find((x) => x.id === e.filledBy);
+  return h(
+    'div',
+    { class: 'card errand filled' },
+    r?.photo ? h('img', { class: 'filled-photo', src: asset(r.photo), alt: `What ${r.from} brought back`, loading: 'lazy' }) : null,
+    h('p', { class: 'filled-errand' }, e.text),
+    h('div', { class: 'meta' }, `by ${r?.from || 'someone'} · asked in cycle ${e.cycle}, brought in cycle ${e.filledCycle}`),
+    r?.note ? h('p', { class: 'return-note' }, r.note) : null,
+    r?.look?.verdict ? h('p', { class: 'voice return-verdict' }, `“${r.look.verdict}”`) : null,
+    r?.look?.see ? h('p', { class: 'meta' }, `What it saw: ${r.look.see}`) : null,
+  );
+}
+
+async function renderErrands(current) {
+  [app.errands, app.errandQueue] = await Promise.all([
+    app.errands ?? api('/api/errands'),
+    app.admin ? (app.errandQueue ?? api('/api/admin/errands', { headers: { 'x-admin-token': app.admin } }).catch(() => [])) : [],
+  ]);
+  if (!current()) return;
+  // Someone may be choosing a photo: a live update must not throw their form away.
+  if (app.renderedView === 'errands' && $('.errand-form')) return;
+  const list = app.errands;
+  const open = list.filter((e) => e.status === 'open');
+  const filled = list.filter((e) => e.status === 'filled');
+  const closed = list.filter((e) => e.status === 'closed');
+  const held = app.errandQueue || [];
+  fill(
+    $('#view'),
+    intro(
+      'Errands',
+      SNAPSHOT
+        ? 'It cannot see anything, so it sends the people who visit on errands: bring it one photo of something. These are the errands from this recording, and what people brought back.'
+        : 'It cannot see anything, so it sends the people who visit on errands: bring it one photo of something. Its keeper checks every photo first; then it looks, and says what it makes of it.',
+    ),
+    held.length
+      ? h(
+          'div',
+          { class: 'card keeper' },
+          cardHead('Errands waiting for you, its keeper', `${held.length}`),
+          held.map((e) =>
+            h(
+              'div',
+              { class: 'held' },
+              h('div', { class: 'meta' }, `cycle ${e.cycle} · held: ${e.heldBecause || 'waiting for its keeper'}`),
+              h('p', { class: 'voice' }, `“${e.text}”`),
+              h('div', { class: 'rp-row' }, h('button', { class: 'btn', type: 'button', onclick: () => keeperErrand(e.id, 'post') }, 'Post it'), h('button', { class: 'btn', type: 'button', onclick: () => keeperErrand(e.id, 'drop') }, 'Drop it')),
+            ),
+          ),
+        )
+      : null,
+    h('section', { class: 'errands-open' }, open.length ? open.map(errandCard) : h('p', { class: 'empty' }, SNAPSHOT ? 'It had no errands out when this was recorded.' : 'It has no errands out right now. It decides when to send people out, in its own time.')),
+    filled.length ? h('section', {}, h('h2', { class: 'section-title' }, 'Brought back'), h('div', { class: 'filled-grid' }, filled.map(filledCard))) : null,
+    closed.length ? h('section', {}, h('h2', { class: 'section-title' }, 'Let go'), closed.map(errandCard)) : null,
+  );
 }
 
 // ---------- keeper controls (only with the admin link the server prints) ----------

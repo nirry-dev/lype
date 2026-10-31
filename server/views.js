@@ -1,5 +1,5 @@
 // What the public may see of a life. Shared by the live server and the static export, so both hide the same things.
-import { letterStatus, publicCycle, publicLetter, publicWish } from './life.js';
+import { letterStatus, publicCycle, publicLetter, publicLook, publicWish } from './life.js';
 import { pad } from './store.js';
 import { CARD } from './world.js';
 
@@ -68,6 +68,33 @@ export function world(life) {
   };
 }
 
+/** Its errands as the public sees them (not the ones still waiting for its keeper), each with what people brought. */
+export function errands(life) {
+  const returns = new Map();
+  for (const l of life.letters) {
+    if (!l.errand || letterStatus(l) !== 'allowed') continue;
+    const list = returns.get(l.errand.id) || [];
+    list.push({ id: l.id, from: l.from, note: l.text, at: l.at, photo: l.errand.photo, look: publicLook(l.errand.look), seenCycle: l.errand.seenCycle ?? null });
+    returns.set(l.errand.id, list);
+  }
+  return life.state.errands
+    .filter((e) => !['held', 'dropped'].includes(e.status))
+    .map((e) => ({
+      id: e.id,
+      text: e.text,
+      why: e.why,
+      cycle: e.cycle,
+      version: e.version,
+      at: e.postedAt || e.at,
+      status: e.status,
+      closedBecause: e.closedBecause || null,
+      filledBy: e.filledBy,
+      filledCycle: e.filledCycle ?? null,
+      returns: (returns.get(e.id) || []).reverse(),
+    }))
+    .reverse();
+}
+
 /** Letters the public may read, newest first; a visitor also sees their own letters with their screening status. */
 export function letters(life, me = null) {
   return life.letters
@@ -121,7 +148,7 @@ export function atlas(life, store) {
       part: rec.senses?.partOfDay || '',
       mood: rec.moodAfter || rec.feelings || null,
       action: rec.action?.kind || 'rest',
-      work: w && !w.failed ? { kind: w.kind, title: w.title || '', text: w.kind === 'question' ? w.text : undefined, src: w.kind === 'drawing' ? `works/${pad(c.n)}.svg` : undefined } : null,
+      work: w && !w.failed ? { kind: w.kind, title: w.title || '', text: w.kind === 'question' || w.kind === 'errand' ? w.text : undefined, src: w.kind === 'drawing' ? `works/${pad(c.n)}.svg` : undefined } : null,
       diary: rec.diary || '',
     });
     for (const m of rec.remembered || []) day.push({ cycle: c.n, shelf: m.shelf, text: m.text });

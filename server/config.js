@@ -52,6 +52,12 @@ const DEFAULTS = {
     // "keeper": every letter waits for the keeper. "off": nothing is screened (fine for a private, local creature).
     mode: 'model',
   },
+  errands: {
+    // It can ask visitors to bring it one photo of something; every photo waits for its keeper before it or anyone sees it.
+    // Its model needs to take images (a llama.cpp model with its mmproj, or Claude) for it to see them.
+    enabled: true,
+    maxPhotoMb: 3,
+  },
   wishes: {
     // Where its keeper can turn a wish into an issue (a pre-filled "new issue" page); "" hides the link.
     issuesUrl: 'https://github.com/nirry-dev/iterant/issues/new',

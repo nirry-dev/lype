@@ -5,8 +5,9 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { createBrain } from './brain.js';
+import { cleanJpeg } from './errands.js';
 import { ROOT, loadConfig } from './config.js';
-import { Life } from './life.js';
+import { Life, letterStatus } from './life.js';
 import { readSenses } from './senses.js';
 import { createStore, pad } from './store.js';
 import * as views from './views.js';
@@ -48,6 +49,7 @@ function json(res, status, data) {
 }
 
 async function readBody(req, limit = 16 * 1024) {
+  if (Number(req.headers['content-length']) > limit) throw Object.assign(new Error('too large'), { status: 413 });
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -96,7 +98,7 @@ function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of clients) res.write(frame);
 }
-for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish']) life.on(event, (data) => broadcast(event, data));
+for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish', 'errand']) life.on(event, (data) => broadcast(event, data));
 setInterval(() => {
   for (const res of clients) res.write(': keep-alive\n\n');
 }, 25000).unref();
@@ -152,6 +154,23 @@ async function api(req, res, url) {
     const letter = life.addLetter({ from, text, person: vid || `name:${from.toLowerCase()}`, question: typeof body.question === 'string' ? body.question : null });
     return json(res, 201, letter);
   }
+  if (path === '/api/errands' && method === 'GET') return json(res, 200, views.errands(life));
+  const brought = /^\/api\/errands\/(e\d+)\/returns$/.exec(path);
+  if (brought && method === 'POST') {
+    if (!cfg.errands.enabled) return json(res, 403, { error: 'It is not sending anyone on errands.' });
+    const maxBytes = cfg.errands.maxPhotoMb * 1024 * 1024;
+    const body = await readBody(req, Math.ceil(maxBytes * 1.4) + 8192); // base64 is a third larger
+    const raw = Buffer.from(String(body.photo || '').replace(/^data:image\/jpeg;base64,/, ''), 'base64');
+    if (!raw.length) return json(res, 400, { error: 'An errand is answered with a photo.' });
+    if (raw.length > maxBytes) return json(res, 413, { error: `That photo is larger than ${cfg.errands.maxPhotoMb} MB.` });
+    const photo = cleanJpeg(raw).data;
+    const from = tidy(body.from, 40).replace(/\n/g, ' ') || 'someone';
+    const vid = visitorId(body.visitor);
+    const ip = req.socket.remoteAddress || 'unknown';
+    if (rateLimited([`ip:${ip}`, ...(vid ? [`v:${vid}`] : [])])) return json(res, 429, { error: 'That is a lot for one hour. It reads slowly; give it time.' });
+    const result = life.addReturn({ errand: brought[1], from, text: tidy(body.note, 400), person: vid || `name:${from.toLowerCase()}`, photo });
+    return result.ok ? json(res, 201, result.letter) : json(res, 409, { error: result.reason });
+  }
   if (path === '/api/you' && method === 'GET') {
     const me = visitorId(url.searchParams.get('visitor'));
     return me ? json(res, 200, life.you(me)) : json(res, 400, { error: 'no visitor key' });
@@ -162,10 +181,16 @@ async function api(req, res, url) {
     const action = path.slice('/api/admin/'.length);
     if (action === 'check' && method === 'GET') return json(res, 200, { ok: true });
     if (action === 'letters' && method === 'GET') return json(res, 200, life.keeperQueue());
+    if (action === 'errands' && method === 'GET') return json(res, 200, life.keeperErrands());
     if (method !== 'POST') return json(res, 405, { error: 'POST only' });
     const decision = /^letters\/(L\d+)$/.exec(action);
     if (decision) {
       const result = life.decide(decision[1], String((await readBody(req)).action || ''));
+      return json(res, result.ok ? 200 : 409, result.ok ? result : { error: result.reason });
+    }
+    const errand = /^errands\/(e\d+)$/.exec(action);
+    if (errand) {
+      const result = life.decideErrand(errand[1], String((await readBody(req)).action || ''));
       return json(res, result.ok ? 200 : 409, result.ok ? result : { error: result.reason });
     }
     const wish = /^wishes\/(w\d+)$/.exec(action);
@@ -209,6 +234,27 @@ async function serveWork(res, path) {
   }
 }
 
+/** A photo someone brought back: public once its keeper allowed it; before that, only to its keeper. */
+async function servePhoto(res, url) {
+  const m = /^\/returns\/(L\d+)\.jpg$/.exec(url.pathname);
+  const letter = m && life.letters.find((l) => l.id === m[1] && l.errand?.photo);
+  const key = Buffer.from(url.searchParams.get('key') || '');
+  const keeper = key.length === adminToken.length && timingSafeEqual(key, Buffer.from(adminToken));
+  if (!letter || (letterStatus(letter) !== 'allowed' && !keeper)) return json(res, 404, { error: 'not found' });
+  try {
+    const body = await readFile(store.path(letter.errand.photo));
+    res.writeHead(200, {
+      'content-type': 'image/jpeg',
+      'content-security-policy': "default-src 'none'",
+      'x-content-type-options': 'nosniff',
+      'cache-control': keeper ? 'no-store' : 'public, max-age=86400',
+    });
+    res.end(body);
+  } catch {
+    json(res, 404, { error: 'not found' });
+  }
+}
+
 async function serveStatic(res, path) {
   const rel = normalize(decodeURIComponent(path === '/' ? '/index.html' : path)).replace(/^([/\\])+/, '');
   const file = join(WEB, rel);
@@ -235,6 +281,7 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://local');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname.startsWith('/works/')) return await serveWork(res, url.pathname);
+    if (url.pathname.startsWith('/returns/')) return await servePhoto(res, url);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
     return await serveStatic(res, url.pathname);
   } catch (err) {

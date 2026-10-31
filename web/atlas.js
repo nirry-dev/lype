@@ -72,6 +72,7 @@ function narrate(d, tl) {
     if (w?.kind === 'drawing') push(a + 0.45, 'work', `It drew “${w.title}”.`, null);
     else if (w?.kind === 'writing') push(a + 0.45, 'work', `It wrote “${w.title}”.`, null);
     else if (w?.kind === 'question') push(a + 0.45, 'work', `It asked: “${short(w.text || '', 90)}”`, null);
+    else if (w?.kind === 'errand') push(a + 0.45, 'work', `It sent people on an errand: “${short(w.text || '', 90)}”`, null);
     else if (w?.kind === 'building') push(a + 0.45, 'build', `It built “${w.title}” in its place.`, (d.things || []).find((t) => t.built === c.n)?.id ?? null);
     else if (w?.kind === 'tending') push(a + 0.45, 'build', `It ${w.restored ? 'rebuilt' : 'tended'} “${w.title}”.`, (d.things || []).find((t) => t.name === w.title)?.id ?? null);
     else push(a + 0.45, 'rest', 'It let the cycle pass.', null);

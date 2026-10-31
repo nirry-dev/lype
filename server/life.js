@@ -1,7 +1,8 @@
 // Its life: waking on a rhythm, thinking, making, remembering, and every night becoming a new version of itself.
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { cleanSvg } from '../web/lib/svgclean.js';
+import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
 import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
@@ -27,6 +28,7 @@ function whatText(c) {
   if (c.action === 'draw') return c.work?.failed ? `tried to draw "${c.title}"` : `drew "${c.title}"`;
   if (c.action === 'write') return `wrote "${c.title}"`;
   if (c.action === 'ask') return `asked "${c.question}"`;
+  if (c.action === 'errand') return c.errand ? `sent people on an errand: "${c.errand}"` : 'thought of an errand';
   if (c.action === 'build') return c.work?.failed ? `tried to build "${c.title}"` : `built "${c.title}" in your place`;
   if (c.action === 'tend') return c.work?.failed ? `tried to tend "${c.title}"` : `tended "${c.title}"`;
   return 'rested';
@@ -54,12 +56,21 @@ export function cycleSummary(c) {
     action: c.action.kind,
     title: c.work?.title || '',
     question: c.work?.kind === 'question' ? c.work.text : undefined,
+    errand: c.work?.kind === 'errand' && !c.work.duplicate ? c.work.text : undefined,
     work: c.work ? { kind: c.work.kind, failed: Boolean(c.work.failed) } : null,
     diary: c.diary,
     mood: c.moodAfter,
     letters: c.letters.map((l) => l.id),
     replies: c.replies.length,
   };
+}
+
+/** What it saw in a photo, as the public may see it: nothing of a look moderation held back. */
+export function publicLook(look) {
+  if (!look) return null;
+  if (look.failed) return { failed: true };
+  if (look.withheld) return { withheld: true };
+  return { see: look.see, answers: look.answers, verdict: look.verdict };
 }
 
 /** Letters from before moderation existed count as allowed. */
@@ -80,6 +91,9 @@ export function publicLetter(l, { own = false } = {}) {
     readCycle: l.readCycle || null,
     reply,
     influenced: l.influenced || [],
+    errand: l.errand
+      ? { id: l.errand.id, text: l.errand.text, photo: letterStatus(l) === 'allowed' ? l.errand.photo : null, look: publicLook(l.errand.look), seenCycle: l.errand.seenCycle ?? null }
+      : null,
   };
 }
 
@@ -88,7 +102,11 @@ export function publicCycle(c) {
   return {
     ...c,
     replies: (c.replies || []).filter((r) => !r.withheld),
-    letters: c.letters.map(({ replyWithheld, ...l }) => (replyWithheld ? { ...l, reply: null } : l)),
+    letters: c.letters.map(({ replyWithheld, ...l }) => ({
+      ...l,
+      ...(replyWithheld ? { reply: null } : {}),
+      ...(l.errand ? { errand: { ...l.errand, look: publicLook(l.errand.look) } } : {}),
+    })),
   };
 }
 
@@ -133,6 +151,9 @@ export class Life extends EventEmitter {
     s.wishes ??= [];
     s.stats.built ??= 0;
     s.stats.tended ??= 0;
+    s.errands ??= [];
+    s.stats.errands ??= 0;
+    s.stats.errandsFilled ??= 0;
   }
 
   // ---------- lifecycle ----------
@@ -146,6 +167,11 @@ export class Life extends EventEmitter {
       this.notes.push('Since you last woke, your keeper gave you two new things: a place of your own that you can build in, and a way to leave them wishes.');
       this.journalAdd({ kind: 'gift', text: 'Its keeper gave it a place of its own to build in, and a way to leave wishes.' });
       this.milestone('given-a-place', 'Its keeper gave it a place of its own to build in, and a way to leave wishes.');
+    }
+    if (!this.cfg.recording && !this.state.abilities.includes('errands')) {
+      this.state.abilities = [...this.state.abilities, 'errands'];
+      this.notes.push('Since you last woke, your keeper gave you a new thing: you can send the people who visit on errands, and they bring you back a photo. For the first time you will be able to see something.');
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it errands: people can bring it photos of what it asks for.' });
     }
     this.state.lastAlive = new Date().toISOString();
     this.saveState();
@@ -193,8 +219,9 @@ export class Life extends EventEmitter {
       questions: [],
       world: emptyWorld(),
       wishes: [],
-      abilities: ['world', 'wishes'],
-      stats: { drawings: 0, writings: 0, questions: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
+      errands: [],
+      abilities: ['world', 'wishes', 'errands'],
+      stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
     this.milestone('born', 'It was switched on for the first time.');
@@ -373,7 +400,7 @@ export class Life extends EventEmitter {
     }
   }
 
-  context(senses, n, chosen, waiting) {
+  context(senses, n, chosen, waiting, looks = new Map()) {
     const s = this.state;
     const notes = [...this.notes];
     const busy = (this.waits.busy || 0) + (this.waits['other-mind'] || 0);
@@ -398,14 +425,16 @@ export class Life extends EventEmitter {
         nth: (s.people[l.person]?.lettersRead ?? 0) + 1,
         remembered: s.memory.shelves.people.filter((m) => sameName(m.about, l.from)).map((m) => m.text).slice(0, 3),
         question: l.question ? s.questions.find((q) => q.id === l.question)?.text : undefined,
+        errand: l.errand ? { text: l.errand.text, look: looks.get(l.id) } : undefined,
       })),
+      errands: { canPost: this.cfg.errands.enabled && openErrands(s.errands).length < MAX_OPEN_ERRANDS },
       questions: s.questions
         .filter((q) => q.open)
         .map((q) => ({ text: q.text, cycle: q.cycle, answers: this.letters.filter((l) => l.question === q.id && letterStatus(l) === 'allowed').length })),
       recent: this.cycles.slice(-4).map((c) => ({ n: c.n, ago: ago(c.at), what: whatText(c), diary: c.diary })),
       habits: this.cycles.slice(-6).reduce(
         (mix, c) => ({ ...mix, total: mix.total + 1, [c.action]: (mix[c.action] ?? 0) + 1 }),
-        { total: 0, draw: 0, write: 0, ask: 0, build: 0, tend: 0, rest: 0, everAsked: s.stats.questions > 0 },
+        { total: 0, draw: 0, write: 0, ask: 0, errand: 0, build: 0, tend: 0, rest: 0, everAsked: s.stats.questions > 0, everErrand: s.stats.errands > 0 },
       ),
       tired: this.tiredOf(),
     };
@@ -434,8 +463,14 @@ export class Life extends EventEmitter {
       seen.add(l.person);
       chosen.push(l);
     }
-    const ctx = this.context(senses, n, chosen, unread.length - chosen.length);
     const system = mind.systemPrompt(s, cfg);
+    // Photos people brought back from its errands: it looks before it thinks, so it can think about what it saw.
+    const looks = new Map();
+    for (const l of chosen.filter((x) => x.errand)) {
+      this.setPhase('looking', `at what ${l.from} brought back`);
+      looks.set(l.id, await this.look(l, system));
+    }
+    const ctx = this.context(senses, n, chosen, unread.length - chosen.length, looks);
 
     this.live.reading = chosen.map((l) => ({ id: l.id, from: l.from }));
     this.setPhase(chosen.length ? 'reading' : 'thinking', chosen.length ? `a letter from ${listNames(chosen.map((l) => l.from))}` : '');
@@ -443,9 +478,9 @@ export class Life extends EventEmitter {
     const monologue = mind.cleanProse(thought.text, 1400) || '…';
 
     this.setPhase('deciding');
-    const canTend = ctx.world.count > 0;
-    const actRaw = await this.brain.complete({ kind: 'act', system, user: mind.actPrompt(ctx, monologue), maxTokens: 900, temperature: 0.7, schema: mind.actSchema(ctx.tired, { canTend }) });
-    const plan = mind.readAct(actRaw.text, chosen, ctx.tired, { canTend });
+    const can = { canTend: ctx.world.count > 0, canErrand: ctx.errands.canPost };
+    const actRaw = await this.brain.complete({ kind: 'act', system, user: mind.actPrompt(ctx, monologue), maxTokens: 900, temperature: 0.7, schema: mind.actSchema(ctx.tired, can) });
+    const plan = mind.readAct(actRaw.text, chosen, ctx.tired, can);
 
     let work = null;
     if (plan.action === 'draw') {
@@ -464,6 +499,11 @@ export class Life extends EventEmitter {
     } else if (plan.action === 'ask') {
       this.setPhase('asking', plan.content);
       work = { kind: 'question', text: plan.content };
+    } else if (plan.action === 'errand') {
+      this.setPhase('sending', plan.content);
+      const duplicate = s.errands.some((e) => ['open', 'held'].includes(e.status) && similarity(e.text, plan.content) >= 0.6);
+      const verdict = duplicate ? null : await this.screen('errand', plan.content);
+      work = { kind: 'errand', text: plan.content, ...(duplicate ? { duplicate: true } : verdict.status !== 'allowed' ? { held: true, reason: verdict.reason } : {}) };
     } else if (plan.action === 'build') {
       work = await this.build(plan, system, n);
     } else if (plan.action === 'tend') {
@@ -521,6 +561,22 @@ export class Life extends EventEmitter {
       p.lastRead = n;
       p.name = l.from;
       if (!p.names.includes(l.from)) p.names.push(l.from);
+      if (l.errand) {
+        const look = looks.get(l.id) || { failed: true, why: 'it did not look' };
+        l.errand.look = look;
+        l.errand.seenCycle = n;
+        const e = s.errands.find((x) => x.id === l.errand.id);
+        if (!look.failed) this.milestone('first-sight', `It saw something for the first time: a photo ${l.from} brought back for it.`);
+        if (e) {
+          e.returns.push(l.id);
+          if (!look.failed && look.answers && e.status === 'open') {
+            Object.assign(e, { status: 'filled', filledBy: l.id, filledFrom: l.from, filledCycle: n, saw: look.see });
+            s.stats.errandsFilled++;
+            this.milestone('first-errand-filled', `${l.from} brought back what it asked for: "${e.text}"`);
+          }
+          this.emit('errand', { id: e.id });
+        }
+      }
     }
     if (chosen.length) {
       s.stats.lettersRead += chosen.length;
@@ -537,6 +593,14 @@ export class Life extends EventEmitter {
       if (open.length > 3) open[0].open = false; // it lets its oldest question go
       s.stats.questions++;
       this.milestone('first-question', `It asked its first question: "${work.text}"`);
+    } else if (work?.kind === 'errand' && !work.duplicate) {
+      const e = addErrand(s.errands, { text: work.text, why: plan.why, cycle: n, version: s.version, at, held: Boolean(work.held), reason: work.reason });
+      if (e) {
+        work.id = e.id;
+        s.stats.errands++;
+        if (!work.held) this.milestone('first-errand', `It sent people on its first errand: "${e.text}"`);
+        this.emit('errand', { id: e.id });
+      }
     } else if (work?.kind === 'drawing' && !work.failed) {
       this.store.writeText(`works/${pad(n)}.svg`, work.svg);
       s.stats.drawings++;
@@ -578,6 +642,7 @@ export class Life extends EventEmitter {
         from: l.from,
         text: l.text,
         question: l.question || null,
+        ...(l.errand ? { errand: { id: l.errand.id, text: l.errand.text, photo: l.errand.photo, look: l.errand.look } } : {}),
         reply: replyMap.get(l.id)?.text || null,
         ...(replyMap.get(l.id)?.withheld ? { replyWithheld: true } : {}),
       })),
@@ -602,6 +667,57 @@ export class Life extends EventEmitter {
     this.cycles.push(summary);
     this.emit('cycle', summary);
     return record;
+  }
+
+  // ---------- errands ----------
+
+  /** It looks at a photo someone brought back: what it sees, whether it answers the errand, and what it makes of it. */
+  async look(letter, system) {
+    const errand = this.state.errands.find((x) => x.id === letter.errand.id) || letter.errand;
+    let photo;
+    try {
+      photo = readFileSync(this.store.path(letter.errand.photo));
+    } catch {
+      return { failed: true, why: 'the photo was missing' };
+    }
+    try {
+      const raw = await this.brain.complete({
+        kind: 'look',
+        system,
+        user: mind.lookPrompt(errand, letter),
+        image: { type: 'image/jpeg', data: photo.toString('base64') },
+        maxTokens: 500,
+        temperature: 0.5,
+        schema: mind.LOOK_SCHEMA,
+      });
+      const look = mind.readLook(raw.text);
+      if (!look.see) return { failed: true, why: 'it could not make anything of it' };
+      const verdict = await this.screen('look', `${look.see}\n${look.verdict}`);
+      return verdict.status === 'allowed' ? look : { ...look, withheld: true, reason: verdict.reason };
+    } catch (err) {
+      return { failed: true, why: String(err.message).slice(0, 200) };
+    }
+  }
+
+  /** Someone brings back what an errand asked for: a photo (already cleaned) and maybe a few words. */
+  addReturn({ errand: id, from, text, person, photo }) {
+    const e = this.state.errands.find((x) => x.id === id);
+    if (!e || e.status !== 'open') return { ok: false, reason: 'That errand is no longer open.' };
+    return { ok: true, letter: this.addLetter({ from, text, person, errand: e, photo }) };
+  }
+
+  /** Errands waiting for its keeper before anyone sees them. */
+  keeperErrands() {
+    return this.state.errands.filter((e) => e.status === 'held').reverse();
+  }
+
+  decideErrand(id, action) {
+    const result = decideErrand(this.state.errands, id, action);
+    if (!result.ok) return result;
+    if (action === 'post') this.milestone('first-errand', `It sent people on its first errand: "${result.errand.text}"`);
+    this.saveState();
+    this.emit('errand', { id });
+    return { ok: true };
   }
 
   // ---------- its place ----------
@@ -953,9 +1069,9 @@ export class Life extends EventEmitter {
   async screen(kind, text) {
     const mode = this.cfg.moderation.mode;
     if (mode === 'off') return { status: 'allowed', reason: '', by: 'off' };
-    const rule = ruleReason(text);
+    const rule = ruleReason(text) || (kind === 'errand' ? errandReason(text) : null);
     if (rule) return { status: 'held', reason: rule, by: 'rules' };
-    if (mode === 'keeper' && kind === 'letter') return { status: 'held', reason: 'waiting for its keeper', by: 'keeper' };
+    if (mode === 'keeper' && (kind === 'letter' || kind === 'errand')) return { status: 'held', reason: 'waiting for its keeper', by: 'keeper' };
     return { ...(await screenWithModel(this.brain, kind, text)), by: 'model' };
   }
 
@@ -979,7 +1095,11 @@ export class Life extends EventEmitter {
   keeperQueue() {
     return this.letters
       .filter((l) => ['held', 'pending'].includes(letterStatus(l)) || l.reply?.withheld)
-      .map((l) => ({ ...publicLetter(l, { own: true }), heldReply: l.reply?.withheld ? { text: l.reply.text, reason: l.reply.reason } : null }))
+      .map((l) => ({
+        ...publicLetter(l, { own: true }),
+        heldReply: l.reply?.withheld ? { text: l.reply.text, reason: l.reply.reason } : null,
+        heldPhoto: l.errand?.photo && letterStatus(l) !== 'allowed' ? l.errand.photo : null,
+      }))
       .reverse();
   }
 
@@ -991,6 +1111,11 @@ export class Life extends EventEmitter {
     if (action === 'allow' || action === 'reject') {
       if (letterStatus(l) === 'allowed') return { ok: false, reason: 'already allowed' };
       l.screen = { status: action === 'allow' ? 'allowed' : 'rejected', reason: 'its keeper decided', by: 'keeper', at };
+      if (action === 'reject' && l.errand?.photo) {
+        // A photo nobody may see isn't kept.
+        rmSync(this.store.path(l.errand.photo), { force: true });
+        l.errand.photo = null;
+      }
     } else if (action === 'release-reply' || action === 'drop-reply') {
       if (!l.reply?.withheld) return { ok: false, reason: 'no withheld reply' };
       if (action === 'release-reply') {
@@ -1006,27 +1131,31 @@ export class Life extends EventEmitter {
   // ---------- visitors ----------
 
   /** A new letter. Obvious problems are held at the door; the rest waits for the model's screen when it next wakes. */
-  addLetter({ from, text, person, question }) {
+  addLetter({ from, text, person, question, errand = null, photo = null }) {
     const asked = question ? this.state.questions.find((q) => q.id === question && q.open) : null;
     const mode = this.cfg.moderation.mode;
     const rule = mode === 'off' ? null : ruleReason(`${from}\n${text}`);
     const at = new Date().toISOString();
+    // A photo always waits for a person (unless moderation is off): the model is not trusted to judge pictures.
     const screen =
       mode === 'off'
         ? { status: 'allowed', reason: '', by: 'off', at }
         : rule
           ? { status: 'held', reason: rule, by: 'rules', at }
-          : mode === 'keeper'
-            ? { status: 'held', reason: 'waiting for its keeper', by: 'keeper', at }
+          : mode === 'keeper' || photo
+            ? { status: 'held', reason: photo ? 'a photo waits for its keeper' : 'waiting for its keeper', by: 'keeper', at }
             : { status: 'pending', reason: 'not screened yet', at };
+    const id = `L${this.letters.length + 1}`;
+    if (photo) this.store.writeText(`returns/${id}.jpg`, photo);
     const letter = {
-      id: `L${this.letters.length + 1}`,
+      id,
       from,
       text,
       at,
       person,
       question: asked?.id ?? null,
       questionText: asked?.text ?? null,
+      ...(errand ? { errand: { id: errand.id, text: errand.text, photo: photo ? `returns/${id}.jpg` : null } } : {}),
       screen,
     };
     this.letters.push(letter);
@@ -1108,6 +1237,18 @@ export class Life extends EventEmitter {
         };
       })(),
       wishes: s.wishes.slice(-6).reverse().map(publicWish),
+      errands: {
+        enabled: Boolean(this.cfg.errands.enabled),
+        open: openErrands(s.errands).map((e) => ({ id: e.id, text: e.text, cycle: e.cycle })).reverse(),
+        filled: s.errands.filter((e) => e.status === 'filled').length,
+        latestFilled: (() => {
+          const e = s.errands.filter((x) => x.status === 'filled').at(-1);
+          const l = e && this.letters.find((x) => x.id === e.filledBy);
+          return e && l && letterStatus(l) === 'allowed' && !l.errand.look?.withheld
+            ? { id: e.id, text: e.text, from: l.from, photo: l.errand.photo, verdict: l.errand.look?.verdict || '', cycle: e.filledCycle }
+            : null;
+        })(),
+      },
       wishIssues: this.cfg.wishes?.issuesUrl || null,
       live: this.live,
       senses: this.lastSenses,

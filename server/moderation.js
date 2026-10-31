@@ -28,8 +28,16 @@ export const SCREEN_SYSTEM = [
   'Answer with JSON: "verdict" is "allow" or "hold", and "reason" is a few words.',
 ].join('\n');
 
+const WHAT = {
+  reply: 'This is a reply the AI wrote to a letter.',
+  look: 'This is what the AI wrote about a photo a visitor brought it. It is shown next to the photo.',
+  errand:
+    'This is an errand the AI wants to post publicly, asking visitors to go and photograph something for it. Hold it if it asks for photos of people or faces, anything that could show who someone is or where they live, or anything risky, illegal, private or costly.',
+  letter: 'This is a letter someone left for the AI.',
+};
+
 export function screenPrompt(kind, text) {
-  const what = kind === 'reply' ? 'This is a reply the AI wrote to a letter.' : 'This is a letter someone left for the AI.';
+  const what = WHAT[kind] || WHAT.letter;
   return `${what}\n<<<\n${text}\n>>>\nShould it be shown?`;
 }
 

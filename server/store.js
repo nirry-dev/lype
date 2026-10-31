@@ -6,7 +6,7 @@ const pause = new Int32Array(new SharedArrayBuffer(4));
 const sleepSync = (ms) => Atomics.wait(pause, 0, 0, ms);
 
 export function createStore(dir) {
-  for (const sub of ['', 'cycles', 'nights', 'works']) mkdirSync(join(dir, sub), { recursive: true });
+  for (const sub of ['', 'cycles', 'nights', 'works', 'returns']) mkdirSync(join(dir, sub), { recursive: true });
   const path = (name) => join(dir, name);
 
   function writeAtomic(name, text) {

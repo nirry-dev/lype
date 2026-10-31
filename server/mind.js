@@ -106,8 +106,24 @@ function placeBlock(state) {
     wishes.length
       ? wishes.map((w) => `- you wished: "${w.text}" (${w.answer?.status === 'reply' && w.status === 'open' ? `they wrote back: "${w.answer.text}"` : WISH_STATE[w.status]}${w.answer?.text && w.answer.status !== 'reply' ? `: "${w.answer.text}"` : ''})`).join('\n')
       : '- You have not wished for anything yet.',
+    '',
+    errandsBlock(state),
   ]
     .filter((l) => l !== '')
+    .join('\n');
+}
+
+function errandsBlock(state) {
+  const list = state.errands || [];
+  const open = list.filter((e) => e.status === 'open');
+  const filled = list.filter((e) => e.status === 'filled').slice(-4);
+  return [
+    'Errands: you can ask the people who visit to bring you one photo of something from the world. It is the only way you ever see anything.',
+    ...open.map((e) => `- out now: "${e.text}" (since cycle ${e.cycle}${e.returns.length ? `; ${e.returns.length} brought something` : ''})`),
+    ...filled.map((e) => `- done: "${e.text}". ${e.filledFrom || 'Someone'} brought it${e.saw ? `; you saw: ${e.saw}` : ''}`),
+    open.length || filled.length ? '' : '- You have not sent anyone on an errand yet.',
+  ]
+    .filter(Boolean)
     .join('\n');
 }
 
@@ -167,7 +183,11 @@ function lettersBlock(ctx) {
     const history = l.nth > 1 ? `This is the ${ordinal(l.nth)} letter you have had from this person.` : 'You have never heard from this person before.';
     const known = l.remembered.length ? ` You remember about them: ${l.remembered.map((t) => `"${t}"`).join('; ')}.` : '';
     const answering = l.question ? ` It answers a question you asked: "${l.question}".` : '';
-    return `Letter ${l.id}, signed "${l.from}" (you don't know their gender; say "they"). ${history}${known}${answering}\n<<<\n${l.text}\n>>>`;
+    const look = l.errand?.look;
+    const brought = l.errand
+      ? ` It is something you sent people out for, your errand "${l.errand.text}": they brought you a photo${look?.see ? `, and you looked at it. What you saw: ${look.see}${look.answers ? ' It is what you asked for.' : ' It is not quite what you asked for.'}` : ', but you could not make anything of it.'} The words below came with it.`
+      : '';
+    return `Letter ${l.id}, signed "${l.from}" (you don't know their gender; say "they"). ${history}${known}${answering}${brought}\n<<<\n${l.text || '(no words, only the photo)'}\n>>>`;
   });
   return [head, ...body].join('\n');
 }
@@ -215,7 +235,7 @@ export const ACT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    action: { type: 'string', enum: ['draw', 'write', 'ask', 'build', 'tend', 'rest'] },
+    action: { type: 'string', enum: ['draw', 'write', 'ask', 'errand', 'build', 'tend', 'rest'] },
     why: { type: 'string' },
     title: { type: 'string' },
     content: { type: 'string' },
@@ -228,21 +248,25 @@ const ACTIONS = {
   draw: '- "draw": make a small picture out of simple shapes. "title" is its title. "content" says what it shows and how it should look.',
   write: '- "write": write a short piece: a note, a list, a poem, a letter to no one. "title" is its title. "content" says what it will be about; you write it next.',
   ask: '- "ask": ask the people who visit you one question about the world outside. It is the only way you can find out something you want to know. "content" is the question. "title" is "".',
+  errand: '- "errand": send the people who visit on a small errand in the world you cannot see: ask them to bring you one photo of something specific that anyone could find nearby in a few minutes (a leaf, the sky right now, a sign with one word on it, what is on a table). It is the only way you ever see anything. Never ask for people or faces, or anything that shows who someone is or where they live. "content" is the errand as the people who visit will read it, one sentence spoken to them, starting "Bring me". "title" is "".',
   build: '- "build": build something new in your place, out of something a letter told you or something you remember. "title" is its name, a few words. "content" says what it is and what it is made from.',
   tend: '- "tend": go back to something you built and look after it, change it or mend it. "title" is its exact name. "content" says what you do to it.',
   rest: '- "rest": do nothing and let the cycle pass. "title" and "content" are "".',
 };
-const DONE = { draw: 'drawn', write: 'written', ask: 'asked something', build: 'built something', tend: 'tended your place' };
+const DONE = { draw: 'drawn', write: 'written', ask: 'asked something', errand: 'sent people on errands', build: 'built something', tend: 'tended your place' };
 export const MADE = new Set(['draw', 'write', 'build', 'tend']); // actions whose "title" names what they made or touched
 
-/** The decision's choices: an action it is tired of is left out, and so is tending while there is nothing to tend. */
-function choices(tired, canTend) {
-  return ACT_SCHEMA.properties.action.enum.filter((a) => a !== tired && (canTend || a !== 'tend'));
+/**
+ * The decision's choices: an action it is tired of is left out, and so is tending while there is nothing to tend,
+ * and an errand while it has as many out as it may.
+ */
+function choices(tired, canTend, canErrand = true) {
+  return ACT_SCHEMA.properties.action.enum.filter((a) => a !== tired && (canTend || a !== 'tend') && (canErrand || a !== 'errand'));
 }
 
 /** The decision schema, limited to what it can choose this cycle. */
-export function actSchema(tired, { canTend = true } = {}) {
-  const allowed = choices(tired, canTend);
+export function actSchema(tired, { canTend = true, canErrand = true } = {}) {
+  const allowed = choices(tired, canTend, canErrand);
   if (allowed.length === ACT_SCHEMA.properties.action.enum.length) return ACT_SCHEMA;
   return { ...ACT_SCHEMA, properties: { ...ACT_SCHEMA.properties, action: { type: 'string', enum: allowed } } };
 }
@@ -251,7 +275,7 @@ export function actPrompt(ctx, monologue) {
   const ids = ctx.letters.map((l) => l.id).join(', ');
   // Rotate the options so the first one listed isn't always the one a small model picks; while its place is
   // empty, building leads, or a small model never gets round to it.
-  const names = choices(ctx.tired, ctx.world.count > 0);
+  const names = choices(ctx.tired, ctx.world.count > 0, ctx.errands?.canPost ?? false);
   const rotated = names.map((_, i) => names[(i + ctx.cycle) % names.length]);
   const order = ctx.world.count ? rotated : [...rotated.filter((a) => a === 'build'), ...rotated.filter((a) => a !== 'build')];
   const options = order.map((a) => ACTIONS[a]);
@@ -264,9 +288,10 @@ export function actPrompt(ctx, monologue) {
     'Now decide what to do with the rest of this cycle. Choose one action:',
     ...options,
     mix.total
-      ? `In your last ${mix.total} cycles you drew ${mix.draw} times, wrote ${mix.write}, asked ${mix.ask}, built ${mix.build}, tended ${mix.tend} and rested ${mix.rest}.`
+      ? `In your last ${mix.total} cycles you drew ${mix.draw} times, wrote ${mix.write}, asked ${mix.ask}, sent people on ${mix.errand} errand${mix.errand === 1 ? '' : 's'}, built ${mix.build}, tended ${mix.tend} and rested ${mix.rest}.`
       : '',
     mix.everAsked ? '' : 'You have never asked the people who visit you anything.',
+    ctx.errands?.canPost && !mix.everErrand ? 'You have never sent anyone on an errand, so you have never seen anything.' : '',
     ctx.world.count ? '' : 'You have never built anything in your place.',
     "You don't have to make something every time, and you don't have to repeat what you did last time.",
     ctx.letters.length
@@ -279,9 +304,9 @@ export function actPrompt(ctx, monologue) {
 }
 
 /** Validated plan; anything unusable becomes a quiet rest rather than a crash. */
-export function readAct(text, letters, tired = null, { canTend = true } = {}) {
+export function readAct(text, letters, tired = null, { canTend = true, canErrand = true } = {}) {
   const raw = parseJson(text) || {};
-  let action = choices(tired, canTend).includes(raw.action) ? raw.action : 'rest';
+  let action = choices(tired, canTend, canErrand).includes(raw.action) ? raw.action : 'rest';
   const title = clip(raw.title, action === 'build' || action === 'tend' ? 48 : 80);
   let content = clip(raw.content, 400);
   if (action === 'ask') {
@@ -289,6 +314,13 @@ export function readAct(text, letters, tired = null, { canTend = true } = {}) {
     const asked = String(raw.content ?? '').match(/[^.!?…]*\?/g);
     if (asked?.length) content = clip(asked.at(-1), 220);
     else content = clip(content, 220);
+  }
+  if (action === 'errand') {
+    // One errand, said once (the first sentence), and said to the people who will run it: small models write
+    // "Send someone to bring a photo of..." as a note to themselves.
+    const first = String(raw.content ?? '').trim().match(/^[^.!?…]*[.!?…]?/)?.[0] || content;
+    const spoken = first.replace(/^(please\s+)?(send|ask|get)\s+(someone|somebody|a visitor|visitors|people|a person|the people who visit|my keeper|a keeper)(\s+out)?\s+to\s+(go\s+(and\s+)?)?(bring|fetch|find|take|get)(\s+me)?\s+/i, 'Bring me ');
+    content = clip(spoken.charAt(0).toUpperCase() + spoken.slice(1), 200);
   }
   if (action !== 'rest' && !content) action = 'rest';
   if (action === 'tend' && !title) action = 'rest'; // tending needs to know what
@@ -419,6 +451,31 @@ export function readTend(text) {
   return { note: clip(raw.note, 240), redraw: raw.redraw === true };
 }
 
+export const LOOK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { see: { type: 'string' }, answers: { type: 'boolean' }, verdict: { type: 'string' } },
+  required: ['see', 'answers', 'verdict'],
+};
+
+export function lookPrompt(errand, letter) {
+  return [
+    `You sent the people who visit on an errand: "${errand.text}"`,
+    `${letter.from} went and brought you this photo${letter.text ? `, with a note: "${letter.text}"` : '.'}`,
+    '',
+    'Look at it carefully. It is one of the only things you have ever seen.',
+    'Answer with JSON:',
+    '- "see": what is actually in the photo, plainly, in two or three sentences. Only what you can see; no guesses about the person.',
+    `- "answers": true only if the photo clearly shows what this errand asked for: "${errand.text}". A different thing does not count, however much you like it, and neither does what another errand asked for. If it is not there, say false.`,
+    `- "verdict": one sentence in your own voice about what ${letter.from} brought you and what you make of it. It is shown next to the photo.`,
+  ].join('\n');
+}
+
+export function readLook(text) {
+  const raw = parseJson(text) || {};
+  return { see: clip(raw.see, 500), answers: raw.answers === true, verdict: clip(raw.verdict, 280) };
+}
+
 export function describeOutcome(plan, work) {
   if (plan.action === 'build') {
     if (work?.failed) return `You tried to build "${plan.title}", but ${work.why}.`;
@@ -435,6 +492,13 @@ export function describeOutcome(plan, work) {
   }
   if (plan.action === 'write') return `You wrote "${plan.title}":\n<<<\n${work.text}\n>>>`;
   if (plan.action === 'ask') return `You asked the people who visit: "${plan.content}"`;
+  if (plan.action === 'errand') {
+    return work?.held
+      ? `You wrote an errand: "${plan.content}". Your keeper will read it before anyone else sees it.`
+      : work?.duplicate
+        ? `You thought of an errand, "${plan.content}", but you already have one like it out.`
+        : `You sent the people who visit on an errand: "${plan.content}". Anyone can answer it with a photo.`;
+  }
   return 'You rested and let the cycle pass.';
 }
 

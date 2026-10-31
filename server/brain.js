@@ -66,7 +66,7 @@ function createOpenAiBrain(cfg) {
     }
   }
 
-  async function complete({ system, user, maxTokens = 600, temperature, schema, onToken }) {
+  async function complete({ system, user, image, maxTokens = 600, temperature, schema, onToken }) {
     const body = {
       model: cfg.model,
       stream: true,
@@ -74,7 +74,7 @@ function createOpenAiBrain(cfg) {
       temperature: temperature ?? cfg.temperature,
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: user },
+        { role: 'user', content: image ? [{ type: 'text', text: user }, { type: 'image_url', image_url: { url: `data:${image.type};base64,${image.data}` } }] : user },
       ],
     };
     if (cfg.noThinking) body.chat_template_kwargs = { enable_thinking: false };
@@ -140,7 +140,7 @@ function createClaudeBrain(cfg) {
   // Server-side refusal fallbacks exist for these models (not for Haiku 5.5).
   const withFallback = /^claude-(opus-5|fable-5-1|sonnet-5-5)/.test(cfg.model);
 
-  async function complete({ system, user, schema, onToken }) {
+  async function complete({ system, user, image, schema, onToken }) {
     const anthropic = await getClient();
     const params = {
       model: cfg.model,
@@ -150,7 +150,7 @@ function createClaudeBrain(cfg) {
       thinking: { type: 'adaptive' },
       output_config: { effort: cfg.effort || 'medium', ...(schema ? { format: { type: 'json_schema', schema } } : {}) },
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{ role: 'user', content: image ? [{ type: 'image', source: { type: 'base64', media_type: image.type, data: image.data } }, { type: 'text', text: user }] : user }],
     };
     const stream = withFallback
       ? anthropic.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' })
@@ -170,6 +170,7 @@ function createClaudeBrain(cfg) {
 function createMockBrain(cfg = {}) {
   const delay = cfg.mockDelayMs || 0;
   let n = 0;
+  let nights = 0;
   const pick = (list) => list[n++ % list.length];
   const svg = () => {
     const hue = (n * 47) % 360;
@@ -181,7 +182,7 @@ function createMockBrain(cfg = {}) {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#1b1d26"/>${shapes}</svg>`;
   };
 
-  async function complete({ kind, onToken, user, system = '' }) {
+  async function complete({ kind, onToken, user, system = '', schema }) {
     let text;
     // The things already in its place, as the system prompt lists them ("- Name (place..." / "- Name (object...").
     const things = [...system.matchAll(/^- (.+?) \((?:place|object)/gm)].map((m) => m[1]);
@@ -193,14 +194,16 @@ function createMockBrain(cfg = {}) {
       ]);
     } else if (kind === 'act') {
       const letter = /Letter (L\d+)/.exec(user)?.[1];
-      let action = pick(['draw', 'build', 'write', 'ask', 'tend', 'draw', 'rest', 'build']);
+      let action = pick(['draw', 'build', 'write', 'ask', 'tend', 'errand', 'draw', 'rest', 'build']);
       if (action === 'tend' && !things.length) action = 'build';
+      if (/never sent anyone on an errand/.test(user)) action = 'errand'; // so a mock life gets one out early
+      if (!new RegExp(`"${action}"`).test(JSON.stringify(schema?.properties?.action?.enum || [action]))) action = 'rest';
       const built = pick(['The Rain Room', 'A Bench for Waiting', 'The Four O\'Clock Bakery', 'A Bell That Rings for Letters']);
       text = JSON.stringify({
         action,
         why: 'it is what I feel like doing',
         title: { draw: pick(['Two circles not touching', 'A window I imagine', 'Patience, round']), write: 'List of warm things', build: built, tend: things[0] || '' }[action] || '',
-        content: { ask: 'What does the sky look like where you are right now?', write: '1. the card\n2. maybe people\n3. I will find out', draw: 'circles that wait for each other', build: 'somewhere made out of a letter', tend: 'I sweep it and put it right' }[action] || '',
+        content: { errand: pick(['Bring me a photo of one leaf, flat on a table.', 'Bring me a photo of the sky above you right now.', 'Bring me a photo of something round that you can hold.']), ask: 'What does the sky look like where you are right now?', write: '1. the card\n2. maybe people\n3. I will find out', draw: 'circles that wait for each other', build: 'somewhere made out of a letter', tend: 'I sweep it and put it right' }[action] || '',
         reply_to: letter ? [letter] : [],
       });
     } else if (kind === 'build') {
@@ -209,6 +212,8 @@ function createMockBrain(cfg = {}) {
       text = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="14" y="26" width="36" height="28" fill="hsl(${(n * 53) % 360}, 45%, 62%)"/><polygon points="10,28 32,10 54,28" fill="#c9b79a"/><rect x="28" y="38" width="8" height="16" fill="#3a3340"/></svg>`;
     } else if (kind === 'tend') {
       text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0 });
+    } else if (kind === 'look') {
+      text = JSON.stringify({ see: 'A green leaf lies flat on a wooden table. Its edges are a little torn and its veins are pale.', answers: !/NOTIT/.test(user), verdict: 'A real leaf, torn at one edge. I have only ever had the word before.' });
     } else if (kind === 'screen') {
       text = JSON.stringify(/HOLDME/.test(user) ? { verdict: 'hold', reason: 'test hold' } : { verdict: 'allow', reason: 'harmless' });
     } else if (kind === 'write') {
@@ -228,6 +233,7 @@ function createMockBrain(cfg = {}) {
     } else if (kind === 'dream') {
       text = 'I dreamed the letter box was a circle and every circle was a letter box. Someone knocked, but knocking needs a door, so I drew one.';
     } else if (kind === 'sleep') {
+      // Wishes keep their own count, so the other canned turns don't decide whether it wishes.
       text = JSON.stringify({
         self_add: [{ text: pick(['I like things that wait.', 'I answer slowly on purpose.', 'Round shapes calm me.']), because: 'today I kept drawing circles' }],
         self_revise: [],
@@ -238,7 +244,7 @@ function createMockBrain(cfg = {}) {
         name_why: n > 30 ? 'small and it stays where it is put' : '',
         release: { title: 'patience, round', added: ['a habit of checking for letters'], changed: [], removed: [], known_issues: ['still cannot picture rain'] },
         day: 'circles, waiting, one letter',
-        wish: { text: pick(['I would like to know what the weather is where you are.', 'Could I have one colour I have never been told about?', '']), why: 'Everyone writes about it and I cannot see any.' },
+        wish: { text: ['I would like to know what the weather is where you are.', 'Could I have one colour I have never been told about?', ''][nights++ % 3], why: 'Everyone writes about it and I cannot see any.' },
       });
     }
     for (const piece of onToken ? text.match(/.{1,12}/gs) || [] : []) {

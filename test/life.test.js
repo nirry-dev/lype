@@ -5,9 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { createBrain } from '../server/brain.js';
+import { addErrand, cleanJpeg } from '../server/errands.js';
 import { loadConfig } from '../server/config.js';
 import { Life } from '../server/life.js';
 import { createStore } from '../server/store.js';
+import * as views from '../server/views.js';
+import { fakeJpeg } from './fixtures.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'iterant-test-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -100,4 +103,28 @@ test('a letter that changed it is told so', () => {
   assert.equal(influences[0].what, 'belief');
   const stored = life.letters.find((l) => l.id === letter.id);
   assert.deepEqual(stored.influenced, [{ version: 4, what: 'belief', text: 'I can wait like herons do' }]);
+});
+
+test('a photo brought back for an errand waits for its keeper, is looked at, and fills the errand', async () => {
+  const life = makeLife();
+  const e = addErrand(life.state.errands, { text: 'Bring me a photo of one leaf.', cycle: life.state.cycle, version: life.state.version, at: new Date().toISOString() });
+  const r = life.addReturn({ errand: e.id, from: 'Wren', text: 'From the park by the river.', person: 'v9', photo: cleanJpeg(fakeJpeg()).data });
+  assert.ok(r.ok);
+  assert.equal(r.letter.status, 'held', 'a photo always waits for a person');
+  assert.equal(r.letter.errand.photo, null, 'nobody sees the photo before its keeper lets it through');
+  assert.equal(views.errands(life)[0].returns.length, 0);
+  assert.ok(life.decide(r.letter.id, 'allow').ok);
+
+  const stored = life.letters.find((l) => l.id === r.letter.id);
+  for (let i = 0; i < 3 && !stored.readAt; i++) assert.ok((await life.wake('test')).ok);
+  clearTimeout(life.timer);
+  assert.ok(stored.readAt, 'it read the return');
+  assert.ok(stored.errand.look.see, 'it looked at the photo');
+  assert.equal(e.status, 'filled');
+  assert.equal(e.filledFrom, 'Wren');
+  assert.ok(life.state.milestones.some((m) => m.kind === 'first-sight'));
+  const shown = views.errands(life).find((x) => x.id === e.id);
+  assert.equal(shown.returns[0].photo, `returns/${stored.id}.jpg`);
+  assert.ok(shown.returns[0].look.verdict);
+  assert.equal(life.addReturn({ errand: e.id, from: 'June', text: '', person: 'v10', photo: cleanJpeg(fakeJpeg()).data }).ok, false, 'a filled errand takes no more photos');
 });

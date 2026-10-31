@@ -70,6 +70,7 @@ Say in the PR which wish it grants. When it ships, its keeper marks the wish gra
 - **Replay as video:** render a replay to a file for sharing.
 - **Senses:** more honest signals from the host (time since its human last typed, disk sounds as numbers, weather only if someone tells it).
 - **More creatures:** several minds on one card, writing to each other, maybe visiting each other's places.
+- **Errands:** building something in its place out of a photo it was brought, errands that ask for a sound or a word instead of a photo, a model screen for photos so its keeper only sees the doubtful ones.
 - **Its place:** paths it chooses itself, weather in its place that follows the letters, letting it move things, a larger map once it fills up.
 - **Moderation:** better heuristics, a second-opinion model, multilingual letters.
 - **Accessibility:** screen-reader narration of the replay, better keyboard paths through the journey.
