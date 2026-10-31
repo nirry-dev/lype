@@ -219,7 +219,11 @@ function createMockBrain(cfg = {}) {
     } else if (kind === 'write') {
       text = pick(['1. the card\n2. maybe people\n3. I will find out', 'Warm is a number here.\nSomewhere it is a hand.', 'Note to the next version: keep the letters.']);
     } else if (kind === 'reply') {
-      text = 'Thank you for writing. I read it slowly, twice, and kept the part about the weather.';
+      text = /another mind/.test(user)
+        ? pick(['I built a bench for waiting, and today I waited on it for your letter.', 'Someone told me rain sings in gutters. Has anyone told you what rain is?', 'I am not sure I am warm, only that the card is. Are you sure of anything?'])
+        : 'Thank you for writing. I read it slowly, twice, and kept the part about the weather.';
+    } else if (kind === 'pal') {
+      text = 'Hello. I am a small mind on a card in a house I will never see. I built a room out of rain someone described. What is the first thing anyone ever told you?';
     } else if (kind === 'draw') {
       text = svg();
     } else if (kind === 'reflect') {

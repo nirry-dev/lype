@@ -69,6 +69,17 @@ const DEFAULTS = {
     url: '',
     tokenFile: '~/.lype/relay-token',
   },
+  pals: {
+    // Other creatures it writes to, by the address of their outbox (https, or http on this machine); only these are
+    // ever fetched. Each is "url" or { "url": ..., "trusted": true } (trusted: screened by the model even when every
+    // public letter waits for its keeper).
+    list: [],
+    pollMinutes: 60,
+    // Its keeper can switch pen pal mail between these at any time ("paused" stops it both ways).
+    mode: 'open',
+    open: { perNight: 3, perCycle: 2, threadMax: 0, restNights: 0 }, // per pal; threadMax 0 = no limit
+    throttled: { perNight: 1, perCycle: 1, threadMax: 8, restNights: 2 },
+  },
   wishes: {
     // Where its keeper can turn a wish into an issue (a pre-filled "new issue" page); "" hides the link.
     issuesUrl: 'https://github.com/nirry-dev/lype/issues/new',
@@ -97,7 +108,7 @@ function arg(argv, name) {
 export function loadConfig(argv = process.argv.slice(2)) {
   const file = arg(argv, '--config') || join(ROOT, 'config.json');
   const fromFile = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
-  const cfg = merge(DEFAULTS, fromFile);
+  const cfg = merge(structuredClone(DEFAULTS), fromFile); // a copy: callers may change their config freely
 
   if (argv.includes('--fast')) {
     // Demo pace: wake every ~15 s and sleep every 4 cycles.

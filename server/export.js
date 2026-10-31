@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { ROOT, loadConfig } from './config.js';
 import { Life } from './life.js';
 import { createStore, pad } from './store.js';
+import { outbox } from './pals.js';
 import * as views from './views.js';
 
 const argv = process.argv.slice(2);
@@ -64,6 +65,7 @@ for (const r of errands.flatMap((e) => e.returns)) {
   copyFileSync(store.path(r.photo), join(out, `data/${r.photo}`));
 }
 write('data/chain.json', views.chain(life));
+write('data/outbox.json', outbox(life, { file: true }));
 for (const night of life.nights) write(`data/nights/${pad(night.n, 4)}.json`, views.night(store, night.n));
 for (const c of life.cycles) {
   write(`data/cycles/${pad(c.n)}.json`, views.cycle(store, c.n));

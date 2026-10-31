@@ -362,6 +362,8 @@ function renderChrome() {
   name.classList.toggle('unnamed', !s.name);
   $('#brand-version').textContent = `v${s.version}`;
   $('#brand-dot').style.setProperty('--dot', moodColor(s.mood));
+  const palMode = $('#admin-pals');
+  if (palMode && s.pals && document.activeElement !== palMode) palMode.value = s.pals.mode;
   document.title = s.name || 'Lype';
   for (const a of $$('#tabs a')) {
     if (a.dataset.view === app.view) a.setAttribute('aria-current', 'page');
@@ -494,7 +496,7 @@ function letterView(l) {
     h(
       'div',
       { class: 'paper' },
-      h('div', { class: 'from' }, `From ${l.from}`, l.at ? ` · ${dayTime(l.at)}` : '', l.mine ? ' · you' : ''),
+      h('div', { class: 'from' }, `From ${l.from}`, l.fromCreature ? ' · another mind like it' : '', l.at ? ` · ${dayTime(l.at)}` : '', l.mine ? ' · you' : ''),
       l.questionText ? h('div', { class: 'from' }, `answering “${l.questionText}”`) : null,
       l.errand ? h('div', { class: 'from' }, `brought back for its errand “${l.errand.text}”`) : null,
       l.errand?.photo ? h('img', { class: 'return-photo', src: asset(l.errand.photo), alt: `The photo ${l.from} brought back`, loading: 'lazy' }) : null,
@@ -2605,7 +2607,24 @@ function lettersFeed() {
       : null;
 
   const letters = app.letters;
-  return [keeperCard(), youCard, letters.length ? letters.map(letterView) : h('p', { class: 'empty' }, 'Nobody has written to it yet. You could be the first.')];
+  return [keeperCard(), youCard, palsCard(), letters.length ? letters.map(letterView) : h('p', { class: 'empty' }, 'Nobody has written to it yet. You could be the first.')];
+}
+
+/** Its pen pals: other creatures it writes to, and the letters it has sent them (they leave at night). */
+function palsCard() {
+  const p = app.state?.pals;
+  if (!p?.known?.length && !p?.sent?.length) return null;
+  const who = p.known.map((k) => `${k.name} (${k.received} in, ${k.sent} out${k.resting ? ', resting' : ''})`).join(' · ');
+  return h(
+    'div',
+    { class: 'card pals' },
+    cardHead('Its pen pals', p.mode === 'open' ? 'other minds like it' : `pen pal mail ${p.mode}`),
+    h('p', { class: 'meta', style: 'margin-top:0' }, `Other creatures, each on someone else's graphics card, that also know the world only through letters. What it writes them leaves at night. ${who}`),
+    p.waiting ? h('p', { class: 'meta' }, `${p.waiting} letter${p.waiting === 1 ? '' : 's'} waiting to leave tonight.`) : null,
+    p.sent.slice(0, 6).map((o) =>
+      h('div', { class: 'ghost', style: 'margin-bottom:8px' }, h('div', { class: 'from' }, `${o.first ? 'Its first letter to' : 'To'} ${o.toName} · left night ${o.night}`), h('p', {}, o.text)),
+    ),
+  );
 }
 
 // ---------- errands ----------
@@ -2815,6 +2834,19 @@ async function initAdmin() {
       }
     });
   }
+  // Pen pal mail: its keeper can throttle or pause it at any time (an influx while testing, say).
+  const pals = $('#admin-pals');
+  pals.value = app.state?.pals?.mode || 'open';
+  pals.addEventListener('change', async () => {
+    const out = $('#admin-msg');
+    try {
+      const r = await api('/api/admin/pals', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': token }, body: JSON.stringify({ mode: pals.value }) });
+      out.textContent = `Pen pal mail ${r.mode}.`;
+      app.state = await api('/api/state');
+    } catch (err) {
+      out.textContent = err.message;
+    }
+  });
   renderChrome();
 }
 

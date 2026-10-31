@@ -6,7 +6,7 @@ import { DurableObject } from 'cloudflare:workers';
 
 // What a visitor may ask for: the creature's public API, its drawings, photos its keeper allowed, and writing to it.
 const PUBLIC_GET = [
-  /^\/api\/(state|journey|works|life|atlas|world|errands|chain)$/,
+  /^\/api\/(state|journey|works|life|atlas|world|errands|chain|outbox)$/,
   /^\/api\/cycle\/(\d{1,7}|latest)$/,
   /^\/api\/night\/\d{1,5}$/,
   /^\/api\/(letters|you)$/,

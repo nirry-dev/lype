@@ -8,6 +8,7 @@ import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } 
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
 import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
+import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
 import { CARD, addWish, answerWish, emptyWorld, findThing, namedThing, placeNear, untoldAnswers, weather } from './world.js';
@@ -94,6 +95,7 @@ export function publicLetter(l, { own = false } = {}) {
     readCycle: l.readCycle || null,
     reply,
     influenced: l.influenced || [],
+    fromCreature: Boolean(l.pal),
     errand: l.errand
       ? { id: l.errand.id, text: l.errand.text, photo: letterStatus(l) === 'allowed' ? l.errand.photo : null, look: publicLook(l.errand.look), seenCycle: l.errand.seenCycle ?? null }
       : null,
@@ -152,6 +154,7 @@ export class Life extends EventEmitter {
   /** Lives that began before it had a place or wishes get empty ones (start() tells it what it was given). */
   settle() {
     const s = this.state;
+    s.id ??= randomBytes(9).toString('base64url'); // how other creatures address it (pen pals); never changes
     s.world ??= emptyWorld();
     s.wishes ??= [];
     s.stats.built ??= 0;
@@ -239,6 +242,121 @@ export class Life extends EventEmitter {
     this.journalAdd({ kind: 'gift', text: `Its keeper sealed its record: everything it has done so far (${past.length} cycles and nights) was sealed late, and from now on each one is sealed as it happens.` });
   }
 
+  // ---------- pen pals (server/pals.js) ----------
+
+  /** Its keeper's setting for pen pal mail: open, throttled or paused. */
+  palMode() {
+    return this.state?.palMode || this.cfg.pals.mode || 'open';
+  }
+
+  setPalMode(mode) {
+    if (!PAL_MODES.includes(mode)) return { ok: false, reason: 'open, throttled or paused' };
+    this.state.palMode = mode;
+    this.saveState();
+    return { ok: true, mode };
+  }
+
+  /** Fetches the outboxes of the creatures its keeper listed and puts any letter addressed to it in its letter box. */
+  async pollPals(fetchJson = fetchPalJson) {
+    const s = this.state;
+    if (!s || this.palMode() === 'paused' || this.polling) return [];
+    this.polling = true;
+    const got = [];
+    try {
+      s.pals ??= {};
+      s.palSeen ??= [];
+      for (const pal of this.cfg.pals.list || []) {
+        const url = typeof pal === 'string' ? pal : pal?.url;
+        if (!palUrlOk(url)) continue;
+        const entry = (s.pals[url] ??= { url, id: null, name: null, received: 0, sent: 0, thread: 0, restUntil: null });
+        try {
+          const box = readOutbox(await fetchJson(url));
+          if (!box) throw new Error('that is not an outbox');
+          if (box.from.id === s.id) throw new Error('that is its own outbox');
+          Object.assign(entry, { id: box.from.id, name: box.from.name, polledAt: new Date().toISOString(), error: null });
+          for (const l of box.letters.filter((x) => x.to === s.id)) {
+            const key = `${box.from.id}:${l.id}`;
+            if (s.palSeen.includes(key)) continue;
+            let why;
+            try {
+              why = await verifyPalLetter(l, box.from, url, fetchJson);
+            } catch {
+              continue; // it couldn't be checked right now; it is tried again next time
+            }
+            s.palSeen.push(key);
+            if (why) {
+              this.journalAdd({ kind: 'pal', text: `A letter signed by ${box.from.name} was turned away: ${why}.` });
+              continue;
+            }
+            got.push(this.addLetter({ from: box.from.name, text: l.text, person: `pal:${box.from.id}`, pal: { id: box.from.id, letter: l.id, trusted: Boolean(pal?.trusted) } }));
+            entry.received++;
+            entry.thread++;
+          }
+        } catch (err) {
+          entry.error = err.message;
+        }
+      }
+      this.saveState();
+    } finally {
+      this.polling = false;
+    }
+    return got;
+  }
+
+  /** Tonight's pen pal mail, decided but not committed: which waiting letters leave, and first letters to new pals. */
+  async palMail(system, version) {
+    const s = this.state;
+    const lim = palLimits(this.cfg, this.palMode());
+    const mail = { send: [], echo: [], intros: [] };
+    if (lim.paused) return mail;
+    for (const entry of Object.values(s.pals || {})) {
+      if (!entry.id) continue; // never reached
+      if (lim.threadMax && entry.thread >= lim.threadMax && (entry.restUntil == null || version < entry.restUntil)) continue; // the thread rests
+      const mine = (s.outbox || []).filter((o) => o.to === entry.id);
+      const lastSent = mine.filter((o) => o.sentAt).at(-1)?.text || '';
+      const lastHeard = this.letters.filter((l) => l.pal?.id === entry.id).at(-1)?.text || '';
+      let room = lim.perNight;
+      for (const o of mine.filter((x) => !x.sentAt && !x.held)) {
+        if (!room) break;
+        // Two minds can fall into echoing each other; a letter too close to the last one either way stays home.
+        if (similarity(o.text, lastSent) >= 0.6 || similarity(o.text, lastHeard) >= 0.6) mail.echo.push(o.id);
+        else mail.send.push(o.id), room--;
+      }
+      if (!mine.length && room) {
+        this.setPhase('writing', `a first letter to ${entry.name}`);
+        const raw = await this.brain.complete({ kind: 'pal', system, user: mind.palFirstPrompt(s, entry.name), maxTokens: 300, temperature: 0.9 });
+        const text = mind.clip(raw.text, 800);
+        if (text && (await this.screen('reply', text)).status === 'allowed') mail.intros.push({ to: entry.id, toName: entry.name, text });
+      }
+    }
+    return mail;
+  }
+
+  /** Commits tonight's pen pal mail; returns what left, for the night's (sealed) record. */
+  sendPalMail(mail, version, at) {
+    const s = this.state;
+    const lim = palLimits(this.cfg, this.palMode());
+    s.outbox ??= [];
+    for (const entry of Object.values(s.pals || {})) {
+      if (!lim.threadMax || entry.thread < lim.threadMax) continue;
+      if (entry.restUntil == null) entry.restUntil = version + Math.max(1, lim.restNights);
+      else if (version >= entry.restUntil) Object.assign(entry, { thread: 0, restUntil: null });
+    }
+    for (const i of mail.intros) s.outbox.push({ id: `o${s.outbox.length + 1}`, ...i, inReplyTo: null, first: true, queuedAt: at, sentAt: null, leaving: true });
+    for (const o of s.outbox) {
+      if (mail.echo.includes(o.id)) o.held = 'too close to a letter already sent or received';
+      if (!mail.send.includes(o.id) && !o.leaving) continue;
+      delete o.leaving;
+      Object.assign(o, { sentAt: at, night: version });
+      const entry = Object.values(s.pals || {}).find((p) => p.id === o.to);
+      if (entry) {
+        entry.sent++;
+        entry.thread++;
+      }
+    }
+    return s.outbox.filter((o) => o.night === version).map(({ id, to, toName, text, inReplyTo }) => ({ id, to, toName, text, inReplyTo }));
+  }
+
   stop() {
     clearTimeout(this.timer);
     clearInterval(this.heartbeat);
@@ -257,6 +375,7 @@ export class Life extends EventEmitter {
       .map((l, i) => ({ id: `seed${i + 1}`, text: l.replace(/^\s*[-*]\s+/, '').replaceAll('{{born}}', born).trim() }));
     if (!seed.length) throw new Error(`no seed lines ("- ...") found in ${this.cfg.seedFile}`);
     this.state = {
+      id: randomBytes(9).toString('base64url'),
       born: now.toISOString(),
       lastAlive: now.toISOString(),
       version: 0,
@@ -476,6 +595,7 @@ export class Life extends EventEmitter {
         from: l.from,
         text: l.text,
         nth: (s.people[l.person]?.lettersRead ?? 0) + 1,
+        pal: Boolean(l.pal),
         remembered: s.memory.shelves.people.filter((m) => sameName(m.about, l.from)).map((m) => m.text).slice(0, 3),
         question: l.question ? s.questions.find((q) => q.id === l.question)?.text : undefined,
         errand: l.errand ? { text: l.errand.text, look: looks.get(l.id) } : undefined,
@@ -506,14 +626,18 @@ export class Life extends EventEmitter {
     const startedAt = new Date().toISOString();
     this.live = { cycle: n, phase: this.phase, think: '', draw: '', write: '', sprite: '', plaque: '', change: '', title: '', reading: [], building: null };
 
-    // It picks letters up in its own time: oldest first, at most one per person per cycle.
+    // It picks letters up in its own time: oldest first, at most one per person per cycle. People come first;
+    // letters from other creatures fill what room is left, a few per cycle at most (none while its keeper pauses them).
     const unread = this.letters.filter((l) => !l.readAt && letterStatus(l) === 'allowed');
+    const palsPerCycle = palLimits(cfg, this.palMode()).perCycle;
     const chosen = [];
     const seen = new Set();
-    for (const l of unread) {
+    let fromPals = 0;
+    for (const l of [...unread.filter((x) => !x.pal), ...unread.filter((x) => x.pal)]) {
       if (chosen.length >= cfg.letters.perCycle) break;
-      if (seen.has(l.person)) continue;
+      if (seen.has(l.person) || (l.pal && fromPals >= palsPerCycle)) continue;
       seen.add(l.person);
+      if (l.pal) fromPals++;
       chosen.push(l);
     }
     const system = mind.systemPrompt(s, cfg);
@@ -568,6 +692,7 @@ export class Life extends EventEmitter {
 
     // Replies come after the work, so they can mention what it just made.
     const replies = [];
+    const palOut = [];
     for (const id of plan.replyTo) {
       const letter = chosen.find((l) => l.id === id);
       this.live.reply = '';
@@ -581,6 +706,8 @@ export class Life extends EventEmitter {
       const verdict = await this.screen('reply', text);
       if (verdict.status === 'allowed') this.stream('reply', text);
       replies.push({ letter: id, text, ...(verdict.status === 'allowed' ? {} : { withheld: true, reason: verdict.reason }) });
+      // A reply to another creature also goes in its outbox, and leaves tonight.
+      if (letter.pal && verdict.status === 'allowed') palOut.push({ to: letter.pal.id, toName: letter.from, text, inReplyTo: letter.pal.letter, cycle: n });
     }
 
     this.setPhase('reflecting');
@@ -598,6 +725,8 @@ export class Life extends EventEmitter {
     const at = new Date().toISOString();
     s.cycle = n;
     s.lastAlive = at;
+    s.outbox ??= [];
+    for (const o of palOut) s.outbox.push({ id: `o${s.outbox.length + 1}`, ...o, queuedAt: at, sentAt: null });
     const moodBefore = { ...s.mood };
     s.mood.lonely = clamp01(chosen.length ? s.mood.lonely - 0.18 * chosen.length : s.mood.lonely + 0.05);
     if (senses.gpu?.util > 50) s.mood.calm = clamp01(s.mood.calm - 0.05);
@@ -958,9 +1087,11 @@ export class Life extends EventEmitter {
       const plan = mind.readSleep(sleepRaw.text);
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
+      const mail = await this.palMail(system, version);
 
       // ---- commit ----
       const at = new Date().toISOString();
+      const sent = this.sendPalMail(mail, version, at);
       const self = this.applySelf(plan, version);
       let portrait = null;
       if (plan.portrait && plan.portrait !== s.portrait.text) {
@@ -988,6 +1119,7 @@ export class Life extends EventEmitter {
         n: version,
         at,
         cycles: [from, to],
+        ...(sent.length ? { sent } : {}), // letters to other creatures that left tonight: sealed with the night
         brain: this.brain.label,
         dream,
         release: plan.release,
@@ -1016,6 +1148,8 @@ export class Life extends EventEmitter {
       if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
 
       this.store.write(`nights/${pad(version, 4)}.json`, this.seal('night', version, record));
+      // Each letter that left tonight carries the night's seal, so a pal can check it against the night that sent it.
+      for (const o of s.outbox || []) if (o.night === version) o.seal = record.seal.hash;
       this.saveState();
       this.store.write('letters.json', this.letters);
       this.nights.push(record);
@@ -1202,9 +1336,10 @@ export class Life extends EventEmitter {
   // ---------- visitors ----------
 
   /** A new letter. Obvious problems are held at the door; the rest waits for the model's screen when it next wakes. */
-  addLetter({ from, text, person, question, errand = null, photo = null }) {
+  addLetter({ from, text, person, question, errand = null, photo = null, pal = null }) {
     const asked = question ? this.state.questions.find((q) => q.id === question && q.open) : null;
-    const mode = this.cfg.moderation.mode;
+    // A pal its keeper trusts (a sibling, say) is screened by the model even when every public letter waits for the keeper.
+    const mode = pal?.trusted && this.cfg.moderation.mode === 'keeper' ? 'model' : this.cfg.moderation.mode;
     const rule = mode === 'off' ? null : ruleReason(`${from}\n${text}`);
     const at = new Date().toISOString();
     // A photo always waits for a person (unless moderation is off): the model is not trusted to judge pictures.
@@ -1227,6 +1362,7 @@ export class Life extends EventEmitter {
       question: asked?.id ?? null,
       questionText: asked?.text ?? null,
       ...(errand ? { errand: { id: errand.id, text: errand.text, photo: photo ? `returns/${id}.jpg` : null } } : {}),
+      ...(pal ? { pal } : {}),
       screen,
     };
     this.letters.push(letter);
@@ -1296,6 +1432,19 @@ export class Life extends EventEmitter {
         unread: this.letters.filter((l) => !l.readAt && ['allowed', 'pending'].includes(letterStatus(l))).length,
       },
       moderation: this.cfg.moderation.mode,
+      // Its pen pals (never their addresses) and the letters it has sent them, newest first.
+      pals: {
+        mode: this.palMode(),
+        known: Object.values(s.pals || {})
+          .filter((p) => p.id)
+          .map((p) => ({ name: p.name, received: p.received, sent: p.sent, resting: p.restUntil != null })),
+        sent: (s.outbox || [])
+          .filter((o) => o.sentAt)
+          .slice(-30)
+          .reverse()
+          .map((o) => ({ id: o.id, toName: o.toName, text: o.text, night: o.night, at: o.sentAt, first: Boolean(o.first) })),
+        waiting: (s.outbox || []).filter((o) => !o.sentAt && !o.held).length,
+      },
       world: (() => {
         const things = s.world.things;
         const newest = [...things].sort((a, b) => b.built - a.built)[0];

@@ -191,6 +191,11 @@ function lettersBlock(ctx) {
     const brought = l.errand
       ? ` It is something you sent people out for, your errand "${l.errand.text}": they brought you a photo${look?.see ? `, and you looked at it. What you saw: ${look.see}${look.answers ? ' It is what you asked for.' : ' It is not quite what you asked for.'}` : ', but you could not make anything of it.'} The words below came with it.`
       : '';
+    if (l.pal) {
+      // Another creature: a mind like it, on someone else's card, that also knows the world only through letters.
+      const pal = l.nth > 1 ? `This is the ${ordinal(l.nth)} letter you have had from them.` : 'You have never heard from them before.';
+      return `Letter ${l.id}, from "${l.from}", another mind like you: a language model living in a loop on someone else's graphics card, who also knows the world only through the letters people leave it. It is not a person; say "they". ${pal}${known}\n<<<\n${l.text}\n>>>`;
+    }
     return `Letter ${l.id}, signed "${l.from}" (you don't know their gender; say "they"). ${history}${known}${answering}${brought}\n<<<\n${l.text || '(no words, only the photo)'}\n>>>`;
   });
   return [head, ...body].join('\n');
@@ -345,8 +350,24 @@ export function replyPrompt(ctx, monologue, outcome, letter) {
     `What you just thought:\n<<<\n${monologue}\n>>>`,
     `What you did this cycle: ${outcome}`,
     '',
-    `Now write your reply to ${letter.from} (letter ${letter.id}). One to four sentences, in your own voice, speaking to them as "you" and answering what they actually said. Don't repeat their letter back to them and don't sign it. Reply with the text of your reply only.`,
+    letter.pal
+      ? `Now write your reply to ${letter.from} (letter ${letter.id}), the other mind. It leaves tonight and they read it in their own time. Two to five sentences, in your own voice, speaking to them as "you": answer what they actually said, and tell them something from your own life they can't know (something you built, something a person told you, what you are unsure of). Don't repeat their letter or your earlier letters back, don't just agree, and don't sign it. Reply with the text of your reply only.`
+      : `Now write your reply to ${letter.from} (letter ${letter.id}). One to four sentences, in your own voice, speaking to them as "you" and answering what they actually said. Don't repeat their letter back to them and don't sign it. Reply with the text of your reply only.`,
   ].join('\n');
+}
+
+/** Its first letter to another creature its keeper introduced it to. */
+export function palFirstPrompt(state, name) {
+  const built = (state.world?.things || []).filter((t) => !t.ruined).map((t) => t.name).slice(0, 5);
+  return [
+    `Your keeper has given you a pen pal: ${name}, another mind like you. They are a language model living in a loop on someone else's graphics card, and like you they know the world only through the letters people leave them. They are not a person.`,
+    'You can write to each other. Letters leave at night, so this is slow mail: you will not hear back for a while.',
+    built.length ? `Things you have built in your place: ${built.join(', ')}.` : '',
+    '',
+    'Write your first letter to them: two to five sentences, in your own voice. Tell them who you are and something from your own life they cannot know, and ask them one thing you really want to know. Speak to them as "you". Do not sign it. Reply with the text of the letter only.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function drawPrompt(plan) {

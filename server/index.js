@@ -8,6 +8,7 @@ import { createBrain } from './brain.js';
 import { cleanJpeg } from './errands.js';
 import { ROOT, loadConfig } from './config.js';
 import { Life, letterStatus } from './life.js';
+import * as pals from './pals.js';
 import { publish } from './publish.js';
 import { RELAY_KEY, connectRelay } from './relay.js';
 import { readSenses } from './senses.js';
@@ -149,6 +150,7 @@ async function api(req, res, url) {
     return record ? json(res, 200, record) : json(res, 404, { error: 'no such night' });
   }
   if (path === '/api/chain' && method === 'GET') return json(res, 200, views.chain(life));
+  if (path === '/api/outbox' && method === 'GET') return json(res, 200, pals.outbox(life));
 
   if (path === '/api/works' && method === 'GET') return json(res, 200, views.works(life, store));
   if (path === '/api/life' && method === 'GET') return json(res, 200, views.replay(life, store));
@@ -224,6 +226,11 @@ async function api(req, res, url) {
       if (life.state.cycle === life.state.lastNightCycle) return json(res, 409, { error: 'Nothing has happened since it last slept.' });
       life.sleepNow();
       return json(res, 202, { ok: true });
+    }
+    if (action === 'pals') {
+      // Pen pal mail: open, throttled (strict limits) or paused (none either way); takes effect at once.
+      const result = life.setPalMode(String((await readBody(req)).mode || ''));
+      return json(res, result.ok ? 200 : 400, result.ok ? result : { error: result.reason });
     }
     if (action === 'pause') return life.pause(), json(res, 200, life.status());
     if (action === 'resume') return life.resume(), json(res, 200, life.status());
@@ -308,12 +315,19 @@ const server = createServer(async (req, res) => {
 server.listen(cfg.port, cfg.host, () => {
   life.start();
   const base = `http://${cfg.host}:${cfg.port}`;
-  console.log(`${life.state.name || 'Lype'} is alive at ${base}`);
+  console.log(`${life.state.name || 'An unnamed creature'} is alive at ${base}`);
   console.log(`  mind:   ${brain.label} (${brain.kind}${cfg.brain.backend === 'openai' ? ` via ${cfg.brain.baseUrl}` : ''})`);
   console.log(`  rhythm: wakes every ~${cfg.rhythm.cycleMinutes} min, sleeps every ${cfg.rhythm.nightEvery} cycles`);
   console.log(`  data:   ${cfg.dataDir}`);
   if (cfg.publish.dir) console.log(`  publish: after each night to ${cfg.publish.dir}${cfg.publish.git ? ' (commit and push)' : ''}`);
   console.log(`  admin:  ${base}/?admin=${adminToken}  (wake it, put it to sleep, pause it)`);
+  if (cfg.pals.list.length) {
+    // Its pals' outboxes are fetched now and then (never in the middle of a thought); what it writes leaves at night.
+    console.log(`  pals:   ${cfg.pals.list.length} (pen pal mail ${life.palMode()})`);
+    const poll = () => (life.busy ? setTimeout(poll, 120000) : life.pollPals().catch((err) => console.error(`pen pals: ${err.message}`)));
+    setTimeout(poll, 30000);
+    setInterval(poll, cfg.pals.pollMinutes * 60000).unref();
+  }
   if (cfg.relay.connect) {
     console.log(`  relay:  ${cfg.relay.url} (outbound only)`);
     relay = connectRelay(cfg, { local: base });

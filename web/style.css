@@ -256,6 +256,21 @@ select {
 .btn:hover {
   border-color: var(--mind-2);
 }
+.admin-pals {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 12px var(--mono);
+  color: var(--dim);
+}
+.admin-pals select {
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-3);
+  color: var(--text);
+  font: inherit;
+}
 .admin-msg {
   font: 12px var(--mono);
   color: var(--dim);
