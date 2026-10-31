@@ -1,6 +1,6 @@
 {
   "name": "iterant",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A small autonomous mind that lives on one graphics card, knows the world only through the letters people leave it, and becomes a new version of itself every night.",
   "license": "MIT",
@@ -16,7 +16,7 @@
   "scripts": {
     "start": "node server/index.js",
     "fast": "node server/index.js --fast",
-    "dev": "node server/index.js --mock --fast --port 8421 --data .dev-life",
+    "dev": "node server/index.js --mock --slow --fast --port 8421 --data .dev-life",
     "demo": "node server/index.js --demo --port 8422",
     "cycles": "node server/run-cycles.js",
     "export": "node server/export.js",

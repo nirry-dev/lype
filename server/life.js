@@ -7,6 +7,7 @@ import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
+import { CARD, addWish, answerWish, emptyWorld, findThing, namedThing, placeNear, untoldAnswers, weather } from './world.js';
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const clamp01 = (x) => clamp(Number.isFinite(x) ? x : 0.5, 0, 1);
@@ -26,7 +27,23 @@ function whatText(c) {
   if (c.action === 'draw') return c.work?.failed ? `tried to draw "${c.title}"` : `drew "${c.title}"`;
   if (c.action === 'write') return `wrote "${c.title}"`;
   if (c.action === 'ask') return `asked "${c.question}"`;
+  if (c.action === 'build') return c.work?.failed ? `tried to build "${c.title}"` : `built "${c.title}" in your place`;
+  if (c.action === 'tend') return c.work?.failed ? `tried to tend "${c.title}"` : `tended "${c.title}"`;
   return 'rested';
+}
+
+/** A wish as anyone may see it, with its keeper's answer. */
+export function publicWish(w) {
+  return {
+    id: w.id,
+    text: w.text,
+    why: w.why,
+    version: w.version,
+    cycle: w.cycle,
+    at: w.at,
+    status: w.status,
+    answer: w.answer ? { status: w.answer.status, text: w.answer.text, at: w.answer.at, told: w.answer.told } : null,
+  };
 }
 
 export function cycleSummary(c) {
@@ -106,6 +123,16 @@ export class Life extends EventEmitter {
     this.notes = []; // things to tell it when it next wakes (it was switched off, ...)
     this.waits = {}; // waits since its last cycle, by reason
     this.lastSenses = null;
+    if (this.state) this.settle();
+  }
+
+  /** Lives that began before it had a place or wishes get empty ones (start() tells it what it was given). */
+  settle() {
+    const s = this.state;
+    s.world ??= emptyWorld();
+    s.wishes ??= [];
+    s.stats.built ??= 0;
+    s.stats.tended ??= 0;
   }
 
   // ---------- lifecycle ----------
@@ -113,6 +140,13 @@ export class Life extends EventEmitter {
   start() {
     if (!this.state) this.birth();
     this.noticeGap();
+    if (!this.cfg.recording && !this.state.abilities?.includes('world')) {
+      // It lived before it had these; it is told once, the next time it wakes.
+      this.state.abilities = [...(this.state.abilities || []), 'world', 'wishes'];
+      this.notes.push('Since you last woke, your keeper gave you two new things: a place of your own that you can build in, and a way to leave them wishes.');
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it a place of its own to build in, and a way to leave wishes.' });
+      this.milestone('given-a-place', 'Its keeper gave it a place of its own to build in, and a way to leave wishes.');
+    }
     this.state.lastAlive = new Date().toISOString();
     this.saveState();
     this.heartbeat = setInterval(() => {
@@ -157,7 +191,10 @@ export class Life extends EventEmitter {
       memory: emptyMemory(),
       people: {},
       questions: [],
-      stats: { drawings: 0, writings: 0, questions: 0, rests: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
+      world: emptyWorld(),
+      wishes: [],
+      abilities: ['world', 'wishes'],
+      stats: { drawings: 0, writings: 0, questions: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
     this.milestone('born', 'It was switched on for the first time.');
@@ -342,10 +379,17 @@ export class Life extends EventEmitter {
     const busy = (this.waits.busy || 0) + (this.waits['other-mind'] || 0);
     if (busy) notes.push(`Before this, you tried to wake ${busy === 1 ? 'once' : `${busy} times`}, but someone else needed the card, so you waited.`);
     if (this.waits.unreachable) notes.push('Before this, your mind could not be reached for a while, so you missed some cycles.');
+    const answered = untoldAnswers(s.wishes);
+    for (const w of answered) {
+      const how = w.answer.status === 'granted' ? 'they granted it' : w.answer.status === 'declined' ? 'they said no' : 'they wrote back';
+      notes.push(`Your keeper answered your wish "${w.text}": ${how}${w.answer.text ? `: "${w.answer.text}"` : '.'}`);
+    }
     return {
       cycle: n,
       senses,
       notes,
+      told: answered.map((w) => w.id),
+      world: { count: s.world.things.length, standing: s.world.things.filter((t) => !t.ruin).length },
       waiting,
       letters: chosen.map((l) => ({
         id: l.id,
@@ -360,8 +404,8 @@ export class Life extends EventEmitter {
         .map((q) => ({ text: q.text, cycle: q.cycle, answers: this.letters.filter((l) => l.question === q.id && letterStatus(l) === 'allowed').length })),
       recent: this.cycles.slice(-4).map((c) => ({ n: c.n, ago: ago(c.at), what: whatText(c), diary: c.diary })),
       habits: this.cycles.slice(-6).reduce(
-        (mix, c) => ({ ...mix, total: mix.total + 1, [c.action]: mix[c.action] + 1 }),
-        { total: 0, draw: 0, write: 0, ask: 0, rest: 0, everAsked: s.stats.questions > 0 },
+        (mix, c) => ({ ...mix, total: mix.total + 1, [c.action]: (mix[c.action] ?? 0) + 1 }),
+        { total: 0, draw: 0, write: 0, ask: 0, build: 0, tend: 0, rest: 0, everAsked: s.stats.questions > 0 },
       ),
       tired: this.tiredOf(),
     };
@@ -378,7 +422,7 @@ export class Life extends EventEmitter {
     const cfg = this.cfg;
     const n = s.cycle + 1;
     const startedAt = new Date().toISOString();
-    this.live = { cycle: n, phase: this.phase, think: '', draw: '', write: '', title: '', reading: [] };
+    this.live = { cycle: n, phase: this.phase, think: '', draw: '', write: '', sprite: '', plaque: '', change: '', title: '', reading: [], building: null };
 
     // It picks letters up in its own time: oldest first, at most one per person per cycle.
     const unread = this.letters.filter((l) => !l.readAt && letterStatus(l) === 'allowed');
@@ -399,8 +443,9 @@ export class Life extends EventEmitter {
     const monologue = mind.cleanProse(thought.text, 1400) || '…';
 
     this.setPhase('deciding');
-    const actRaw = await this.brain.complete({ kind: 'act', system, user: mind.actPrompt(ctx, monologue), maxTokens: 900, temperature: 0.7, schema: mind.actSchema(ctx.tired) });
-    const plan = mind.readAct(actRaw.text, chosen, ctx.tired);
+    const canTend = ctx.world.count > 0;
+    const actRaw = await this.brain.complete({ kind: 'act', system, user: mind.actPrompt(ctx, monologue), maxTokens: 900, temperature: 0.7, schema: mind.actSchema(ctx.tired, { canTend }) });
+    const plan = mind.readAct(actRaw.text, chosen, ctx.tired, { canTend });
 
     let work = null;
     if (plan.action === 'draw') {
@@ -419,6 +464,10 @@ export class Life extends EventEmitter {
     } else if (plan.action === 'ask') {
       this.setPhase('asking', plan.content);
       work = { kind: 'question', text: plan.content };
+    } else if (plan.action === 'build') {
+      work = await this.build(plan, system, n);
+    } else if (plan.action === 'tend') {
+      work = await this.tend(plan, system);
     } else {
       this.setPhase('resting');
     }
@@ -495,10 +544,18 @@ export class Life extends EventEmitter {
     } else if (work?.kind === 'writing') {
       s.stats.writings++;
       this.milestone('first-writing', `It wrote its first piece, "${work.title}".`);
+    } else if (work?.kind === 'building' && !work.failed) {
+      this.placeThing(work, n, this.letters.filter((l) => l.readAt));
+    } else if (work?.kind === 'tending' && !work.failed) {
+      this.tendThing(work, n);
     } else if (plan.action === 'rest') {
       s.stats.rests++;
     }
     if (work && reflection.note) work.note = reflection.note;
+    for (const id of ctx.told) {
+      const w = s.wishes.find((x) => x.id === id);
+      if (w?.answer) w.answer.told = n;
+    }
 
     for (const r of reflection.remember) {
       // Tie the memory to the letters that caused it, so its influence can be traced later.
@@ -547,6 +604,145 @@ export class Life extends EventEmitter {
     return record;
   }
 
+  // ---------- its place ----------
+
+  /** It builds something in its place: what it is and where, then a small drawing of it, streamed as it goes. */
+  async build(plan, system, n) {
+    const s = this.state;
+    if (namedThing(s.world, plan.title)) {
+      // It already has one; going back to it is tending, not a second copy.
+      plan.action = 'tend';
+      return this.tend(plan, system);
+    }
+    this.live.title = plan.title;
+    this.setPhase('building', plan.title);
+    const raw = await this.brain.complete({ kind: 'build', system, user: mind.buildPrompt(plan, s.world), maxTokens: 500, temperature: 0.7, schema: mind.BUILD_SCHEMA });
+    const b = mind.readBuild(raw.text);
+    const anchor = findThing(s.world, b.near) || CARD;
+    const spot = placeNear(s.world, anchor, `${n}|${plan.title}`);
+    if (!spot) return { kind: 'building', title: plan.title, intent: plan.content, failed: true, why: 'there was no room left in your place' };
+    const plaque = b.plaque || plan.content;
+    this.live.building = { x: spot.x, y: spot.y, name: plan.title };
+    this.emit('world', { building: this.live.building });
+    this.stream('plaque', plaque);
+    const drawn = await this.brain.complete({
+      kind: 'sprite',
+      system,
+      user: mind.spritePrompt(plan.title, `${plan.content} ${plaque}`),
+      maxTokens: 1600,
+      temperature: 0.8,
+      onToken: (t) => this.stream('sprite', t),
+    });
+    const { svg, shapes } = cleanSvg(drawn.text, { maxElements: 120 });
+    return {
+      kind: 'building',
+      title: plan.title,
+      intent: plan.content,
+      thingKind: b.kind,
+      plaque,
+      x: spot.x,
+      y: spot.y,
+      near: anchor === CARD ? null : anchor.id,
+      madeFrom: b.madeFrom,
+      svg: shapes ? svg : null,
+      shapes,
+    };
+  }
+
+  /** It goes back to something it built: what it does to it, and a new drawing if it looks different now. */
+  async tend(plan, system) {
+    const thing = findThing(this.state.world, plan.title);
+    if (!thing) return { kind: 'tending', title: plan.title, intent: plan.content, failed: true, why: 'there is nothing by that name in your place' };
+    this.live.title = thing.name;
+    this.setPhase('tending', thing.name);
+    const raw = await this.brain.complete({ kind: 'tend', system, user: mind.tendPrompt(plan, thing), maxTokens: 400, temperature: 0.7, schema: mind.TEND_SCHEMA });
+    const t = mind.readTend(raw.text);
+    const change = t.note || plan.content;
+    this.stream('change', change);
+    let svg = null;
+    let shapes = 0;
+    if (t.redraw || (thing.ruin && !thing.sprite)) {
+      const drawn = await this.brain.complete({
+        kind: 'sprite',
+        system,
+        user: mind.spritePrompt(thing.name, `${thing.plaque} Now: ${change}`),
+        maxTokens: 1600,
+        temperature: 0.8,
+        onToken: (x) => this.stream('sprite', x),
+      });
+      ({ svg, shapes } = cleanSvg(drawn.text, { maxElements: 120 }));
+    }
+    return { kind: 'tending', title: thing.name, thing: thing.id, intent: plan.content, change, restored: Boolean(thing.ruin), svg: shapes ? svg : null, shapes };
+  }
+
+  /** Commit a new thing to its place, tied to the letters it was made from (and tell those letters). */
+  placeThing(work, n, read) {
+    const s = this.state;
+    const sources = [];
+    for (const name of work.madeFrom) {
+      const l = [...read].reverse().find((x) => sameName(x.from, name));
+      if (l && !sources.includes(l)) sources.push(l);
+    }
+    const thing = {
+      id: `t${s.world.nextId++}`,
+      name: work.title,
+      kind: work.thingKind,
+      plaque: work.plaque,
+      x: work.x,
+      y: work.y,
+      near: work.near,
+      built: n,
+      version: s.version,
+      from: sources.map((l) => l.id),
+      people: [...new Set(sources.map((l) => l.from))],
+      sprite: work.svg ? n : null,
+      condition: 1,
+      ruin: false,
+      tended: null,
+      history: [{ cycle: n, what: 'built', text: work.plaque }],
+    };
+    s.world.things.push(thing);
+    s.world.at = thing.id;
+    work.thing = thing.id;
+    if (work.svg) this.store.writeText(`works/${pad(n)}.svg`, work.svg);
+    s.stats.built++;
+    for (const l of sources) (l.influenced ??= []).push({ version: s.version, what: 'thing', text: thing.name, cycle: n });
+    this.milestone('first-thing', `It built its first thing in its place: "${thing.name}".`);
+    if (sources.length) this.milestone('first-thing-from-letter', `It built "${thing.name}" out of ${sources[0].from}'s letter.`);
+  }
+
+  tendThing(work, n) {
+    const s = this.state;
+    const thing = s.world.things.find((t) => t.id === work.thing);
+    if (!thing) return;
+    const restored = thing.ruin;
+    thing.condition = 1;
+    thing.ruin = false;
+    delete thing.ruinedAt;
+    thing.tended = n;
+    thing.history.push({ cycle: n, what: restored ? 'rebuilt' : 'tended', text: work.change });
+    if (work.svg) {
+      this.store.writeText(`works/${pad(n)}.svg`, work.svg);
+      thing.sprite = n;
+    }
+    s.world.at = thing.id;
+    s.stats.tended++;
+    this.milestone('first-tend', `It went back to tend something it built: "${thing.name}".`);
+    if (restored) this.milestone('first-rebuild', `It rebuilt a ruin: "${thing.name}".`);
+  }
+
+  /** Its keeper answers a wish. It hears about it the next time it wakes. */
+  answer(id, status, text) {
+    const r = answerWish(this.state.wishes, id, status, text, new Date().toISOString());
+    if (!r.ok) return r;
+    const how = status === 'granted' ? 'granted' : status === 'declined' ? 'declined' : 'answered';
+    if (status === 'granted') this.milestone('first-granted', `Its keeper granted its first wish: "${r.wish.text}"`);
+    this.journalAdd({ kind: 'wish', text: `Its keeper ${how} its wish "${r.wish.text}".` });
+    this.saveState();
+    this.emit('wish', publicWish(r.wish));
+    return { ok: true, wish: publicWish(r.wish) };
+  }
+
   // ---------- the night ----------
 
   async runNight() {
@@ -563,15 +759,18 @@ export class Life extends EventEmitter {
     const dayLetters = details.flatMap((d) => d.letters);
     this.live = { night: version, phase: 'dreaming', dream: '' };
     const memoryBefore = structuredClone(s.memory);
+    const worldBefore = structuredClone(s.world);
 
     try {
       const consolidation = consolidate(s.memory, s.cycle, cfg.memory);
+      // Its place weathers after the forgetting: what it no longer remembers stops holding things up.
+      const weathered = weather(s.world, s.memory, { since: from, cycle: s.cycle });
       const system = mind.systemPrompt(s, cfg);
       this.setPhase('dreaming');
       const dreamRaw = await this.brain.complete({
         kind: 'dream',
         system,
-        user: mind.dreamPrompt(s, details, consolidation),
+        user: mind.dreamPrompt(s, details, consolidation, weathered),
         maxTokens: 320,
         temperature: 0.95,
         onToken: (t) => this.stream('dream', t),
@@ -583,7 +782,7 @@ export class Life extends EventEmitter {
       const sleepRaw = await this.brain.complete({
         kind: 'sleep',
         system,
-        user: mind.sleepPrompt(s, details, consolidation, dream, { canName }),
+        user: mind.sleepPrompt(s, details, consolidation, dream, { canName, weathered }),
         maxTokens: 1600,
         temperature: 0.7,
         schema: mind.SLEEP_SCHEMA,
@@ -606,13 +805,15 @@ export class Life extends EventEmitter {
         s.names.push({ name: plan.name, version, why: plan.nameWhy, at });
         s.name = plan.name;
       }
+      const wished = addWish(s.wishes, plan.wish, { version, cycle: s.cycle, at });
       s.mood.calm = clamp01(s.mood.calm + 0.15);
       s.mood.restless = clamp01(s.mood.restless - 0.15);
       s.version = version;
       s.lastNightCycle = s.cycle;
       s.stats.forgotten += consolidation.forgotten.length + consolidation.faded.length;
 
-      const influences = this.traceInfluences(dayLetters, { self, portrait, name, consolidation }, version);
+      const wish = wished?.wish ? publicWish(wished.wish) : wished ? { refused: wished.refused, text: wished.text } : null;
+      const influences = this.traceInfluences(dayLetters, { self, portrait, name, consolidation, wish: wished?.wish }, version);
       const record = {
         n: version,
         at,
@@ -626,6 +827,8 @@ export class Life extends EventEmitter {
         portrait,
         name,
         influences,
+        world: weathered,
+        wish,
         selfAfter: s.self.own.map(({ id, text, since }) => ({ id, text, since })),
         mood: { ...s.mood },
       };
@@ -641,6 +844,8 @@ export class Life extends EventEmitter {
         if (s.names.length === 1) this.milestone('named', `It named itself ${name.to}.`);
         else this.milestone(`renamed-${s.names.length}`, `It renamed itself from ${name.from} to ${name.to}.`);
       }
+      if (weathered.ruined.length) this.milestone('first-ruin', `Something it built crumbled for the first time: "${weathered.ruined[0].name}". It no longer remembered why it built it.`);
+      if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
 
       this.store.write(`nights/${pad(version, 4)}.json`, record);
       this.saveState();
@@ -650,6 +855,7 @@ export class Life extends EventEmitter {
       return record;
     } catch (err) {
       s.memory = memoryBefore;
+      s.world = worldBefore;
       throw err;
     }
   }
@@ -709,7 +915,7 @@ export class Life extends EventEmitter {
   }
 
   /** Link tonight's changes back to the letters that caused them, and tell those letters what they did. */
-  traceInfluences(dayLetters, { self, portrait, name, consolidation }, version) {
+  traceInfluences(dayLetters, { self, portrait, name, consolidation, wish = null }, version) {
     const out = [];
     const seen = new Set();
     const link = (letter, what, text) => {
@@ -726,6 +932,7 @@ export class Life extends EventEmitter {
     for (const r of self.removed) check('unbelief', `${r.text} ${r.why}`, r.text);
     if (portrait) check('portrait', `${portrait.to} ${portrait.changed}`, portrait.changed || portrait.to);
     if (name) check('name', `${name.to} ${name.why}`, name.to);
+    if (wish) check('wish', `${wish.text} ${wish.why}`, wish.text);
     for (const m of consolidation.kept) {
       for (const id of m.because || []) {
         const l = dayLetters.find((x) => x.id === id);
@@ -889,6 +1096,19 @@ export class Life extends EventEmitter {
         unread: this.letters.filter((l) => !l.readAt && ['allowed', 'pending'].includes(letterStatus(l))).length,
       },
       moderation: this.cfg.moderation.mode,
+      world: (() => {
+        const things = s.world.things;
+        const newest = [...things].sort((a, b) => b.built - a.built)[0];
+        return {
+          things: things.length,
+          standing: things.filter((t) => !t.ruin).length,
+          ruins: things.filter((t) => t.ruin).length,
+          at: s.world.at,
+          newest: newest ? { id: newest.id, name: newest.name, built: newest.built, sprite: newest.sprite ? `works/${pad(newest.sprite)}.svg` : null } : null,
+        };
+      })(),
+      wishes: s.wishes.slice(-6).reverse().map(publicWish),
+      wishIssues: this.cfg.wishes?.issuesUrl || null,
       live: this.live,
       senses: this.lastSenses,
       latest: this.cycles.at(-1) ?? null,

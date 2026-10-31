@@ -55,6 +55,7 @@ write('data/letters.json', views.letters(life));
 write('data/works.json', views.works(life, store));
 write('data/life.json', views.replay(life, store));
 write('data/atlas.json', views.atlas(life, store));
+write('data/world.json', views.world(life));
 for (const c of life.cycles) {
   write(`data/cycles/${pad(c.n)}.json`, views.cycle(store, c.n));
   const svg = store.path(`works/${pad(c.n)}.svg`);

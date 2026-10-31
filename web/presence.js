@@ -36,6 +36,8 @@ const LOOK = {
   writing: { period: 2.8, bright: 1, size: 1.05, tremble: 1.2, sparks: 1, orbit: true },
   asking: { period: 3, bright: 1, size: 1.05, tremble: 1.3, sparks: 1 },
   replying: { period: 3, bright: 1, size: 1.06, tremble: 1.1, sparks: 1 },
+  building: { period: 2.8, bright: 1, size: 1.06, tremble: 1.3, sparks: 1, orbit: true },
+  tending: { period: 3.4, bright: 0.95, size: 1.03, tremble: 1, sparks: 1, orbit: true },
   resting: { period: 5, bright: 0.8, size: 1, tremble: 0.8, sparks: 0 },
   reflecting: { period: 3.6, bright: 0.92, size: 1.02, tremble: 1, sparks: 1 },
   dreaming: { period: 8, bright: 0.62, size: 0.96, tremble: 1.5, sparks: 1, tint: NIGHT },

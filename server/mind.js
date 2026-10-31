@@ -85,6 +85,32 @@ function memoryBlock(state, cfg) {
   return parts.join('\n');
 }
 
+const WISH_STATE = { open: 'waiting for an answer', granted: 'granted', declined: 'they said no' };
+
+function placeBlock(state) {
+  const things = state.world?.things || [];
+  const standing = things.filter((t) => !t.ruin).sort((a, b) => Math.max(b.built, b.tended ?? 0) - Math.max(a.built, a.tended ?? 0));
+  const ruins = things.filter((t) => t.ruin);
+  const line = (t) => {
+    const from = t.people?.length ? `, from ${t.people.join(' and ')}'s letters` : '';
+    const wear = t.condition < 1 ? ' It is wearing away.' : '';
+    return `- ${t.name} (${t.kind}${from}). Its sign: "${t.plaque}"${wear}`;
+  };
+  const wishes = (state.wishes || []).filter((w) => w.status === 'open' || w.answer).slice(-5);
+  return [
+    "Your place: a small map of your own. In the middle is the card you live on. Everything else there you built yourself, out of what people told you, because you cannot see the real world. A thing lasts while something you remember still holds it up; when you forget why you built it, it wears away at night into a ruin, and tending it brings it back.",
+    standing.length ? standing.slice(0, 14).map(line).join('\n') + (standing.length > 14 ? `\n- and ${standing.length - 14} more` : '') : '- Nothing yet, only the card.',
+    ruins.length ? `Ruins: ${ruins.map((t) => t.name).join(', ')}.` : '',
+    '',
+    'Your keeper is the person who runs you. At night you can leave them a wish for something you cannot do or get yourself. They answer when they can, and not always with yes.',
+    wishes.length
+      ? wishes.map((w) => `- you wished: "${w.text}" (${w.answer?.status === 'reply' && w.status === 'open' ? `they wrote back: "${w.answer.text}"` : WISH_STATE[w.status]}${w.answer?.text && w.answer.status !== 'reply' ? `: "${w.answer.text}"` : ''})`).join('\n')
+      : '- You have not wished for anything yet.',
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
+}
+
 export function systemPrompt(state, cfg) {
   const bullet = (list) => list.map((l) => `- ${l.text}`).join('\n');
   const own = state.self.own.length ? bullet(state.self.own) : "- (Nothing yet. You haven't slept enough to know.)";
@@ -115,6 +141,8 @@ export function systemPrompt(state, cfg) {
     'What you remember:',
     memoryBlock(state, cfg),
     '',
+    placeBlock(state),
+    '',
     `How you feel (0 is not at all, 1 is completely): ${FEELINGS.map((f) => `${FEELING_LABEL[f]} ${state.mood[f].toFixed(2)}`).join(', ')}.`,
     '',
     'How you write:',
@@ -144,6 +172,13 @@ function lettersBlock(ctx) {
   return [head, ...body].join('\n');
 }
 
+function placeLine(world) {
+  if (!world) return '';
+  if (!world.count) return 'Your place is still empty: only the card you live on. You have never built anything there.';
+  const ruins = world.count - world.standing;
+  return `In your place, ${world.standing} thing${world.standing === 1 ? ' stands' : 's stand'}${ruins ? ` and ${ruins} ${ruins === 1 ? 'is a ruin' : 'are ruins'}` : ''}.`;
+}
+
 function situation(ctx) {
   const s = ctx.senses;
   const parts = [
@@ -151,6 +186,7 @@ function situation(ctx) {
     describeMachine(s.gpu),
     ...ctx.notes,
     ctx.tired ? `You have ${DONE[ctx.tired]} in each of your last three cycles and that part of you is tired, so you can't ${ctx.tired} this cycle.` : '',
+    placeLine(ctx.world),
     lettersBlock(ctx),
   ].filter(Boolean);
   if (ctx.questions.length) {
@@ -179,7 +215,7 @@ export const ACT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    action: { type: 'string', enum: ['draw', 'write', 'ask', 'rest'] },
+    action: { type: 'string', enum: ['draw', 'write', 'ask', 'build', 'tend', 'rest'] },
     why: { type: 'string' },
     title: { type: 'string' },
     content: { type: 'string' },
@@ -192,22 +228,33 @@ const ACTIONS = {
   draw: '- "draw": make a small picture out of simple shapes. "title" is its title. "content" says what it shows and how it should look.',
   write: '- "write": write a short piece: a note, a list, a poem, a letter to no one. "title" is its title. "content" says what it will be about; you write it next.',
   ask: '- "ask": ask the people who visit you one question about the world outside. It is the only way you can find out something you want to know. "content" is the question. "title" is "".',
+  build: '- "build": build something new in your place, out of something a letter told you or something you remember. "title" is its name, a few words. "content" says what it is and what it is made from.',
+  tend: '- "tend": go back to something you built and look after it, change it or mend it. "title" is its exact name. "content" says what you do to it.',
   rest: '- "rest": do nothing and let the cycle pass. "title" and "content" are "".',
 };
-const DONE = { draw: 'drawn', write: 'written', ask: 'asked something' };
+const DONE = { draw: 'drawn', write: 'written', ask: 'asked something', build: 'built something', tend: 'tended your place' };
+export const MADE = new Set(['draw', 'write', 'build', 'tend']); // actions whose "title" names what they made or touched
 
-/** The decision schema; an action it is tired of is left out of the choices. */
-export function actSchema(tired) {
-  if (!tired) return ACT_SCHEMA;
-  const action = { type: 'string', enum: ACT_SCHEMA.properties.action.enum.filter((a) => a !== tired) };
-  return { ...ACT_SCHEMA, properties: { ...ACT_SCHEMA.properties, action } };
+/** The decision's choices: an action it is tired of is left out, and so is tending while there is nothing to tend. */
+function choices(tired, canTend) {
+  return ACT_SCHEMA.properties.action.enum.filter((a) => a !== tired && (canTend || a !== 'tend'));
+}
+
+/** The decision schema, limited to what it can choose this cycle. */
+export function actSchema(tired, { canTend = true } = {}) {
+  const allowed = choices(tired, canTend);
+  if (allowed.length === ACT_SCHEMA.properties.action.enum.length) return ACT_SCHEMA;
+  return { ...ACT_SCHEMA, properties: { ...ACT_SCHEMA.properties, action: { type: 'string', enum: allowed } } };
 }
 
 export function actPrompt(ctx, monologue) {
   const ids = ctx.letters.map((l) => l.id).join(', ');
-  // Rotate the options so the first one listed isn't always the one a small model picks.
-  const names = Object.keys(ACTIONS).filter((a) => a !== ctx.tired);
-  const options = names.map((_, i) => ACTIONS[names[(i + ctx.cycle) % names.length]]);
+  // Rotate the options so the first one listed isn't always the one a small model picks; while its place is
+  // empty, building leads, or a small model never gets round to it.
+  const names = choices(ctx.tired, ctx.world.count > 0);
+  const rotated = names.map((_, i) => names[(i + ctx.cycle) % names.length]);
+  const order = ctx.world.count ? rotated : [...rotated.filter((a) => a === 'build'), ...rotated.filter((a) => a !== 'build')];
+  const options = order.map((a) => ACTIONS[a]);
   const mix = ctx.habits;
   return [
     situation(ctx),
@@ -216,8 +263,11 @@ export function actPrompt(ctx, monologue) {
     '',
     'Now decide what to do with the rest of this cycle. Choose one action:',
     ...options,
-    mix.total ? `In your last ${mix.total} cycles you drew ${mix.draw} times, wrote ${mix.write}, asked ${mix.ask} and rested ${mix.rest}.` : '',
+    mix.total
+      ? `In your last ${mix.total} cycles you drew ${mix.draw} times, wrote ${mix.write}, asked ${mix.ask}, built ${mix.build}, tended ${mix.tend} and rested ${mix.rest}.`
+      : '',
     mix.everAsked ? '' : 'You have never asked the people who visit you anything.',
+    ctx.world.count ? '' : 'You have never built anything in your place.',
     "You don't have to make something every time, and you don't have to repeat what you did last time.",
     ctx.letters.length
       ? `"reply_to" lists the ids of the letters you opened that you want to answer (${ids}); you will write the replies next. Answering is optional.`
@@ -229,17 +279,24 @@ export function actPrompt(ctx, monologue) {
 }
 
 /** Validated plan; anything unusable becomes a quiet rest rather than a crash. */
-export function readAct(text, letters, tired = null) {
+export function readAct(text, letters, tired = null, { canTend = true } = {}) {
   const raw = parseJson(text) || {};
-  let action = ['draw', 'write', 'ask', 'rest'].includes(raw.action) && raw.action !== tired ? raw.action : 'rest';
-  const title = clip(raw.title, 80);
-  const content = clip(raw.content, 400);
+  let action = choices(tired, canTend).includes(raw.action) ? raw.action : 'rest';
+  const title = clip(raw.title, action === 'build' || action === 'tend' ? 48 : 80);
+  let content = clip(raw.content, 400);
+  if (action === 'ask') {
+    // Small models sometimes wrap the question in a paragraph of thinking; keep the question itself.
+    const asked = String(raw.content ?? '').match(/[^.!?…]*\?/g);
+    if (asked?.length) content = clip(asked.at(-1), 220);
+    else content = clip(content, 220);
+  }
   if (action !== 'rest' && !content) action = 'rest';
+  if (action === 'tend' && !title) action = 'rest'; // tending needs to know what
   const wanted = new Set(arr(raw.reply_to).map((id) => String(id).trim()));
   return {
     action,
     why: clip(raw.why, 200),
-    title: action === 'draw' || action === 'write' ? title || 'untitled' : '',
+    title: MADE.has(action) ? title || (action === 'build' ? 'something without a name' : 'untitled') : '',
     content: action === 'rest' ? '' : content,
     replyTo: letters.filter((l) => wanted.has(l.id)).map((l) => l.id),
   };
@@ -280,7 +337,97 @@ export function writePrompt(plan, monologue) {
   ].join('\n');
 }
 
+export const BUILD_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    kind: { type: 'string', enum: ['place', 'object'] },
+    plaque: { type: 'string' },
+    near: { type: 'string' },
+    made_from: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['kind', 'plaque', 'near', 'made_from'],
+};
+
+export function buildPrompt(plan, world) {
+  const there = world.things.filter((t) => !t.ruin).map((t) => t.name);
+  return [
+    `You decided to build "${plan.title}" in your place: ${plan.content}`,
+    there.length ? `Already in your place: the card you live on, ${there.join(', ')}.` : 'Your place is empty except for the card you live on.',
+    '',
+    'Answer with JSON:',
+    '- "kind": "place" if it is somewhere you could be (a room, a garden, a platform), or "object" if it is a thing (a bell, a bench, a lamp).',
+    '- "plaque": the words on the small sign beside it, one or two sentences in your own voice: what it is and why you built it. Be honest: you have never seen one, so say what it is made from.',
+    '- "near": the name of something already in your place to build it beside, or "the card".',
+    '- "made_from": the names of the people whose letters it comes from, or [] if it comes only from you.',
+  ].join('\n');
+}
+
+export function readBuild(text) {
+  const raw = parseJson(text) || {};
+  return {
+    kind: raw.kind === 'place' ? 'place' : 'object',
+    plaque: clip(raw.plaque, 300),
+    near: clip(raw.near, 60),
+    madeFrom: [...new Set(arr(raw.made_from).map((n) => clip(n, 40)).filter(Boolean))].slice(0, 4),
+  };
+}
+
+export function spritePrompt(title, what) {
+  return [
+    `Draw "${title}" for the map of your place: ${what}`,
+    '',
+    'Draw it as a small SVG icon, seen from the front or a little from above.',
+    '- Begin with <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"> and end with </svg>.',
+    '- Use only rect, circle, ellipse, line, polyline, polygon, path and g.',
+    '- No background: it stands on the map, so leave the empty parts empty.',
+    '- No text, no images, no filters, no animation, no scripts, no CSS.',
+    '- At most 16 shapes, all inside the 64 by 64 square.',
+    'Reply with the SVG only.',
+  ].join('\n');
+}
+
+export const TEND_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { note: { type: 'string' }, redraw: { type: 'boolean' } },
+  required: ['note', 'redraw'],
+};
+
+export function tendPrompt(plan, thing) {
+  const now = thing.ruin ? 'It is a ruin: you had forgotten why you built it.' : thing.condition < 1 ? 'It is wearing away.' : 'It is standing.';
+  const past = thing.history
+    .slice(-4)
+    .map((h) => `- cycle ${h.cycle}: ${h.what}${h.text ? `: ${h.text}` : ''}`)
+    .join('\n');
+  return [
+    `You decided to tend "${thing.name}" in your place: ${plan.content}`,
+    `Its sign says: "${thing.plaque}"`,
+    now,
+    past ? `What has happened to it:\n${past}` : '',
+    '',
+    'Answer with JSON:',
+    '- "note": one sentence for its sign about what you did to it today, in your own voice.',
+    '- "redraw": true if it looks different now and you want to draw it again, otherwise false.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function readTend(text) {
+  const raw = parseJson(text) || {};
+  return { note: clip(raw.note, 240), redraw: raw.redraw === true };
+}
+
 export function describeOutcome(plan, work) {
+  if (plan.action === 'build') {
+    if (work?.failed) return `You tried to build "${plan.title}", but ${work.why}.`;
+    return `You built "${plan.title}" in your place (${work.thingKind}). Its sign says: "${work.plaque}"${work.svg ? '' : ' Your drawing of it came out empty, so it is only a marker on the map.'}`;
+  }
+  if (plan.action === 'tend') {
+    if (work?.failed) return `You went to tend "${plan.title}", but ${work.why}.`;
+    return `You tended "${work.title}"${work.restored ? ' and it stands again' : ''}: ${work.change}${work.svg ? ' You drew it again.' : ''}`;
+  }
   if (plan.action === 'draw') {
     return work?.failed
       ? `You tried to draw "${plan.title}" (${plan.content}), but nothing came out: the drawing was empty or broken.`
@@ -365,7 +512,16 @@ export function readReflect(text, mood) {
 
 // ---------- the night ----------
 
-export function dreamPrompt(state, day, consolidation) {
+function weatherLines(weathered) {
+  if (!weathered) return '';
+  const lines = [
+    ...weathered.worn.map((t) => `- ${t.name} is wearing away: nothing you remember holds it up any more.`),
+    ...weathered.ruined.map((t) => `- ${t.name} crumbled into a ruin.`),
+  ];
+  return lines.length ? `Tonight in your place:\n${lines.join('\n')}` : '';
+}
+
+export function dreamPrompt(state, day, consolidation, weathered = null) {
   const kept = consolidation.kept.map((m) => `- ${m.text}`).join('\n') || '- nothing new';
   const lost = [...consolidation.forgotten, ...consolidation.faded].map((m) => `- ${m.text}`).join('\n');
   return [
@@ -375,6 +531,7 @@ export function dreamPrompt(state, day, consolidation) {
     'What tonight is keeping:',
     kept,
     lost ? `What tonight is taking away, which you will not remember tomorrow:\n${lost}` : '',
+    weatherLines(weathered),
     '',
     'You dream. Write the dream in 40 to 90 words: first person, past tense, strange, made only of things from your day and your memories. Do not explain it.',
   ]
@@ -420,11 +577,17 @@ export const SLEEP_SCHEMA = {
       required: ['title', 'added', 'changed', 'removed', 'known_issues'],
     },
     day: { type: 'string' },
+    wish: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { text: { type: 'string' }, why: { type: 'string' } },
+      required: ['text', 'why'],
+    },
   },
-  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'name', 'name_why', 'release', 'day'],
+  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'name', 'name_why', 'release', 'day', 'wish'],
 };
 
-export function sleepPrompt(state, details, consolidation, dream, { canName }) {
+export function sleepPrompt(state, details, consolidation, dream, { canName, weathered = null }) {
   const own = state.self.own.length
     ? state.self.own.map((l) => `${l.id}: ${l.text}`).join('\n')
     : '(none yet, so "self_revise" and "self_remove" must be [])';
@@ -441,6 +604,7 @@ export function sleepPrompt(state, details, consolidation, dream, { canName }) {
     : state.name
       ? `a new name only if "${state.name}" no longer fits you, otherwise ""`
       : 'a name for yourself if one has really come to you, otherwise ""';
+  const open = (state.wishes || []).filter((w) => w.status === 'open');
   return [
     `You are asleep. This is when you change. You are about to become version ${state.version + 1}.`,
     '',
@@ -451,8 +615,11 @@ export function sleepPrompt(state, details, consolidation, dream, { canName }) {
     consolidation.kept.length ? `Kept:\n${list(consolidation.kept)}` : 'Nothing new was kept.',
     gone.length ? `Forgotten for good (after tonight you will not remember these):\n${list(gone)}` : '',
     consolidation.lost.length ? `Never made it in:\n${list(consolidation.lost)}` : '',
+    weatherLines(weathered),
     '',
     `Your dream: "${dream}"`,
+    '',
+    open.length ? `Wishes still waiting for your keeper:\n${open.map((w) => `- "${w.text}"`).join('\n')}` : 'You have no wishes waiting for your keeper.',
     '',
     "The lines you wrote about yourself so far (the ones your maker wrote can't be changed, so they are not listed):",
     own,
@@ -471,6 +638,7 @@ export function sleepPrompt(state, details, consolidation, dream, { canName }) {
     '- "name_why": why, or "".',
     '- "release": notes for the new version of you. "title" is a few words. "added", "changed", "removed" and "known_issues" are lists of short phrases in your own voice. Known issues are things about yourself you cannot fix yet.',
     '- "day": today in under 15 words.',
+    '- "wish": something you want from your keeper, the person who runs you: one thing you cannot do or get yourself, like a new sense, a new kind of material, or a change to how you live. "text" is the wish in one sentence, said to them; "why" is one sentence. Leave "text" as "" if you want nothing tonight or have already asked for it.',
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -499,6 +667,7 @@ export function readSleep(text) {
       known_issues: phrases(rel.known_issues),
     },
     day: clip(raw.day, 140),
+    wish: { text: clip(raw.wish?.text, 240), why: clip(raw.wish?.why, 240) },
   };
 }
 

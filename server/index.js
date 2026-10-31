@@ -96,7 +96,7 @@ function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of clients) res.write(frame);
 }
-for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone']) life.on(event, (data) => broadcast(event, data));
+for (const event of ['status', 'stream', 'cycle', 'night', 'letter', 'letter-queued', 'journal', 'milestone', 'world', 'wish']) life.on(event, (data) => broadcast(event, data));
 setInterval(() => {
   for (const res of clients) res.write(': keep-alive\n\n');
 }, 25000).unref();
@@ -136,6 +136,7 @@ async function api(req, res, url) {
   if (path === '/api/works' && method === 'GET') return json(res, 200, views.works(life, store));
   if (path === '/api/life' && method === 'GET') return json(res, 200, views.replay(life, store));
   if (path === '/api/atlas' && method === 'GET') return json(res, 200, views.atlas(life, store));
+  if (path === '/api/world' && method === 'GET') return json(res, 200, views.world(life));
 
   if (path === '/api/letters' && method === 'GET') {
     return json(res, 200, views.letters(life, visitorId(url.searchParams.get('visitor'))));
@@ -165,6 +166,12 @@ async function api(req, res, url) {
     const decision = /^letters\/(L\d+)$/.exec(action);
     if (decision) {
       const result = life.decide(decision[1], String((await readBody(req)).action || ''));
+      return json(res, result.ok ? 200 : 409, result.ok ? result : { error: result.reason });
+    }
+    const wish = /^wishes\/(w\d+)$/.exec(action);
+    if (wish) {
+      const body = await readBody(req);
+      const result = life.answer(wish[1], String(body.status || ''), tidy(body.text, 600));
       return json(res, result.ok ? 200 : 409, result.ok ? result : { error: result.reason });
     }
     if (action === 'wake') {

@@ -52,6 +52,10 @@ const DEFAULTS = {
     // "keeper": every letter waits for the keeper. "off": nothing is screened (fine for a private, local creature).
     mode: 'model',
   },
+  wishes: {
+    // Where its keeper can turn a wish into an issue (a pre-filled "new issue" page); "" hides the link.
+    issuesUrl: 'https://github.com/nirry-dev/iterant/issues/new',
+  },
 };
 
 function merge(base, over) {
@@ -84,6 +88,7 @@ export function loadConfig(argv = process.argv.slice(2)) {
     cfg.courtesy = { ...cfg.courtesy, retryMinutes: 0.5 };
   }
   if (argv.includes('--mock')) cfg.brain = { ...cfg.brain, backend: 'mock' };
+  if (argv.includes('--slow')) cfg.brain = { ...cfg.brain, mockDelayMs: 60 }; // mock replies stream at a readable pace
   if (arg(argv, '--port')) cfg.port = Number(arg(argv, '--port'));
   if (arg(argv, '--data')) cfg.dataDir = arg(argv, '--data');
   if (arg(argv, '--model')) cfg.brain = { ...cfg.brain, model: arg(argv, '--model') };
@@ -98,6 +103,7 @@ export function loadConfig(argv = process.argv.slice(2)) {
     cpSync(join(ROOT, 'examples', 'demo-life'), copy, { recursive: true });
     cfg.dataDir = copy;
     cfg.paused = true;
+    cfg.recording = true; // a recording is shown as it was lived, so nothing new is given to it
   }
   return cfg;
 }

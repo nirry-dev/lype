@@ -1543,3 +1543,265 @@ dialog::backdrop {
   top: 16px;
   max-height: calc(100vh - 32px);
 }
+
+/* ---------- its place ---------- */
+
+a.btn {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.chip-wish {
+  border-color: color-mix(in srgb, var(--paper) 40%, transparent);
+  color: var(--paper);
+}
+.chip-wish.granted {
+  border-color: color-mix(in srgb, var(--kept) 45%, transparent);
+  color: var(--kept);
+}
+.chip-wish.declined {
+  border-color: color-mix(in srgb, var(--gone) 40%, transparent);
+  color: var(--gone);
+}
+.wish-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.human {
+  color: var(--human);
+  font-weight: 500;
+}
+.plaque {
+  font-size: 17px;
+  line-height: 1.5;
+  margin: 0 0 8px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--curious) 55%, transparent);
+}
+.thing-frame {
+  background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--curious) 10%, var(--bg-3)), var(--bg-2) 75%);
+}
+.thing-frame img {
+  padding: 10%;
+}
+.thing-marker {
+  width: 34%;
+  height: 34%;
+  border-radius: 6px;
+  border: 2px dashed color-mix(in srgb, var(--curious) 60%, transparent);
+}
+.place-peek {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+.place-peek .canvas-frame {
+  border-radius: 8px;
+}
+.work-card.built .canvas-frame,
+.thumb.built {
+  background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--curious) 12%, var(--bg-3)), var(--bg-2) 75%);
+}
+.thumb.built img {
+  padding: 8px;
+}
+
+.place {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 18px;
+  align-items: start;
+}
+.place-stage {
+  padding: 0;
+  overflow: hidden;
+}
+.place-map {
+  display: block;
+  width: 100%;
+  height: auto;
+  background:
+    radial-gradient(ellipse at 50% 50%, color-mix(in srgb, var(--curious) 5%, transparent), transparent 70%),
+    var(--bg);
+}
+.place-dot {
+  fill: var(--line-2);
+}
+.place-path {
+  stroke: color-mix(in srgb, var(--curious) 30%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 5;
+}
+.place-here {
+  animation: place-breathe 5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes place-breathe {
+  50% {
+    opacity: 0.55;
+    transform: scale(0.9);
+  }
+}
+.place-card {
+  cursor: pointer;
+}
+.place-card rect {
+  fill: var(--bg-3);
+  stroke: var(--mind);
+  stroke-width: 1.5;
+}
+.place-card line {
+  stroke: var(--mind-2);
+  stroke-width: 2;
+}
+.place-card text,
+.place-map .thing text,
+.place-site-label {
+  font: 500 9.5px var(--mono);
+  fill: var(--text-2);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.place-card text {
+  fill: var(--mind);
+}
+.place-map .thing {
+  cursor: pointer;
+  opacity: var(--o, 1);
+  transition: opacity 0.4s;
+}
+.place-map .thing:hover,
+.place-map .thing:focus-visible,
+.place-map .thing.selected {
+  opacity: 1;
+  outline: none;
+}
+.place-map .thing-hit {
+  /* a faint patch of ground, so a dark drawing still stands out on the dark map */
+  fill: color-mix(in srgb, var(--curious) 7%, transparent);
+  stroke: transparent;
+}
+.place-map .thing:hover .thing-hit,
+.place-map .thing:focus-visible .thing-hit {
+  stroke: var(--line-2);
+}
+.place-map .thing.selected .thing-hit {
+  stroke: var(--curious);
+  fill: color-mix(in srgb, var(--curious) 8%, transparent);
+}
+.place-map .thing.ruin image {
+  filter: grayscale(1) brightness(0.65);
+}
+.place-map .thing.ruin text {
+  fill: var(--dim);
+  text-decoration: line-through;
+}
+.place-map .cracks {
+  fill: none;
+  stroke: var(--gone);
+  stroke-width: 1.4;
+  opacity: 0.75;
+}
+.place-map .thing-blank {
+  fill: none;
+  stroke: var(--curious);
+  stroke-dasharray: 3 3;
+}
+.place-site {
+  fill: color-mix(in srgb, var(--curious) 8%, transparent);
+  stroke: var(--curious);
+  stroke-dasharray: 4 4;
+  animation: place-site 1.2s linear infinite;
+}
+@keyframes place-site {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+.place-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--line);
+  font: 12px var(--mono);
+  color: var(--dim);
+}
+.place-side {
+  display: grid;
+  gap: 18px;
+  position: sticky;
+  top: 82px;
+}
+#place-inspect .canvas-frame {
+  max-width: 180px;
+  margin: 0 0 12px;
+}
+.wishes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+.wish {
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--line-2);
+}
+.wish:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.wish-text {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+.wish.declined .wish-text {
+  color: var(--dim);
+}
+.keeper-answer {
+  margin: 10px 0 0;
+}
+.keeper-wish {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.keeper-wish textarea {
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 8px 10px;
+  font: 15px/1.45 var(--serif);
+  resize: vertical;
+}
+.atlas-legend i.house {
+  border-radius: 1px;
+  clip-path: polygon(0 40%, 50% 0, 100% 40%, 100% 100%, 0 100%);
+  width: 9px;
+  height: 9px;
+}
+.atlas-sprite .canvas-frame {
+  max-width: 120px;
+  margin: 4px 0 10px;
+}
+@media (max-width: 980px) {
+  .place {
+    grid-template-columns: 1fr;
+  }
+  .place-side {
+    position: static;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .place-here,
+  .place-site {
+    animation: none;
+  }
+}

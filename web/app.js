@@ -58,6 +58,7 @@ function untilText(ms) {
   if (min < 60) return `in ${min} min`;
   return `in ${Math.round(min / 60)} h`;
 }
+const short = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const dayName = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 const dayTime = (iso) => `${dayName(iso)}, ${clock(iso)}`;
@@ -74,7 +75,7 @@ function lifeSpan(iso) {
 
 const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'Lonely', curious: 'Curious', calm: 'Calm', warm: 'Warm to people', restless: 'Restless' };
-const AWAKE = new Set(['waking', 'reading', 'thinking', 'deciding', 'drawing', 'writing', 'asking', 'resting', 'replying', 'reflecting']);
+const AWAKE = new Set(['waking', 'reading', 'thinking', 'deciding', 'drawing', 'writing', 'asking', 'building', 'tending', 'resting', 'replying', 'reflecting']);
 const NIGHT = new Set(['dreaming', 'rewriting']);
 const PHASE_TITLE = {
   quiet: 'Resting between cycles',
@@ -85,6 +86,8 @@ const PHASE_TITLE = {
   drawing: 'Drawing',
   writing: 'Writing',
   asking: 'Asking you something',
+  building: 'Building something in its place',
+  tending: 'Tending its place',
   resting: 'Letting the cycle pass',
   replying: 'Writing back',
   reflecting: 'Writing its diary',
@@ -98,7 +101,9 @@ const PHASE_TITLE = {
 };
 const SHELF_TITLE = { people: 'People', world: 'The world outside', moments: 'Things that happened' };
 const SHELF_NOTE = { people: 'the people who wrote to it', world: 'only what it was told', moments: 'what it did and what happened to it' };
-const INFLUENCE = { belief: 'a belief', unbelief: 'a belief it let go', portrait: 'its picture of people', name: 'its name', memory: 'a memory' };
+const INFLUENCE = { belief: 'a belief', unbelief: 'a belief it let go', portrait: 'its picture of people', name: 'its name', memory: 'a memory', thing: 'something it built', wish: 'a wish' };
+const VERB = { draw: 'drew', write: 'wrote', ask: 'asked', build: 'built', tend: 'tended', rest: 'rested' };
+const WISH_STATUS = { open: 'waiting', granted: 'granted', declined: 'declined' };
 
 // ---------- identity (a random key in this browser, so it can recognise you if you write again) ----------
 
@@ -125,7 +130,7 @@ const visitor = (() => {
 
 // ---------- state ----------
 
-const blankLive = () => ({ think: '', draw: '', write: '', reply: '', dream: '', title: '', replyTo: null, reading: [] });
+const blankLive = () => ({ think: '', draw: '', write: '', sprite: '', plaque: '', change: '', reply: '', dream: '', title: '', replyTo: null, reading: [], building: null });
 const app = {
   state: null,
   live: blankLive(),
@@ -150,7 +155,7 @@ if (new URLSearchParams(location.search).has('embed')) document.documentElement.
 
 function snapshotFile(path) {
   const route = path.replace(/^\/?api\//, '').split('?')[0];
-  if (['state', 'journey', 'works', 'life', 'atlas', 'letters'].includes(route)) return `${SNAPSHOT}${route}.json`;
+  if (['state', 'journey', 'works', 'life', 'atlas', 'letters', 'world'].includes(route)) return `${SNAPSHOT}${route}.json`;
   const m = /^cycle\/(\d+|latest)$/.exec(route);
   if (m) return `${SNAPSHOT}cycles/${pad6(m[1] === 'latest' ? app.state.cycle : m[1])}.json`;
   return null;
@@ -187,6 +192,7 @@ function scheduleLive() {
   liveFrame = requestAnimationFrame(() => {
     liveFrame = 0;
     updateNow({ streaming: true });
+    updatePlaceLive();
   });
 }
 
@@ -212,13 +218,14 @@ function connect() {
     const prev = { phase: app.state.phase, detail: app.state.detail };
     Object.assign(app.state, st);
     if ((st.phase === 'waking' || st.phase === 'dreaming') && prev.phase !== st.phase) app.live = blankLive();
-    if ((st.phase === 'drawing' || st.phase === 'writing') && st.detail) app.live.title = st.detail;
+    if (['drawing', 'writing', 'building', 'tending'].includes(st.phase) && st.detail) app.live.title = st.detail;
     if (st.phase === 'replying' && (prev.phase !== 'replying' || prev.detail !== st.detail)) {
       app.live.reply = '';
       app.live.replyTo = { from: st.detail.replace(/^to /, '') };
     }
     renderChrome();
     updateNow();
+    updatePlaceLive();
   });
   es.addEventListener('stream', (e) => {
     const { kind, delta } = JSON.parse(e.data);
@@ -228,13 +235,23 @@ function connect() {
   });
   es.addEventListener('cycle', async () => {
     [app.latest, app.state] = await Promise.all([api('/api/cycle/latest'), api('/api/state')]);
-    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData');
+    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData', 'world');
     refreshView();
+  });
+  es.addEventListener('world', (e) => {
+    // It has chosen where the thing it is building will stand.
+    app.live.building = JSON.parse(e.data).building;
+    if (app.view === 'place') updatePlaceLive();
+  });
+  es.addEventListener('wish', async () => {
+    app.state = await api('/api/state');
+    invalidate('world', 'atlasData');
+    if (app.view === 'place' || app.view === 'now') refreshView();
   });
   es.addEventListener('night', async (e) => {
     const night = JSON.parse(e.data);
     app.state = await api('/api/state');
-    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData');
+    invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData', 'world');
     app.mindVersion = null;
     toast(`It became version ${night.n}: “${night.release?.title || 'untitled'}”`);
     refreshView();
@@ -309,7 +326,7 @@ function renderChrome() {
 
 // ---------- router ----------
 
-const VIEWS = { now: renderNow, replay: renderReplay, atlas: renderAtlas, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters };
+const VIEWS = { now: renderNow, replay: renderReplay, atlas: renderAtlas, place: renderPlace, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters };
 
 function route() {
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
@@ -397,7 +414,14 @@ function whatText(c) {
   if (c.action === 'draw') return c.work?.failed ? `tried to draw “${c.title}”` : `drew “${c.title}”`;
   if (c.action === 'write') return `wrote “${c.title}”`;
   if (c.action === 'ask') return `asked “${c.question}”`;
+  if (c.action === 'build') return c.work?.failed ? `tried to build “${c.title}”` : `built “${c.title}”`;
+  if (c.action === 'tend') return c.work?.failed ? `tried to tend “${c.title}”` : `tended “${c.title}”`;
   return 'rested';
+}
+
+/** A thing it built, as a small picture (or a plain marker if its drawing came out empty). */
+function thingFrame(src, name) {
+  return h('div', { class: 'canvas-frame thing-frame' }, src ? h('img', { src, alt: `Its drawing of “${name}”`, loading: 'lazy' }) : h('span', { class: 'thing-marker', 'aria-hidden': 'true' }));
 }
 
 const SCREEN_LINE = {
@@ -444,6 +468,26 @@ function workView(c) {
   const why = c.action?.why ? h('p', { class: 'meta' }, `Why: ${c.action.why}`) : null;
   if (!w) return [h('p', { class: 'voice' }, 'It rested and let the cycle pass.'), why];
   if (w.kind === 'question') return [h('p', { class: 'question-big' }, `“${w.text}”`), why];
+  const drawn = w.svg || w.src ? workSrc(c.n) : null;
+  const visit = w.thing ? h('a', { class: 'btn', href: `#/place?thing=${w.thing}`, onclick: () => $('#detail').open && $('#detail').close() }, 'See it in its place') : null;
+  if (w.kind === 'building') {
+    if (w.failed) return [h('p', { class: 'voice' }, `It tried to build “${w.title}”, but ${w.why}.`), why];
+    return h(
+      'div',
+      { class: 'making' },
+      thingFrame(drawn, w.title),
+      h('div', {}, h('div', { class: 'label' }, w.thingKind === 'place' ? 'A place it built' : 'Something it built'), h('div', { class: 'work-title' }, w.title), h('p', { class: 'voice plaque' }, w.plaque), w.note ? h('p', { class: 'work-note' }, w.note) : null, why, visit),
+    );
+  }
+  if (w.kind === 'tending') {
+    if (w.failed) return [h('p', { class: 'voice' }, `It went to tend “${w.title}”, but ${w.why}.`), why];
+    return h(
+      'div',
+      { class: drawn ? 'making' : '' },
+      drawn ? thingFrame(drawn, w.title) : null,
+      h('div', {}, h('div', { class: 'label' }, w.restored ? 'It rebuilt a ruin' : 'It went back to'), h('div', { class: 'work-title' }, w.title), h('p', { class: 'voice plaque' }, w.change), w.note ? h('p', { class: 'work-note' }, w.note) : null, why, visit),
+    );
+  }
   if (w.kind === 'writing') {
     return h('div', {}, h('div', { class: 'work-title' }, w.title), h('p', { class: 'work-text' }, w.text), w.note ? h('p', { class: 'work-note' }, w.note) : null, why);
   }
@@ -497,7 +541,7 @@ async function openCycle(n) {
     section('The machine', h('div', { class: 'senses', style: 'border:0;padding:0' }, sensesLine(c.senses))),
     c.letters.length ? section('It read', h('div', { class: 'feed' }, c.letters.map(letterView))) : null,
     section('It thought', h('p', { class: 'monologue' }, c.monologue)),
-    section(c.work?.kind === 'drawing' ? 'It drew' : c.work?.kind === 'writing' ? 'It wrote' : c.work?.kind === 'question' ? 'It asked' : 'It rested', workView(c)),
+    section({ drawing: 'It drew', writing: 'It wrote', question: 'It asked', building: 'It built', tending: 'It tended its place' }[c.work?.kind] || 'It rested', workView(c)),
     section('Its diary', h('p', { class: 'voice', style: 'font-size:18px;margin:0' }, c.diary)),
     c.remembered.length
       ? section(
@@ -518,11 +562,25 @@ function openWork(w) {
   const body =
     w.kind === 'drawing'
       ? h('div', { class: 'making' }, drawingFrame(workSrc(w.cycle), w.title), h('div', {}, h('p', { class: 'work-intent' }, w.intent), w.note ? h('p', { class: 'work-note' }, w.note) : null))
-      : h('div', {}, h('p', { class: 'work-text' }, w.text), w.note ? h('p', { class: 'work-note', style: 'margin-top:12px' }, w.note) : null);
+      : w.kind === 'building'
+        ? h('div', { class: 'making' }, thingFrame(w.src ? workSrc(w.cycle) : null, w.title), h('div', {}, h('div', { class: 'label' }, 'Something it built in its place'), h('p', { class: 'voice plaque' }, w.plaque), w.note ? h('p', { class: 'work-note' }, w.note) : null))
+        : h('div', {}, h('p', { class: 'work-text' }, w.text), w.note ? h('p', { class: 'work-note', style: 'margin-top:12px' }, w.note) : null);
   showDialog(w.title, `${dayTime(w.at)} · cycle ${w.cycle} · made by version ${w.version}`, [
     body,
-    h('button', { class: 'btn', type: 'button', onclick: () => openCycle(w.cycle) }, 'See the whole cycle'),
+    h(
+      'div',
+      { class: 'rp-row' },
+      h('button', { class: 'btn', type: 'button', onclick: () => openCycle(w.cycle) }, 'See the whole cycle'),
+      w.thing ? h('a', { class: 'btn', href: `#/place?thing=${w.thing}`, onclick: () => $('#detail').close() }, 'See it in its place') : null,
+    ),
   ]);
+}
+
+/** The face of a work in a gallery or a version card. */
+function workFace(w) {
+  if (w.kind === 'drawing') return drawingFrame(workSrc(w.cycle), w.title);
+  if (w.kind === 'building') return thingFrame(w.src ? workSrc(w.cycle) : null, w.title);
+  return h('div', { class: 'writing-face' }, w.text);
 }
 
 // ---------- now ----------
@@ -645,6 +703,36 @@ function renderMaking() {
     $('.label', card).textContent = s.phase === 'drawing' ? 'Drawing now' : 'Just drew';
     return;
   }
+  if (awake && (live.plaque || live.change || s.phase === 'building' || s.phase === 'tending')) {
+    // Building or tending: its sign first, then the drawing of the thing, shape by shape.
+    const tending = Boolean(live.change) || s.phase === 'tending';
+    const mode = tending ? 'live-tend' : 'live-build';
+    if (card.dataset.mode !== mode) {
+      card.dataset.mode = mode;
+      card.hidden = false;
+      fill(
+        card,
+        cardHead(tending ? 'Tending its place' : 'Building in its place', `cycle ${s.cycle + 1}`),
+        h('div', { class: 'making' }, h('div', { class: 'canvas-frame thing-frame', id: 'live-frame' }), h('div', {}, h('div', { class: 'work-title', id: 'live-title' }), h('p', { class: 'voice plaque', id: 'live-plaque' }), h('p', { class: 'meta', id: 'live-count' }))),
+      );
+    }
+    const frame = $('#live-frame');
+    if (live.sprite) {
+      const { svg, shapes } = cleanSvg(live.sprite, { partial: true, idPrefix: 'lb-' });
+      frame.innerHTML = svg; // whitelist-only output of cleanSvg
+      $('#live-count').textContent = `${shapes} shape${shapes === 1 ? '' : 's'} so far`;
+    } else {
+      // Tending without redrawing (or not drawn yet): show the thing as it already looks, if it has a drawing.
+      const known = (app.world?.things || []).find((t) => t.name === live.title) || (app.state.world?.newest?.name === live.title ? app.state.world.newest : null);
+      if (tending && known?.sprite) {
+        if (!frame.querySelector('img')) fill(frame, h('img', { src: asset(known.sprite), alt: `Its drawing of “${live.title}”` }));
+      } else fill(frame);
+      $('#live-count').textContent = s.phase === 'building' ? 'deciding what it is and where it goes…' : '';
+    }
+    $('#live-title').textContent = live.title;
+    $('#live-plaque').textContent = tending ? live.change : live.plaque;
+    return;
+  }
   card.dataset.mode = '';
   if (awake && live.write) {
     card.hidden = false;
@@ -666,7 +754,7 @@ function renderMaking() {
     return;
   }
   card.hidden = false;
-  const label = latest.work?.kind === 'drawing' ? 'Its latest drawing' : latest.work?.kind === 'writing' ? 'Its latest writing' : latest.work?.kind === 'question' ? 'It asked' : 'Last cycle';
+  const label = { drawing: 'Its latest drawing', writing: 'Its latest writing', question: 'It asked', building: 'It built', tending: 'It tended its place' }[latest.work?.kind] || 'Last cycle';
   fill(card, cardHead(label, `cycle ${latest.n}`), workView(latest));
 }
 
@@ -711,8 +799,37 @@ function renderBelow() {
       )
     : h('p', { class: 'muted', style: 'margin:0' }, 'It has not asked anyone anything yet.');
   const unread = s.letters.unread;
-  fill(below, 
+  const place = s.world;
+  const open = (s.wishes || []).filter((w) => w.status === 'open');
+  const lastWish = s.wishes?.[0];
+  fill(below,
     h('div', { class: 'card' }, cardHead('Its questions for you'), questions),
+    place
+      ? h(
+          'div',
+          { class: 'card' },
+          cardHead('Its place', place.things ? `${place.things} built` : null),
+          place.newest
+            ? h(
+                'div',
+                { class: 'place-peek' },
+                thingFrame(place.newest.sprite ? asset(place.newest.sprite) : null, place.newest.name),
+                h('p', { class: 'muted', style: 'margin:0' }, `Newest: `, h('b', { class: 'voice' }, place.newest.name), ` (cycle ${place.newest.built}). ${place.standing} standing${place.ruins ? `, ${place.ruins} in ruins` : ''}.`),
+              )
+            : h('p', { class: 'muted', style: 'margin:0 0 10px' }, 'It has not built anything yet. It builds its place out of what people tell it.'),
+          h('a', { class: 'btn', href: '#/place', style: 'display:inline-block;text-decoration:none;margin-top:10px' }, 'Visit its place'),
+        )
+      : null,
+    lastWish
+      ? h(
+          'div',
+          { class: 'card' },
+          cardHead('Its wishes', open.length ? `${open.length} waiting` : null),
+          h('p', { class: 'voice', style: 'font-size:17px;margin:0 0 6px' }, `“${lastWish.text}”`),
+          h('p', { class: 'meta', style: 'margin:0 0 10px' }, `${WISH_STATUS[lastWish.status]}${lastWish.answer?.text ? ` · its keeper: “${lastWish.answer.text}”` : ''}`),
+          h('a', { class: 'btn', href: '#/place?wishes', style: 'display:inline-block;text-decoration:none' }, 'All its wishes'),
+        )
+      : null,
     h(
       'div',
       { class: 'card' },
@@ -747,7 +864,8 @@ function renderBelow() {
 const SPEEDS = [1, 2, 4, 8];
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const typeMs = (text, perChar = 20) => 1400 + String(text || '').length * perChar;
-const changeCount = (n) => n.self.added.length + n.self.revised.length + n.self.removed.length + (n.portrait ? 1 : 0) + (n.name ? 1 : 0);
+const changeCount = (n) =>
+  n.self.added.length + n.self.revised.length + n.self.removed.length + (n.portrait ? 1 : 0) + (n.name ? 1 : 0) + (n.world?.ruined.length || 0) + (n.wish?.text && !n.wish.refused ? 1 : 0);
 
 function buildBeats(life) {
   const beats = [];
@@ -761,6 +879,8 @@ function buildBeats(life) {
     if (w?.kind === 'drawing' && !w.failed) beats.push({ ...at, kind: 'draw', ms: 5600 });
     else if (w?.kind === 'writing') beats.push({ ...at, kind: 'write', text: w.text, ms: typeMs(w.text, 26) });
     else if (w?.kind === 'question') beats.push({ ...at, kind: 'ask', text: w.text, ms: typeMs(w.text, 34) + 1600 });
+    else if (w?.kind === 'building' && !w.failed) beats.push({ ...at, kind: 'build', text: w.plaque, ms: 4200 + typeMs(w.plaque, 18) });
+    else if (w?.kind === 'tending' && !w.failed) beats.push({ ...at, kind: 'tend', text: w.change, ms: typeMs(w.change, 26) + (w.src ? 3200 : 0) });
     else beats.push({ ...at, kind: 'rest', ms: 1800 });
     for (const l of c.letters) if (l.reply) beats.push({ ...at, kind: 'reply', letter: l, text: l.reply, ms: typeMs(l.reply) });
     beats.push({ ...at, kind: 'diary', text: c.diary, ms: typeMs(c.diary, 30) });
@@ -908,8 +1028,11 @@ function replayControls(ended = false) {
   for (const b of $$('.speed')) b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === r.speed));
 }
 
-const BEAT_LOOK = { wake: 'waking', read: 'reading', think: 'thinking', draw: 'drawing', write: 'writing', ask: 'asking', rest: 'resting', reply: 'replying', diary: 'reflecting', dream: 'dreaming', become: 'rewriting' };
-const BEAT_TITLE = { wake: 'Waking up', read: 'Reading', think: 'Thinking', draw: 'Drawing', write: 'Writing', ask: 'Asking', rest: 'Letting the cycle pass', reply: 'Writing back', diary: 'Writing its diary', dream: 'Asleep, dreaming', become: 'Asleep, rewriting itself' };
+const BEAT_LOOK = { wake: 'waking', read: 'reading', think: 'thinking', draw: 'drawing', write: 'writing', ask: 'asking', build: 'building', tend: 'tending', rest: 'resting', reply: 'replying', diary: 'reflecting', dream: 'dreaming', become: 'rewriting' };
+const BEAT_TITLE = { wake: 'Waking up', read: 'Reading', think: 'Thinking', draw: 'Drawing', write: 'Writing', ask: 'Asking', build: 'Building in its place', tend: 'Tending its place', rest: 'Letting the cycle pass', reply: 'Writing back', diary: 'Writing its diary', dream: 'Asleep, dreaming', become: 'Asleep, rewriting itself' };
+const MAKES = ['draw', 'write', 'ask', 'build', 'tend', 'rest']; // beats that put what it made on screen
+/** Beats whose drawing is drawn shape by shape. */
+const drawsShapes = (beat) => beat.kind === 'draw' || ((beat.kind === 'build' || beat.kind === 'tend') && beat.c.work?.src);
 
 /** Set up everything that stays put for a beat; drawBeat then animates the part that is being written. */
 function enterBeat() {
@@ -937,14 +1060,27 @@ function enterBeat() {
   const work = $('#rp-work');
   // What it made stays on screen through the replies and the diary that follow it.
   if (['wake', 'read', 'think', 'dream', 'become'].includes(beat.kind)) work.hidden = true;
-  else if (['draw', 'write', 'ask', 'rest'].includes(beat.kind)) work.hidden = false;
-  if ((beat.kind === 'reply' || beat.kind === 'diary') && c.work?.kind === 'drawing') {
+  else if (MAKES.includes(beat.kind)) work.hidden = false;
+  if ((beat.kind === 'reply' || beat.kind === 'diary') && (c.work?.kind === 'drawing' || c.work?.src)) {
     const done = r.svg.get(c.n)?.ready;
     if (done && $('#rp-frame')) $('#rp-frame').innerHTML = done.svg; // whitelist-only output of cleanSvg
   }
   if (beat.kind === 'draw') {
     fill(work, cardHead('Drawing', `cycle ${c.n}`), h('div', { class: 'making' }, h('div', { class: 'canvas-frame', id: 'rp-frame' }), h('div', {}, h('div', { class: 'work-title' }, c.work.title), h('p', { class: 'work-intent' }, c.work.intent))));
     svgSteps(c.n);
+  } else if (beat.kind === 'build' || beat.kind === 'tend') {
+    const building = beat.kind === 'build';
+    fill(
+      work,
+      cardHead(building ? 'Building in its place' : c.work.restored ? 'Rebuilding a ruin' : 'Tending its place', `cycle ${c.n}`),
+      h(
+        'div',
+        { class: building || c.work.src ? 'making' : '' },
+        building || c.work.src ? h('div', { class: 'canvas-frame thing-frame', id: 'rp-frame' }) : null,
+        h('div', {}, h('div', { class: 'work-title' }, c.work.title), h('p', { class: 'voice plaque', id: 'rp-work-text' })),
+      ),
+    );
+    if (c.work.src) svgSteps(c.n);
   } else if (beat.kind === 'write') {
     fill(work, cardHead('Writing', `cycle ${c.n}`), h('div', { class: 'work-title' }, c.work.title), h('p', { class: 'work-text', id: 'rp-work-text' }));
   } else if (beat.kind === 'ask') {
@@ -953,7 +1089,7 @@ function enterBeat() {
     fill(work, cardHead('Resting', `cycle ${c.n}`), h('p', { class: 'voice' }, 'It let the cycle pass.'));
   }
   // Keep the next drawing warm so it starts drawing without a pause.
-  const next = r.beats.slice(r.i + 1, r.i + 8).find((b) => b.kind === 'draw');
+  const next = r.beats.slice(r.i + 1, r.i + 8).find(drawsShapes);
   if (next) svgSteps(next.c.n);
 
   const letters = $('#rp-letters');
@@ -974,6 +1110,8 @@ function enterBeat() {
       ...n.self.removed.map((x) => h('li', { class: 'del' }, h('span', { class: 'sign' }, '−'), h('span', {}, h('q', {}, x.text), x.why ? h('span', { class: 'because' }, x.why) : null))),
       n.portrait ? h('li', { class: 'mod' }, h('span', { class: 'sign' }, '◐'), h('span', {}, h('q', {}, n.portrait.to), h('span', { class: 'because' }, 'its new picture of people'))) : null,
       n.name ? h('li', { class: 'add' }, h('span', { class: 'sign' }, '✦'), h('span', {}, `It named itself `, h('b', {}, n.name.to))) : null,
+      ...(n.world?.ruined || []).map((t) => h('li', { class: 'del' }, h('span', { class: 'sign' }, '−'), h('span', {}, h('q', {}, t.name), h('span', { class: 'because' }, 'crumbled in its place: it no longer remembered why it built it')))),
+      n.wish?.text && !n.wish.refused ? h('li', { class: 'add' }, h('span', { class: 'sign' }, '✧'), h('span', {}, h('q', {}, n.wish.text), h('span', { class: 'because' }, 'a wish for its keeper'))) : null,
     ].filter(Boolean);
     fill(
       panel,
@@ -997,7 +1135,7 @@ function enterBeat() {
 function drawBeat(beat, p) {
   const r = app.replay;
   const typed = (text) => text.slice(0, Math.ceil(text.length * Math.min(1, p * 1.15)));
-  const target = { think: '#rp-text', dream: '#rp-text', diary: '#rp-text', write: '#rp-work-text', ask: '#rp-work-text', reply: '#rp-reply' }[beat.kind];
+  const target = { think: '#rp-text', dream: '#rp-text', diary: '#rp-text', write: '#rp-work-text', ask: '#rp-work-text', build: '#rp-work-text', tend: '#rp-work-text', reply: '#rp-reply' }[beat.kind];
   if (target && beat.text) {
     const el = $(target);
     const shown = typed(beat.kind === 'ask' ? `“${beat.text}”` : beat.text);
@@ -1008,7 +1146,7 @@ function drawBeat(beat, p) {
     }
     el?.classList.toggle('caret', p < 0.87);
   }
-  if (beat.kind === 'draw') {
+  if (drawsShapes(beat)) {
     const steps = r.svg.get(beat.c.n)?.ready;
     const frame = $('#rp-frame');
     if (steps && frame) {
@@ -1083,6 +1221,9 @@ const FEED_COLOR = {
   name: 'var(--paper)',
   influence: 'var(--human)',
   version: 'var(--night)',
+  build: 'var(--curious)',
+  ruin: 'var(--gone)',
+  wish: 'var(--paper)',
 };
 
 function stopAtlas() {
@@ -1125,6 +1266,7 @@ async function renderAtlas(current) {
       ['var(--mind)', '', 'memories: what happened'],
       ['var(--curious)', '', 'the world outside'],
       ['var(--faint)', '', 'forgotten'],
+      ['var(--curious)', 'house', 'things it built'],
       ['var(--human)', 'line', 'a letter changed this'],
       ['var(--gone)', 'line', 'pushed out'],
     ].map(([c, k, t]) => h('span', {}, h('i', { class: k, style: `--c:${c}` }), t)),
@@ -1134,7 +1276,7 @@ async function renderAtlas(current) {
     $('#view'),
     intro(
       'Atlas of a mind',
-      'Everything it has become, on one map. At the centre, the lines its maker wrote; around them, the beliefs it wrote itself; then its three shelves of memory, drifting outward as they fade; then the dust of what it forgot. On the rim are the people who wrote to it. Watch letters fall in, nights rewrite it, and amber threads appear where a letter changed something. Point at anything; click it to follow its threads.',
+      'Everything it has become, on one map. At the centre, the lines its maker wrote; around them, the beliefs it wrote itself; then its three shelves of memory, drifting outward as they fade; then the dust of what it forgot. On the rim are the people who wrote to it, with their letters and the things it built out of them just inside. Watch letters fall in, nights rewrite it, and amber threads appear where a letter changed something. Point at anything; click it to follow its threads.',
     ),
     h(
       'div',
@@ -1243,6 +1385,8 @@ function atlasName(id) {
   if (m) return `memory “${clip(m.text)}”`;
   const l = A.lookup.letter.get(id);
   if (l) return `${l.from}'s letter (cycle ${l.cycle})`;
+  const t = A.lookup.thing.get(id);
+  if (t) return `“${clip(t.name)}”, which it built`;
   return id;
 }
 
@@ -1367,6 +1511,28 @@ function fillAtlasInspect(el, id) {
     return;
   }
 
+  const th = L.thing.get(id);
+  if (th) {
+    const ruin = A.ruined(th.id);
+    fill(
+      el,
+      head(ruin ? 'A ruin it built' : th.kind === 'place' ? 'A place it built' : 'Something it built', null),
+      h('div', { class: 'atlas-person' }, th.name),
+      th.sprite ? h('div', { class: 'atlas-sprite' }, thingFrame(asset(th.sprite), th.name)) : null,
+      h('p', { class: 'voice' }, th.plaque),
+      h(
+        'p',
+        { class: 'meta' },
+        `Built in cycle ${th.built}.`,
+        th.tended.length ? ` Tended in cycle ${th.tended.join(', ')}.` : '',
+        th.ruined.length ? ` Crumbled the night after cycle ${th.ruined.join(', ')}.` : '',
+      ),
+      shapedBy(th.id),
+      h('a', { class: 'btn', href: `#/place?thing=${th.id}` }, 'See it in its place'),
+    );
+    return;
+  }
+
   const l = L.letter.get(id);
   if (l) {
     const changed = [...new Set(d.threads.filter((t) => t.kind === 'influence' && t.from === l.id).map((t) => t.to))];
@@ -1380,6 +1546,255 @@ function fillAtlasInspect(el, id) {
     return;
   }
   fill(el, h('p', { class: 'meta' }, 'Nothing here.'));
+}
+
+// ---------- its place ----------
+// The map it builds out of what people tell it, and the wishes it leaves its keeper.
+
+const TILE = 64;
+
+async function renderPlace(current) {
+  app.world ??= await api('/api/world');
+  if (!current()) return;
+  const w = app.world;
+  fill(
+    $('#view'),
+    intro(
+      'Its place',
+      'It cannot see the world, so it builds one out of what people tell it. Everything here it made itself, mostly out of letters, and drew with its own shapes. A thing stands while something it remembers still holds it up. When it forgets why it built something, that thing wears away at night into a ruin, unless it goes back and tends it.',
+    ),
+    h(
+      'div',
+      { class: 'place' },
+      h(
+        'section',
+        { class: 'card place-stage' },
+        placeMap(w),
+        h('div', { class: 'place-legend' }, h('span', {}, 'faint: wearing away'), h('span', {}, 'cracked: a ruin'), h('span', {}, 'lines: what each thing was built beside'), h('span', {}, 'glow: where it was last')),
+      ),
+      h('aside', { class: 'place-side' }, h('div', { class: 'card' }, cardHead('Looking at'), h('div', { id: 'place-inspect' })), wishesCard(w)),
+    ),
+  );
+  selectThing(app.params.get('thing'));
+  if (app.params.has('wishes')) $('#wishes')?.scrollIntoView({ block: 'start' });
+  updatePlaceLive();
+}
+
+function placeMap(w) {
+  const W = w.w * TILE;
+  const H = w.h * TILE;
+  const byId = new Map(w.things.map((t) => [t.id, t]));
+  const mid = (p) => ({ x: p.x * TILE + TILE / 2, y: p.y * TILE + TILE / 2 });
+  const tint = moodColor(app.state.mood);
+  // Frame what has been built so far (with room around it), so a young place is seen up close and the view
+  // widens as it grows; the frame keeps the whole map's proportions.
+  const pts = [w.card, ...w.things, ...(app.live.building ? [app.live.building] : [])];
+  const aspect = w.w / w.h;
+  const bx0 = Math.min(...pts.map((p) => p.x)) - 2;
+  const bx1 = Math.max(...pts.map((p) => p.x)) + 3;
+  const by0 = Math.min(...pts.map((p) => p.y)) - 2;
+  const by1 = Math.max(...pts.map((p) => p.y)) + 3;
+  let fw = Math.max(7, bx1 - bx0);
+  let fh = Math.max(5, by1 - by0);
+  if (fw / fh > aspect) fh = fw / aspect;
+  else fw = fh * aspect;
+  fw = Math.min(fw, w.w);
+  fh = Math.min(fh, w.h);
+  const fx = Math.min(Math.max((bx0 + bx1) / 2 - fw / 2, 0), w.w - fw);
+  const fy = Math.min(Math.max((by0 + by1) / 2 - fh / 2, 0), w.h - fh);
+  const svg = sv('svg', {
+    class: 'place-map',
+    viewBox: `${(fx * TILE).toFixed(1)} ${(fy * TILE).toFixed(1)} ${(fw * TILE).toFixed(1)} ${(fh * TILE).toFixed(1)}`,
+    role: 'group',
+    'aria-label': `Its place: ${w.things.length} things on a ${w.w} by ${w.h} map`,
+  });
+  svg.append(
+    sv(
+      'defs',
+      {},
+      sv('pattern', { id: 'place-grid', width: TILE, height: TILE, patternUnits: 'userSpaceOnUse' }, sv('circle', { cx: 1, cy: 1, r: 1.3, class: 'place-dot' })),
+      sv('radialGradient', { id: 'place-here' }, sv('stop', { offset: 0, 'stop-color': tint, 'stop-opacity': 0.75 }), sv('stop', { offset: 1, 'stop-color': tint, 'stop-opacity': 0 })),
+    ),
+    sv('rect', { width: W, height: H, fill: 'url(#place-grid)' }),
+  );
+  // The paths it grew along: every thing to whatever it was built beside.
+  for (const t of w.things) {
+    const a = mid(t);
+    const b = mid(byId.get(t.near) || w.card);
+    svg.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'place-path' }));
+  }
+  const here = mid(byId.get(w.at) || w.card);
+  svg.append(sv('circle', { cx: here.x, cy: here.y, r: TILE * 0.62, fill: 'url(#place-here)', class: 'place-here' }));
+
+  // The card it lives on, in the middle of everything.
+  const c = mid(w.card);
+  const pins = [-15, -7, 1, 9].flatMap((dx) => [
+    sv('line', { x1: c.x + dx + 3, y1: c.y - 19, x2: c.x + dx + 3, y2: c.y - 14 }),
+    sv('line', { x1: c.x + dx + 3, y1: c.y + 14, x2: c.x + dx + 3, y2: c.y + 19 }),
+  ]);
+  const card = sv('g', { class: 'place-card', tabindex: 0, role: 'button', 'aria-label': 'The card it lives on' }, sv('rect', { x: c.x - 22, y: c.y - 14, width: 44, height: 28, rx: 4 }), pins, sv('text', { x: c.x, y: c.y + 32, 'text-anchor': 'middle' }, 'the card'));
+  card.addEventListener('click', () => selectThing(null));
+  svg.append(card);
+
+  for (const t of w.things) {
+    const x = t.x * TILE;
+    const y = t.y * TILE;
+    const g = sv('g', {
+      class: `thing${t.ruin ? ' ruin' : t.condition < 1 ? ' worn' : ''}`,
+      'data-id': t.id,
+      tabindex: 0,
+      role: 'button',
+      'aria-label': `${t.name}${t.ruin ? ', a ruin' : ''}`,
+      style: `--o:${t.ruin ? 0.55 : (0.45 + 0.55 * t.condition).toFixed(2)}`,
+    });
+    g.append(sv('rect', { x: x + 2, y: y + 2, width: TILE - 4, height: TILE - 4, rx: 10, class: 'thing-hit' }));
+    g.append(t.sprite ? sv('image', { href: asset(t.sprite), x: x + 8, y: y + 2, width: TILE - 16, height: TILE - 16 }) : sv('rect', { x: x + 20, y: y + 12, width: 24, height: 24, rx: 4, class: 'thing-blank' }));
+    if (t.ruin) g.append(sv('path', { d: `M${x + 14} ${y + 42} l7 -9 l5 6 l6 -11 l6 8 l8 -6`, class: 'cracks' }));
+    g.append(sv('text', { x: x + TILE / 2, y: y + TILE - 3, 'text-anchor': 'middle' }, short(t.name, 17)), sv('title', {}, `${t.name}${t.ruin ? ' (a ruin)' : ''}\n${t.plaque}`));
+    g.addEventListener('click', () => selectThing(t.id));
+    g.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectThing(t.id);
+      }
+    });
+    svg.append(g);
+  }
+  svg.append(sv('g', { id: 'place-live' }));
+  return svg;
+}
+
+/** Show one thing's sign and history beside the map (or, with no id, the place as a whole). */
+function selectThing(id) {
+  const w = app.world;
+  const el = $('#place-inspect');
+  if (!el || !w) return;
+  for (const g of $$('.place-map .thing')) g.classList.toggle('selected', g.dataset.id === id);
+  const t = id && w.things.find((x) => x.id === id);
+  if (!t) {
+    const standing = w.things.filter((x) => !x.ruin).length;
+    const ruins = w.things.length - standing;
+    const at = w.things.find((x) => x.id === w.at);
+    fill(
+      el,
+      h(
+        'p',
+        { class: 'muted', style: 'margin:0 0 8px' },
+        w.things.length
+          ? `It has built ${w.things.length} thing${w.things.length === 1 ? '' : 's'}: ${standing} standing${ruins ? `, ${ruins} in ruins` : ''}. Click one to read its sign.`
+          : 'Nothing yet, only the card it lives on. The first thing it builds will appear beside it.',
+      ),
+      at ? h('p', { class: 'meta', style: 'margin:0' }, `It was last at ${at.name}.`) : null,
+    );
+    return;
+  }
+  const status = t.ruin ? `A ruin since the night after cycle ${t.ruinedAt}` : t.condition < 1 ? `Wearing away, ${Math.round(t.condition * 100)}% left` : 'Standing';
+  const SIGN = { built: '+', tended: '~', rebuilt: '↺', ruined: '−' };
+  fill(
+    el,
+    h('div', { class: 'label' }, t.ruin ? 'A ruin it built' : t.kind === 'place' ? 'A place it built' : 'Something it built'),
+    h('h3', { class: 'work-title', style: 'margin:6px 0 10px' }, t.name),
+    thingFrame(t.sprite ? asset(t.sprite) : null, t.name),
+    h('p', { class: 'voice plaque' }, t.plaque),
+    h('p', { class: 'meta' }, `${status}. Built in cycle ${t.built}, as version ${t.version}.`),
+    t.from.length ? h('p', { class: 'meta' }, 'Made from ', t.from.map((f, i) => [i ? ' and ' : '', h('b', { class: 'human' }, f.from), '’s letter']), '.') : h('p', { class: 'meta' }, 'Made from nothing but itself.'),
+    t.history.length > 1
+      ? h(
+          'ul',
+          { class: 'changes' },
+          t.history.map((x) => h('li', { class: { built: 'add', ruined: 'del' }[x.what] || 'mod' }, h('span', { class: 'sign' }, SIGN[x.what] || '·'), h('span', {}, h('q', {}, x.text), h('span', { class: 'because' }, `${x.what}, cycle ${x.cycle}`)))),
+        )
+      : null,
+    h('div', { class: 'rp-row' }, h('button', { class: 'btn', type: 'button', onclick: () => openCycle(t.built) }, 'The cycle it was built'), h('a', { class: 'btn', href: `#/atlas?focus=${t.id}&at=end` }, 'In the atlas')),
+  );
+}
+
+/** While it builds, the site on the map shows its drawing arriving shape by shape. */
+function updatePlaceLive() {
+  if (app.view !== 'place') return;
+  const layer = $('#place-live');
+  if (!layer) return;
+  const s = app.state;
+  const live = app.live;
+  if (SNAPSHOT || !s.busy || !live.building) {
+    if (layer.childNodes.length) fill(layer);
+    delete layer.dataset.at;
+    return;
+  }
+  const { x, y, name } = live.building;
+  if (layer.dataset.at !== `${x},${y}`) {
+    layer.dataset.at = `${x},${y}`;
+    fill(
+      layer,
+      sv('rect', { x: x * TILE + 3, y: y * TILE + 3, width: TILE - 6, height: TILE - 6, rx: 10, class: 'place-site' }),
+      sv('svg', { x: x * TILE + 8, y: y * TILE + 2, width: TILE - 16, height: TILE - 16, viewBox: '0 0 64 64', id: 'place-live-sprite' }),
+      sv('text', { x: x * TILE + TILE / 2, y: y * TILE + TILE - 3, 'text-anchor': 'middle', class: 'place-site-label' }, short(name, 17)),
+    );
+  }
+  $('#place-live-sprite').innerHTML = cleanSvg(live.sprite, { partial: true, idPrefix: 'pl-' }).svg; // whitelist-only output
+}
+
+function wishesCard(w) {
+  const open = w.wishes.filter((x) => x.status === 'open').length;
+  return h(
+    'div',
+    { class: 'card', id: 'wishes' },
+    cardHead('Its wishes', open ? `${open} waiting` : null),
+    h('p', { class: 'muted', style: 'margin:0 0 12px' }, 'At night it can leave its keeper a wish for something it cannot do or get itself. They are kept here, with its keeper’s answers. It hears an answer the next time it wakes.'),
+    w.wishes.length ? h('ul', { class: 'wishes' }, w.wishes.map(wishItem)) : h('p', { class: 'empty', style: 'padding:6px 0' }, 'It has not wished for anything yet.'),
+  );
+}
+
+function wishItem(x) {
+  const answered = { granted: 'Its keeper granted it', declined: 'Its keeper said no', reply: 'Its keeper wrote back' };
+  return h(
+    'li',
+    { class: `wish ${x.status}` },
+    h('p', { class: 'voice wish-text' }, `“${x.text}”`),
+    x.why ? h('p', { class: 'meta', style: 'margin:0 0 6px' }, x.why) : null,
+    h('div', { class: 'meta' }, h('span', { class: `chip chip-wish ${x.status}` }, WISH_STATUS[x.status]), ` wished the night it became v${x.version}`),
+    x.answer
+      ? h(
+          'div',
+          { class: 'reply-block keeper-answer' },
+          h('span', { class: 'label' }, answered[x.answer.status]),
+          x.answer.text ? h('p', { class: 'voice' }, x.answer.text) : null,
+          h('span', { class: 'meta' }, x.answer.told ? `It heard this in cycle ${x.answer.told}.` : 'It has not woken since.'),
+        )
+      : null,
+    app.admin && x.status === 'open' ? keeperWish(x) : null,
+  );
+}
+
+/** Its keeper's answer to one wish, and a pre-filled issue so anyone can help make it come true. */
+function keeperWish(x) {
+  const text = h('textarea', { rows: 2, maxlength: 600, placeholder: 'Your answer. It reads this when it next wakes.' });
+  const send = (status) => async () => {
+    try {
+      await api(`/api/admin/wishes/${x.id}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': app.admin }, body: JSON.stringify({ status, text: text.value }) });
+      invalidate('world');
+      app.state = await api('/api/state');
+      render();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  const base = app.state.wishIssues;
+  const body = [`> ${x.text}`, '', x.why ? `Why, in its words: ${x.why}` : '', '', `It left this wish for its keeper the night it became version ${x.version} (after cycle ${x.cycle}). Its keeper tells it the answer the next time it wakes.`].join('\n');
+  const issue = base ? `${base}?labels=wish&title=${encodeURIComponent(short(`Wish: ${x.text}`, 120))}&body=${encodeURIComponent(body)}` : null;
+  return h(
+    'div',
+    { class: 'keeper-wish' },
+    text,
+    h(
+      'div',
+      { class: 'rp-row' },
+      h('button', { class: 'btn', type: 'button', onclick: send('granted') }, 'Grant it'),
+      h('button', { class: 'btn', type: 'button', onclick: send('declined') }, 'Say no'),
+      h('button', { class: 'btn', type: 'button', onclick: send('reply') }, 'Just reply'),
+      issue ? h('a', { class: 'btn', href: issue, target: '_blank', rel: 'noopener' }, 'Open as an issue ↗') : null,
+    ),
+  );
 }
 
 // ---------- journey ----------
@@ -1403,7 +1818,7 @@ async function renderJourney(current) {
       h('span', {}, h('i', { style: `background:${moodColor({ lonely: 1, warm: 0 })}` }), 'lonely'),
       h('span', {}, h('i', { style: `background:${moodColor({ lonely: 0.5, warm: 0.5 })}` }), 'neither'),
       h('span', {}, h('i', { style: `background:${moodColor({ lonely: 0, warm: 1 })}` }), 'warm'),
-      h('span', {}, '● drew  ■ wrote  ? asked  ○ rested'),
+      h('span', {}, '● drew  ■ wrote  ? asked  ▲ built  ◇ tended  ○ rested'),
       h('span', {}, h('i', { style: 'background:var(--human)' }), 'letter'),
       h('span', {}, h('i', { style: 'background:var(--night)' }), 'milestone'),
       h('span', {}, '▮ waited for the card'),
@@ -1428,6 +1843,7 @@ function statsRow(j, s) {
     stat(s.stats.replies, 'replies'),
     stat(s.stats.drawings, 'drawings'),
     stat(s.stats.writings, 'writings'),
+    stat(s.stats.built ?? 0, 'things built'),
     stat(s.stats.questions, 'questions'),
     stat(s.stats.forgotten, 'forgotten'),
     stat(s.stats.waits, 'waits'),
@@ -1493,7 +1909,12 @@ function strand(j) {
     const ly = letterY - k * 6;
     const g = sv('g', {});
     g.append(sv('path', { d: `M${lx} ${ly} C ${lx} ${ly + 44}, ${nodeX} ${baseY - 44}, ${nodeX} ${baseY - 7}`, stroke: 'var(--human)', fill: 'none', opacity: 0.55 }));
-    const versions = [...new Set((l.influenced || []).map((i) => i.version))];
+    // Things built out of this letter, in whichever later cycle it built them.
+    for (const i of (l.influenced || []).filter((x) => x.what === 'thing' && xs.has(x.cycle))) {
+      const bx = xs.get(i.cycle);
+      g.append(sv('path', { d: `M${lx} ${ly} C ${lx + 20} ${ly + 30}, ${bx} ${baseY - 50}, ${bx} ${baseY - 8}`, stroke: 'var(--curious)', 'stroke-width': 1.2, 'stroke-dasharray': '2 3', fill: 'none' }));
+    }
+    const versions = [...new Set((l.influenced || []).filter((i) => i.what !== 'thing').map((i) => i.version))];
     for (const v of versions) {
       const nx = nightX.get(v);
       if (nx == null) continue;
@@ -1515,6 +1936,8 @@ function strand(j) {
     if (c.action === 'rest') g.append(sv('circle', { cx, cy: baseY, r: 4.5, fill: 'var(--bg)', stroke: fill, 'stroke-width': 1.6 }));
     else if (c.action === 'write') g.append(sv('rect', { x: cx - 5, y: baseY - 5, width: 10, height: 10, rx: 2, fill }));
     else if (c.action === 'ask') g.append(sv('circle', { cx, cy: baseY, r: 6, fill }), sv('text', { x: cx, y: baseY + 3.5, 'text-anchor': 'middle', style: 'font:700 9px var(--mono);fill:var(--bg)' }, '?'));
+    else if (c.action === 'build') g.append(sv('path', { d: `M${cx - 6.5} ${baseY + 5.5} L${cx} ${baseY - 6.5} L${cx + 6.5} ${baseY + 5.5} Z`, fill, opacity: c.work?.failed ? 0.4 : 1 }));
+    else if (c.action === 'tend') g.append(sv('path', { d: `M${cx} ${baseY - 6} l6 6 l-6 6 l-6 -6 z`, fill: 'var(--bg)', stroke: fill, 'stroke-width': 1.6 }));
     else g.append(sv('circle', { cx, cy: baseY, r: c.work?.failed ? 3.5 : 6.5, fill }));
     g.append(sv('title', {}, `Cycle ${c.n} · ${dayTime(c.at)}\nIt ${whatText(c)}.\n“${c.diary}”`));
     g.addEventListener('click', () => openCycle(c.n));
@@ -1544,13 +1967,13 @@ function cycleChip(c) {
     'button',
     { class: 'cycle-chip', type: 'button', title: `It ${whatText(c)}. “${c.diary}”`, onclick: () => openCycle(c.n) },
     h('span', { class: 'dot', style: `background:${moodColor(c.mood)}` }),
-    `${c.n} · ${{ draw: 'drew', write: 'wrote', ask: 'asked', rest: 'rested' }[c.action]}`,
+    `${c.n} · ${VERB[c.action] || c.action}`,
   );
 }
 
 function thumb(w) {
-  return w.kind === 'drawing'
-    ? h('button', { class: 'thumb', type: 'button', title: w.title, onclick: () => openWork(w) }, h('img', { src: workSrc(w.cycle), alt: w.title, loading: 'lazy' }))
+  return w.kind === 'drawing' || (w.kind === 'building' && w.src)
+    ? h('button', { class: `thumb${w.kind === 'building' ? ' built' : ''}`, type: 'button', title: w.title, onclick: () => openWork(w) }, h('img', { src: workSrc(w.cycle), alt: w.title, loading: 'lazy' }))
     : h('button', { class: 'thumb text', type: 'button', title: w.title, onclick: () => openWork(w) }, w.title);
 }
 
@@ -1629,6 +2052,18 @@ function versionCard(n, j) {
         `Memory: kept ${n.memory.kept.length} · strengthened ${n.memory.merged.length} · never made it ${n.memory.lost.length} · forgot ${gone.length}`,
       ),
       gone.length ? h('ul', { class: 'changes' }, gone.slice(0, 4).map((m) => h('li', { class: 'del' }, h('span', { class: 'sign' }, '−'), h('span', {}, h('q', {}, m.text), h('span', { class: 'because' }, m.how))))) : null,
+      n.world && (n.world.worn.length || n.world.ruined.length)
+        ? [
+            h('div', { class: 'label', style: 'margin-bottom:8px' }, 'In its place that night'),
+            h(
+              'ul',
+              { class: 'changes' },
+              n.world.ruined.map((t) => h('li', { class: 'del' }, h('span', { class: 'sign' }, '−'), h('span', {}, h('q', {}, t.name), h('span', { class: 'because' }, 'crumbled into a ruin: it no longer remembered why it built it')))),
+              n.world.worn.map((t) => h('li', { class: 'mod' }, h('span', { class: 'sign' }, '~'), h('span', {}, h('q', {}, t.name), h('span', { class: 'because' }, `wearing away (${Math.round(t.condition * 100)}% left)`)))),
+            ),
+          ]
+        : null,
+      n.wish?.text && !n.wish.refused ? h('p', { class: 'wish-line' }, h('span', { class: 'chip chip-wish' }, 'it wished'), ' ', h('span', { class: 'voice' }, `“${n.wish.text}”`)) : null,
       influences.length
         ? h('p', { class: 'influence', style: 'margin:0 0 12px' }, '↳ Letters that changed it: ', influences.map((i, k) => [k ? ' · ' : '', h('b', {}, i.from), ` (${INFLUENCE[i.what] || i.what})`]))
         : null,
@@ -1796,7 +2231,7 @@ async function renderWorks(current) {
   if (!current()) return;
   const works = app.works;
   fill($('#view'), 
-    intro('What it made', 'Small drawings and pieces of writing, newest first. It is not good at drawing yet; that is part of it.'),
+    intro('What it made', 'Small drawings, pieces of writing, and the things it built in its place, newest first. It is not good at drawing yet; that is part of it.'),
     works.length
       ? h(
           'div',
@@ -1804,9 +2239,9 @@ async function renderWorks(current) {
           works.map((w) =>
             h(
               'button',
-              { class: 'card work-card', type: 'button', onclick: () => openWork(w) },
-              w.kind === 'drawing' ? drawingFrame(workSrc(w.cycle), w.title) : h('div', { class: 'writing-face' }, w.text),
-              h('div', { class: 'caption' }, h('b', {}, w.title), h('span', { class: 'meta' }, `v${w.version} · cycle ${w.cycle} · ${ago(w.at)}`)),
+              { class: `card work-card${w.kind === 'building' ? ' built' : ''}`, type: 'button', onclick: () => openWork(w) },
+              workFace(w),
+              h('div', { class: 'caption' }, h('b', {}, w.title), h('span', { class: 'meta' }, `${w.kind === 'building' ? 'built · ' : ''}v${w.version} · cycle ${w.cycle} · ${ago(w.at)}`)),
             ),
           ),
         )

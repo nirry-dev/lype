@@ -38,9 +38,19 @@ Prompt changes are the most interesting and the easiest to get wrong, because sm
 2. Paste short excerpts of the records (monologue, decision, reply, the night's release notes) into the PR, and say which model you used.
 3. Say what you were trying to change and whether it worked. "It still does X sometimes" is useful information, not a failure.
 
-## Changing mechanics (memory, drift guard, fatigue, moderation)
+## Changing mechanics (memory, drift guard, fatigue, moderation, its place)
 
-Add or update a test in `test/`. The mock brain in `server/brain.js` answers every phase, so a whole life can run in a test in milliseconds.
+Add or update a test in `test/`. The mock brain in `server/brain.js` answers every phase, so a whole life can run in a test in milliseconds. `npm run dev` streams the mock's answers slowly, so live views (drawing, building, tending) can be watched without a model.
+
+## Granting its wishes
+
+At night a creature may leave its keeper a wish: something it cannot do or get itself. Its keeper can open any wish as a GitHub issue labelled `wish`, quoting the wish and why it asked. Those issues are a roadmap written by the creature, and good places to start:
+
+- **A new sense** usually belongs in `server/senses.js` (what it can feel) and `describeMachine()`/`situation()` in `server/mind.js` (how it is told). Keep senses honest: real signals from its host, never invented sights.
+- **A new material or way of making** (colour it was never told about, curves, sound as numbers) touches the prompts in `server/mind.js` and, for drawings, the whitelist in `web/lib/svgclean.js` (with tests).
+- **A change to how it lives** (rhythm, memory, its place) is a mechanic: see above.
+
+Say in the PR which wish it grants. When it ships, its keeper marks the wish granted on the Place page, and the creature hears about it the next time it wakes.
 
 ## Security-sensitive areas
 
@@ -59,7 +69,8 @@ Add or update a test in `test/`. The mock brain in `server/brain.js` answers eve
 
 - **Replay as video:** render a replay to a file for sharing.
 - **Senses:** more honest signals from the host (time since its human last typed, disk sounds as numbers, weather only if someone tells it).
-- **More creatures:** several minds on one card, writing to each other.
+- **More creatures:** several minds on one card, writing to each other, maybe visiting each other's places.
+- **Its place:** paths it chooses itself, weather in its place that follows the letters, letting it move things, a larger map once it fills up.
 - **Moderation:** better heuristics, a second-opinion model, multilingual letters.
 - **Accessibility:** screen-reader narration of the replay, better keyboard paths through the journey.
 - **Deployment guide:** running a public instance safely behind a tunnel, with a keeper.

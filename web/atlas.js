@@ -23,7 +23,7 @@ const rgba = ([r, g, b], a) => `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.
 
 // Where each shelf lives on the dial, in degrees (0 is to the right, 90 is down).
 const SECTORS = { people: [-68, 28], world: [42, 138], moments: [152, 270] };
-const RING = { seed: 0.1, name: 0.18, today: 0.2, belief: 0.31, letGo: 0.39, memIn: 0.5, memOut: 0.61, dust: 0.79, letter: 0.86, person: 0.95 };
+const RING = { seed: 0.1, name: 0.18, today: 0.2, belief: 0.31, letGo: 0.39, memIn: 0.5, memOut: 0.61, dust: 0.79, thing: 0.825, letter: 0.86, person: 0.95 };
 const UNIT_MS = 2400; // one cycle (or one night) at 1×
 
 /** Timeline arithmetic: each cycle is one unit, and each night is one more unit after the cycle it follows. */
@@ -72,8 +72,16 @@ function narrate(d, tl) {
     if (w?.kind === 'drawing') push(a + 0.45, 'work', `It drew “${w.title}”.`, null);
     else if (w?.kind === 'writing') push(a + 0.45, 'work', `It wrote “${w.title}”.`, null);
     else if (w?.kind === 'question') push(a + 0.45, 'work', `It asked: “${short(w.text || '', 90)}”`, null);
+    else if (w?.kind === 'building') push(a + 0.45, 'build', `It built “${w.title}” in its place.`, (d.things || []).find((t) => t.built === c.n)?.id ?? null);
+    else if (w?.kind === 'tending') push(a + 0.45, 'build', `It ${w.restored ? 'rebuilt' : 'tended'} “${w.title}”.`, (d.things || []).find((t) => t.name === w.title)?.id ?? null);
     else push(a + 0.45, 'rest', 'It let the cycle pass.', null);
+    for (const wish of (d.wishes || []).filter((x) => x.answer?.told === c.n)) {
+      const how = { granted: 'granted', declined: 'declined', reply: 'answered' }[wish.answer.status];
+      push(a + 0.04, 'wish', `Its keeper ${how} its wish “${short(wish.text, 70)}”.`, null);
+    }
   }
+  for (const t of d.things || []) for (const r of t.ruined) push(tl.ns(r) + 0.5, 'ruin', `“${t.name}” crumbled: it no longer remembered why it built it.`, t.id);
+  for (const wish of d.wishes || []) if (wish.cycle != null) push(tl.ns(wish.cycle) + 0.9, 'wish', `It wished: “${short(wish.text, 90)}”`, null);
   for (const n of d.nights) {
     const a = tl.ns(n.cycle);
     push(a + 0.02, 'night', `Night ${n.v}: it slept.`, null);
@@ -166,6 +174,8 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
   const personById = new Map(d.people.map((p) => [p.id, p]));
   const memById = new Map(d.memories.map((m) => [m.id, m]));
   const beliefById = new Map(d.beliefs.map((b) => [b.id, b]));
+  const things = d.things || [];
+  const thingById = new Map(things.map((t) => [t.id, t]));
   const adj = new Map();
   const link = (a, b) => {
     (adj.get(a) ?? adj.set(a, new Set()).get(a)).add(b);
@@ -215,6 +225,24 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
     return a0 + ((m.seat + 0.5) / seatsPerShelf) * (a1 - a0);
   };
   const seatRing = (m) => (m.seat % 2 ? RING.memOut : RING.memIn) + (hash(m.id) - 0.5) * 0.025;
+  // A thing sits under the person whose letter it was made from, beside their other things; one made from
+  // nothing but itself gets an angle of its own.
+  const thingAngle = new Map();
+  for (const t of things) {
+    const letter = t.from.map((id) => letterById.get(id)).find(Boolean);
+    const i = letter ? d.people.findIndex((p) => p.id === letter.person) : -1;
+    if (i < 0) {
+      thingAngle.set(t.id, hash(t.id) * 360);
+      continue;
+    }
+    const siblings = things.filter((x) => x.from.some((id) => letterById.get(id)?.person === letter.person));
+    thingAngle.set(t.id, personAngle(i) + (siblings.indexOf(t) - (siblings.length - 1) / 2) * 5);
+  }
+  /** Whether a thing lies in ruins at timeline position T: from the night it crumbled until a cycle that rebuilt it. */
+  const ruinedAt = (thing, T) => {
+    const fell = thing.ruined.filter((c) => tl.ns(c) + 0.5 <= T).at(-1);
+    return fell != null && !thing.rebuilt.some((c) => c > fell && tl.cs(c) + 0.45 <= T);
+  };
   const letterRest = (l) => {
     const p = personById.get(l.person);
     const i = d.people.indexOf(p);
@@ -306,6 +334,14 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
       const a = span(t, tl.cs(l.cycle) + 0.33, tl.cs(l.cycle) + 0.45);
       if (a <= 0) continue;
       nodes.push({ id: l.id, kind: 'letter', ...letterRest(l), r: 2.6, alpha: a, data: l });
+    }
+    for (const th of things) {
+      const appear = tl.cs(th.built) + 0.5;
+      const a = span(t, appear, appear + 0.2);
+      if (a <= 0) continue;
+      const ruin = ruinedAt(th, t);
+      const tended = th.tended.reduce((m, c) => Math.max(m, bell(t, tl.cs(c) + 0.4, tl.cs(c) + 0.9)), 0);
+      nodes.push({ id: th.id, kind: 'thing', ...P(thingAngle.get(th.id), RING.thing), r: lerp(2, 4.6, a), alpha: a, ruin, pulse: tended, data: th });
     }
     return { nodes, core, ct };
   }
@@ -456,8 +492,9 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
       const from = pos.get(th.from);
       const to = pos.get(th.to);
       if (!from || !to) continue;
-      const q = curve(from, to, th.kind === 'pushed' ? 0.08 : 0.42);
-      const start = tl.ns(th.at) + (th.kind === 'pushed' ? 0.25 : 0.62);
+      const q = curve(from, to, th.kind === 'pushed' ? 0.08 : th.what === 'thing' ? 0.05 : 0.42);
+      // Things are built during a cycle; everything else a letter changes, it changes at night.
+      const start = th.what === 'thing' ? tl.cs(th.at) + 0.5 : tl.ns(th.at) + (th.kind === 'pushed' ? 0.25 : 0.62);
       const grow = span(t, start, start + 0.3);
       if (grow <= 0) continue;
       const on = lit && lit.has(th.from) && lit.has(th.to) && (th.from === focus || th.to === focus || lit.has(focus));
@@ -516,6 +553,38 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
         ctx.arc(n.x, n.y, n.r + 3.5, 0, TAU);
         ctx.strokeStyle = rgba(C.human, 0.35 * a);
         ctx.stroke();
+      }
+    }
+
+    // things it built, just inside the letters they were made from: little houses, hollow once they are ruins
+    for (const n of sc.nodes.filter((x) => x.kind === 'thing')) {
+      const a = n.alpha * fade(n.id);
+      const rgb = n.ruin ? C.dim : C.world;
+      const s = n.r;
+      if (n.pulse) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, s + 4 + n.pulse * 10, 0, TAU);
+        ctx.strokeStyle = rgba(C.world, n.pulse * 0.6 * a);
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+      if (!n.ruin) glow(n.x, n.y, s * 3.2, rgb, 0.3 * a);
+      ctx.beginPath();
+      ctx.moveTo(n.x - s, n.y + s * 0.9);
+      ctx.lineTo(n.x - s, n.y - s * 0.1);
+      ctx.lineTo(n.x, n.y - s * 1.1);
+      ctx.lineTo(n.x + s, n.y - s * 0.1);
+      ctx.lineTo(n.x + s, n.y + s * 0.9);
+      ctx.closePath();
+      if (n.ruin) {
+        ctx.setLineDash([2, 2]);
+        ctx.strokeStyle = rgba(rgb, 0.85 * a);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = rgba(rgb, 0.92 * a);
+        ctx.fill();
       }
     }
 
@@ -674,6 +743,8 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
         return { kind: `Wrote ${n.data.letters.length} letter${n.data.letters.length === 1 ? '' : 's'}`, text: n.data.name };
       case 'letter':
         return { kind: `Letter from ${n.data.from}`, text: n.data.text };
+      case 'thing':
+        return { kind: n.ruin ? 'A ruin it built' : n.data.kind === 'place' ? 'A place it built' : 'Something it built', text: `${n.data.name}: ${n.data.plaque}` };
       default:
         return null;
     }
@@ -708,7 +779,12 @@ export function createAtlas(canvas, data, { onTime = () => {}, onHover = () => {
       const seg = tl.at(t);
       return { cycle: seg?.cycle ?? 0, night: seg?.night ?? null, rec: seg?.rec ?? null, version: tl.versionAt(t), cycleTime: tl.cycleTime(t) };
     },
-    lookup: { letter: letterById, person: personById, memory: memById, belief: beliefById },
+    lookup: { letter: letterById, person: personById, memory: memById, belief: beliefById, thing: thingById },
+    /** Whether a thing is a ruin at the current moment. */
+    ruined(id) {
+      const th = thingById.get(id);
+      return th ? ruinedAt(th, state.t) : false;
+    },
     /** A memory's strength at the current moment, 0..1. */
     strength(id) {
       const m = memById.get(id);

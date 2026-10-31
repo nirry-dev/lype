@@ -27,7 +27,7 @@ test('the atlas covers the whole life', () => {
 
 test('every thread and every fate points at something on the map', () => {
   const { atlas } = demoAtlas();
-  const ids = new Set([...atlas.memories, ...atlas.beliefs, ...atlas.letters].map((x) => x.id).concat(['portrait', 'name']));
+  const ids = new Set([...atlas.memories, ...atlas.beliefs, ...atlas.letters, ...atlas.things].map((x) => x.id).concat(['portrait', 'name']));
   assert.ok(atlas.threads.some((t) => t.kind === 'influence'), 'some letter changed something');
   assert.ok(atlas.threads.some((t) => t.kind === 'pushed'), 'some memory pushed another out');
   for (const t of atlas.threads) {

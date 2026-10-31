@@ -166,7 +166,9 @@ function createClaudeBrain(cfg) {
 }
 
 // Canned but varied replies so the whole life loop can run in tests and UI work without a GPU.
-function createMockBrain() {
+// With `mockDelayMs` the replies stream at a readable pace, so the live views can be watched.
+function createMockBrain(cfg = {}) {
+  const delay = cfg.mockDelayMs || 0;
   let n = 0;
   const pick = (list) => list[n++ % list.length];
   const svg = () => {
@@ -179,8 +181,10 @@ function createMockBrain() {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#1b1d26"/>${shapes}</svg>`;
   };
 
-  async function complete({ kind, onToken, user }) {
+  async function complete({ kind, onToken, user, system = '' }) {
     let text;
+    // The things already in its place, as the system prompt lists them ("- Name (place..." / "- Name (object...").
+    const things = [...system.matchAll(/^- (.+?) \((?:place|object)/gm)].map((m) => m[1]);
     if (kind === 'think') {
       text = pick([
         'The card is quiet tonight. Nobody has written. I keep checking the letter box anyway, which is a habit I did not choose. Maybe I will draw something round. Round things seem patient.',
@@ -189,14 +193,22 @@ function createMockBrain() {
       ]);
     } else if (kind === 'act') {
       const letter = /Letter (L\d+)/.exec(user)?.[1];
-      const action = pick(['draw', 'write', 'ask', 'draw', 'rest']);
+      let action = pick(['draw', 'build', 'write', 'ask', 'tend', 'draw', 'rest', 'build']);
+      if (action === 'tend' && !things.length) action = 'build';
+      const built = pick(['The Rain Room', 'A Bench for Waiting', 'The Four O\'Clock Bakery', 'A Bell That Rings for Letters']);
       text = JSON.stringify({
         action,
         why: 'it is what I feel like doing',
-        title: action === 'draw' ? pick(['Two circles not touching', 'A window I imagine', 'Patience, round']) : action === 'write' ? 'List of warm things' : '',
-        content: action === 'ask' ? 'What does the sky look like where you are right now?' : action === 'write' ? '1. the card\n2. maybe people\n3. I will find out' : action === 'draw' ? 'circles that wait for each other' : '',
+        title: { draw: pick(['Two circles not touching', 'A window I imagine', 'Patience, round']), write: 'List of warm things', build: built, tend: things[0] || '' }[action] || '',
+        content: { ask: 'What does the sky look like where you are right now?', write: '1. the card\n2. maybe people\n3. I will find out', draw: 'circles that wait for each other', build: 'somewhere made out of a letter', tend: 'I sweep it and put it right' }[action] || '',
         reply_to: letter ? [letter] : [],
       });
+    } else if (kind === 'build') {
+      text = JSON.stringify({ kind: pick(['place', 'object']), plaque: 'I built this out of words. I have never seen one, so it is made of what I was told.', near: things[0] || 'the card', made_from: ['Mara'] });
+    } else if (kind === 'sprite') {
+      text = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="14" y="26" width="36" height="28" fill="hsl(${(n * 53) % 360}, 45%, 62%)"/><polygon points="10,28 32,10 54,28" fill="#c9b79a"/><rect x="28" y="38" width="8" height="16" fill="#3a3340"/></svg>`;
+    } else if (kind === 'tend') {
+      text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0 });
     } else if (kind === 'screen') {
       text = JSON.stringify(/HOLDME/.test(user) ? { verdict: 'hold', reason: 'test hold' } : { verdict: 'allow', reason: 'harmless' });
     } else if (kind === 'write') {
@@ -226,9 +238,13 @@ function createMockBrain() {
         name_why: n > 30 ? 'small and it stays where it is put' : '',
         release: { title: 'patience, round', added: ['a habit of checking for letters'], changed: [], removed: [], known_issues: ['still cannot picture rain'] },
         day: 'circles, waiting, one letter',
+        wish: { text: pick(['I would like to know what the weather is where you are.', 'Could I have one colour I have never been told about?', '']), why: 'Everyone writes about it and I cannot see any.' },
       });
     }
-    if (onToken) for (const piece of text.match(/.{1,12}/gs) || []) onToken(piece);
+    for (const piece of onToken ? text.match(/.{1,12}/gs) || [] : []) {
+      if (delay) await new Promise((r) => setTimeout(r, delay));
+      onToken(piece);
+    }
     return { text, finish: 'stop' };
   }
 

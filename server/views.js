@@ -1,6 +1,9 @@
 // What the public may see of a life. Shared by the live server and the static export, so both hide the same things.
-import { letterStatus, publicCycle, publicLetter } from './life.js';
+import { letterStatus, publicCycle, publicLetter, publicWish } from './life.js';
 import { pad } from './store.js';
+import { CARD } from './world.js';
+
+const spriteSrc = (n) => (n ? `works/${pad(n)}.svg` : null);
 
 /** One cycle record, minus anything moderation held back. */
 export function cycle(store, n) {
@@ -12,7 +15,7 @@ export function cycle(store, n) {
 export function works(life, store) {
   const out = [];
   for (const c of life.cycles) {
-    if (!c.work || c.work.failed || c.work.kind === 'question') continue;
+    if (!c.work || c.work.failed || !['drawing', 'writing', 'building'].includes(c.work.kind)) continue;
     const full = store.read(`cycles/${pad(c.n)}.json`, null)?.work;
     if (!full) continue;
     out.push({
@@ -24,10 +27,45 @@ export function works(life, store) {
       intent: full.intent,
       note: full.note,
       text: full.kind === 'writing' ? full.text : undefined,
-      src: full.kind === 'drawing' ? `works/${pad(c.n)}.svg` : undefined,
+      plaque: full.kind === 'building' ? full.plaque : undefined,
+      thing: full.thing,
+      src: full.kind === 'drawing' || (full.kind === 'building' && full.svg) ? `works/${pad(c.n)}.svg` : undefined,
     });
   }
   return out.reverse();
+}
+
+/** Its place: everything it built, where, from whose letters, and how worn; and the wishes it left its keeper. */
+export function world(life) {
+  const s = life.state;
+  const readable = new Map(life.letters.filter((l) => letterStatus(l) === 'allowed').map((l) => [l.id, l.from]));
+  return {
+    name: s.name,
+    w: s.world.w,
+    h: s.world.h,
+    card: CARD,
+    at: s.world.at,
+    things: s.world.things.map((t) => ({
+      id: t.id,
+      name: t.name,
+      kind: t.kind,
+      plaque: t.plaque,
+      x: t.x,
+      y: t.y,
+      near: t.near ?? null,
+      built: t.built,
+      version: t.version,
+      tended: t.tended,
+      condition: t.condition,
+      ruin: t.ruin,
+      ruinedAt: t.ruinedAt ?? null,
+      sprite: spriteSrc(t.sprite),
+      from: t.from.filter((id) => readable.has(id)).map((id) => ({ id, from: readable.get(id) })),
+      people: t.people,
+      history: t.history,
+    })),
+    wishes: s.wishes.map(publicWish).reverse(),
+  };
 }
 
 /** Letters the public may read, newest first; a visitor also sees their own letters with their screening status. */
@@ -46,13 +84,14 @@ export function replay(life, store) {
     if (!record) continue;
     const { svg, ...work } = record.work || {};
     const { gpu, ...when } = record.senses || {};
+    const drawn = record.work && !record.work.failed && (record.work.kind === 'drawing' || record.work.svg);
     cycles.push({
       ...record,
       senses: { ...when, gpu: gpu ? { tempC: gpu.tempC, util: gpu.util } : null },
-      work: record.work ? { ...work, src: record.work.kind === 'drawing' && !record.work.failed ? `works/${pad(c.n)}.svg` : undefined } : null,
+      work: record.work ? { ...work, src: drawn ? `works/${pad(c.n)}.svg` : undefined } : null,
     });
   }
-  return { born: life.state.born, name: life.state.name, cycles, nights: life.nights, milestones: life.state.milestones };
+  return { born: life.state.born, name: life.state.name, cycles, nights: life.nights, milestones: life.state.milestones, world: { w: life.state.world.w, h: life.state.world.h, card: CARD } };
 }
 
 /**
@@ -190,6 +229,23 @@ export function atlas(life, store) {
     for (const id of m.because) if (letters.some((l) => l.id === id) && !threads.some((t) => t.from === id && t.to === m.id)) threads.push({ kind: 'influence', from: id, to: m.id, what: 'memory', at: m.kept });
   }
 
+  // Its place: what it built and when, what wore it down, and the letters each thing was made from.
+  const at = (t, what) => t.history.filter((x) => what.includes(x.what)).map((x) => x.cycle);
+  const things = (s.world?.things || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    kind: t.kind,
+    plaque: t.plaque,
+    built: t.built,
+    tended: at(t, ['tended', 'rebuilt']),
+    ruined: at(t, ['ruined']),
+    rebuilt: at(t, ['rebuilt']),
+    from: t.from.filter((id) => letters.some((l) => l.id === id)),
+    sprite: spriteSrc(t.sprite),
+  }));
+  for (const t of things) for (const id of t.from) threads.push({ kind: 'influence', from: id, to: t.id, what: 'thing', at: t.built });
+  const wishes = (s.wishes || []).map((w) => ({ id: w.id, text: w.text, cycle: w.cycle, status: w.status, answer: w.answer ? { status: w.answer.status, text: w.answer.text, told: w.answer.told } : null }));
+
   return {
     born: s.born,
     name: s.name,
@@ -207,5 +263,7 @@ export function atlas(life, store) {
     people,
     letters,
     threads,
+    things,
+    wishes,
   };
 }

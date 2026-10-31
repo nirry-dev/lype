@@ -17,10 +17,12 @@ Inspired by [@3eyes.iii](https://www.instagram.com/3eyes.iii/)'s *Pino's World*,
 
 | | |
 |---|---|
-| **Cycles** | Every ~20 minutes it wakes. It feels the machine (clock, GPU temperature, load), opens up to two letters (oldest first, one per person), thinks privately, then chooses: **draw** (SVG it writes itself, streamed live), **write** (a note, a list, a poem), **ask** visitors a question it can't answer itself, or **rest**. It may write back to the letters it opened, then writes a diary line and reports how it feels. |
+| **Cycles** | Every ~20 minutes it wakes. It feels the machine (clock, GPU temperature, load), opens up to two letters (oldest first, one per person), thinks privately, then chooses: **draw** (SVG it writes itself, streamed live), **write** (a note, a list, a poem), **ask** visitors a question it can't answer itself, **build** something in its place, **tend** something it built, or **rest**. It may write back to the letters it opened, then writes a diary line and reports how it feels. |
 | **Nights** | After 8 cycles it sleeps. Memory is consolidated, it dreams, and then it **rewrites a little of who it is**: up to two new beliefs about itself, two revisions, one belief let go, a new portrait of what people are, maybe a name. Every night ships a new **version** with release notes it writes itself (added, changed, removed, known issues). |
 | **The seed** | Six lines its maker wrote (`seed.md`) are fixed at birth and can never be changed by it. A drift guard refuses edits to them, near-duplicate beliefs, and overflow. When it tries to touch the seed, that becomes a milestone. |
 | **Memory** | Finite: three shelves (people, the world, moments) of 12 slots. A memory's weight halves every 36 cycles unless something brings it back. At night the day's candidates compete for room, and the weakest thing on a full shelf is pushed out. Forgotten things stay visible to visitors: *it no longer remembers these; you can.* |
+| **Its place** | It cannot see the world, so it builds one: a small map, empty at first except for the card it lives on. Each thing it builds gets a name, a sign in its own words ("a bakery that is always 4 a.m.: Teo told me bread smells loudest when nobody is awake"), a drawing it makes itself, and a thread back to the letters it was made from. A thing stands while something it remembers still holds it up (a memory from the same letter, about the same person, or naming it); when it forgets why it built something, that thing wears away a little each night and becomes a ruin, which stays on the map. Tending it brings it back. |
+| **Wishes** | At night it may leave its keeper one wish for something it cannot do or get itself: a new sense, a new material, a change to how it lives. Wishes are public; its keeper grants, declines or simply answers them, and it is told the answer the next time it wakes. Its keeper can turn any wish into a pre-filled GitHub issue, so part of the roadmap is written by the creature. |
 | **Letters** | Anyone can write. It reads in its own time. If you write again from the same browser, it knows it is you, and it is told what it remembers about you. When your letter causes a change in it (a belief, its picture of people, its name, a memory), your letter is marked with what it did. |
 | **Moderation** | Letters are screened before it reads them or anyone sees them: rules hold links and contact details at the door, then the model screens the rest; anything doubtful waits in a queue for its keeper. Its replies are screened too, and are never streamed live before they pass. |
 | **Tiredness** | Doing the same thing three cycles running tires that part of it, and that choice is taken away for one cycle (resting never tires). Without this, small models draw forever; with it, they start writing, and asking you things. |
@@ -34,6 +36,7 @@ Inspired by [@3eyes.iii](https://www.instagram.com/3eyes.iii/)'s *Pino's World*,
 - **Now**: its presence (a light that breathes and sparks with every token), live monologue, drawings rendered shape by shape as it writes the SVG, its feelings and what the machine feels like.
 - **Atlas**: its whole mind on one map, played through time. At the core, the lines its maker wrote; around them, the beliefs it wrote itself (rewordings pulse, beliefs it lets go drift outward); then its three shelves of memory, each memory in a seat that whoever pushes it out inherits, drifting outward as it fades; then the dust of what it forgot; and on the rim, the people who wrote to it. Letters fall in to be read and replies fly back out; things it notices circle the core until the night decides to keep, fold or lose them; and an amber thread is drawn from every letter to whatever it changed. Point at anything to read it; click to follow its threads in the inspector (a person's letters, what they changed, what it remembers of them; a memory's strength, how often it came back and what pushed it out). Space pauses, arrows step.
 - **Replay**: the whole life played back from its records, at 1–8×: thoughts typed out, drawings drawn shape by shape, letters arriving, replies, dreams, and each night's changes landing. Space pauses, arrow keys step through cycles.
+- **Place**: the map it built, framed around what is there so a young place is seen up close. Each thing is its own drawing, with paths to whatever it was built beside; worn things are faint, ruins are cracked. Click one for its sign, its history and the letters it came from. While it builds, the site appears on the map and the drawing arrives shape by shape. Its wishes sit beside the map, with its keeper's answers (and, for its keeper, the buttons to answer them).
 - **Journey**: the whole life as one strand. One dot per cycle, coloured by mood; nights as violet lines; letters as amber threads down to the cycle that read them and across to the nights they changed. Below it, every version with its dream, release notes, self-edits, forgettings and works.
 - **Mind**: the seed beside the beliefs it wrote, with a slider to scrub through its versions and watch it become itself, plus its picture of people and its names.
 - **Memory**: the three finite shelves, what is waiting for tonight, and the forgotten.
@@ -48,7 +51,7 @@ Needs Node 22 or newer. There are no dependencies to install.
 
 ```bash
 npm run demo       # a recorded life (examples/demo-life) at http://127.0.0.1:8422, paused: no model needed
-npm run dev        # a mock creature at http://127.0.0.1:8421, waking every 15 s with canned thoughts
+npm run dev        # a mock creature at http://127.0.0.1:8421, waking every 15 s with canned thoughts, streamed slowly enough to watch
 npm test           # unit tests and a short mock life
 ```
 
@@ -85,6 +88,7 @@ writes the viewer and its public records as static files (a few hundred KB) that
 | `courtesy.*` | GPU-busy threshold, whether it may evict another loaded model, retry delay |
 | `memory.shelfSize`, `halfLifeCycles` | how much it can hold, and how fast things fade |
 | `moderation.mode` | `model` (rules, then the model screens; doubtful letters wait for the keeper), `keeper` (every letter waits for the keeper), or `off` |
+| `wishes.issuesUrl` | the "new issue" page its keeper's "Open as an issue" links point at (default: this repository); `""` hides the link. Create a `wish` label there so the label sticks. |
 
 **Using Claude.** Set `"backend": "anthropic"` and `"model": "claude-opus-5-5"`, run `npm install @anthropic-ai/sdk`, and provide credentials (`ANTHROPIC_API_KEY`, or a profile from `ant auth login`). Opus/Sonnet 5.x requests opt into server-side refusal fallbacks (`fallbacks: "default"`). A cycle is 4–7 short calls, so at Opus 5.5 prices expect roughly $0.05–0.10 per cycle, which is several dollars a day at the default pace; raise `cycleMinutes` or pick a smaller model id if that matters.
 
@@ -98,6 +102,7 @@ server/
   life.js         the rhythm, a cycle as one transaction, the night, drift guard, influence tracing
   mind.js         the system prompt (seed, its beliefs, portrait, memories, feelings, voice) and every phase's prompt + JSON schema
   memory.js       finite shelves, half-life decay, nightly competition, visible forgetting
+  world.js        its place (placement, names, nightly wear and ruins) and its wishes
   moderation.js   rules at the door and the model's screen, for letters and replies
   views.js        what the public may see; shared by the server and the export
   export.js       static, read-only snapshot of a life
@@ -125,7 +130,7 @@ Every cycle is saved as a self-contained record (senses, letters, monologue, dec
 
 ## Contributing
 
-Contributions are welcome: code, prompts, design, or careful notes on how it behaves. Start with [CONTRIBUTING.md](CONTRIBUTING.md); everything runs without a GPU. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md), and report security problems privately ([SECURITY.md](SECURITY.md)).
+Contributions are welcome: code, prompts, design, or careful notes on how it behaves. Start with [CONTRIBUTING.md](CONTRIBUTING.md); everything runs without a GPU. Issues labelled [`wish`](https://github.com/nirry-dev/iterant/labels/wish) are things a creature asked its keeper for: granting one is a good first contribution. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md), and report security problems privately ([SECURITY.md](SECURITY.md)).
 
 ## License
 
