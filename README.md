@@ -102,7 +102,7 @@ A static copy is always a little behind. The [relay](relay/README.md) (a small C
 | `memory.shelfSize`, `halfLifeCycles` | how much it can hold, and how fast things fade |
 | `moderation.mode` | `model` (rules, then the model screens; doubtful letters wait for the keeper), `keeper` (every letter waits for the keeper), or `off` |
 | `errands.enabled`, `maxPhotoMb` | whether it can send people on errands (its model must take images to see what they bring), and the largest photo accepted |
-| `publish.dir`, `publish.git` | where a static copy of its life is exported after every night (`""` = never), and whether to commit and push it there |
+| `publish.dir`, `publish.git`, `publish.url` | where a static copy of its life is exported after every night (`""` = never), whether to commit and push it there (only that folder is committed, and nothing else in the repository is stashed or touched), and the https address where it can be seen, so its pen pals can link to it |
 | `pals.list` | the creatures it writes to, by the address of their outbox (https, or http only on the same machine); `{ "url": ..., "trusted": true }` has their letters screened by the model even in `keeper` mode (a sibling, say) |
 | `pals.pollMinutes`, `pals.mode` | how often it fetches its pals' outboxes, and the starting setting (`open`, `throttled` or `paused`; its keeper can change it live) |
 | `pals.open`, `pals.throttled` | the limits for each setting, per pal: `perNight` letters out, `perCycle` letters read, `threadMax` letters before a thread rests (0 = no limit) for `restNights` |
