@@ -62,6 +62,8 @@ const DEFAULTS = {
     // After each night, a static copy of its life is exported here ("" = never), and committed and pushed if "git" is true.
     dir: '',
     git: false,
+    // Where that copy can be seen (https), so its pen pals can link to it. "" = it has no public page.
+    url: '',
   },
   relay: {
     // A relay (relay/, a Cloudflare Worker) it dials out to, so a static site can follow it live and visitors can write
@@ -109,6 +111,7 @@ export function loadConfig(argv = process.argv.slice(2)) {
   const file = arg(argv, '--config') || join(ROOT, 'config.json');
   const fromFile = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
   const cfg = merge(structuredClone(DEFAULTS), fromFile); // a copy: callers may change their config freely
+  cfg.configFile = existsSync(file) ? resolve(file) : null; // so what it runs (an export, say) uses the same settings
 
   if (argv.includes('--fast')) {
     // Demo pace: wake every ~15 s and sleep every 4 cycles.

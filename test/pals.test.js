@@ -150,3 +150,16 @@ test('two minds echoing each other: a letter too close to the last one stays hom
   assert.match(a.life.state.outbox[1].held, /too close/);
   assert.equal(a.life.state.outbox[1].sentAt, null);
 });
+
+test('a pal with a public page is linked to it, and only an https page is ever passed on', async () => {
+  const a = makeLife([B_URL]);
+  const b = makeLife([A_URL]);
+  b.life.cfg.publish.url = 'https://example.org/b/';
+  await a.life.pollPals(network(a, b));
+  assert.equal(a.life.publicState().pals.known[0].page, 'https://example.org/b/');
+  b.life.cfg.publish.url = 'javascript:alert(1)';
+  assert.equal(outbox(b.life).from.page, undefined);
+  b.life.cfg.publish.url = '';
+  await a.life.pollPals(network(a, b));
+  assert.equal(a.life.publicState().pals.known[0].page, null);
+});

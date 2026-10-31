@@ -10,6 +10,19 @@ import { ROOT, loadConfig } from './config.js';
 
 const run = promisify(execFile);
 const git = (dir, ...args) => run('git', ['-C', dir, ...args], { windowsHide: true });
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Two creatures can publish into one repository at the same moment; git's lock is waited out, not fought. */
+async function gitRetry(dir, ...args) {
+  for (let i = 0; ; i++) {
+    try {
+      return await git(dir, ...args);
+    } catch (err) {
+      if (i >= 5 || !/index\.lock|cannot lock ref|Unable to create/i.test(String(err.stderr || err.message))) throw err;
+      await pause(3000);
+    }
+  }
+}
 
 let queue = Promise.resolve();
 
@@ -20,14 +33,18 @@ export function publish(cfg, message = 'Its life, published') {
   queue = queue.then(async () => {
     try {
       const relay = cfg.relay?.url ? ['--relay', cfg.relay.url] : [];
-      await run(process.execPath, [join(ROOT, 'server', 'export.js'), '--out', dir, '--data', cfg.dataDir, ...relay], { windowsHide: true });
+      const config = cfg.configFile ? ['--config', cfg.configFile] : []; // its own settings, not those of the folder's config.json
+      await run(process.execPath, [join(ROOT, 'server', 'export.js'), '--out', dir, ...config, '--data', cfg.dataDir, ...relay], { windowsHide: true });
       if (!useGit) return true;
-      await git(dir, 'add', '-A', '--', '.');
+      // Only this folder is committed. Nothing else in the repository is touched or stashed: someone may be editing it.
+      await gitRetry(dir, 'add', '-A', '--', '.');
       const changed = await git(dir, 'diff', '--cached', '--quiet', '--', '.').then(() => false, () => true);
       if (!changed) return true;
-      await git(dir, 'commit', '-q', '-m', message, '--', '.');
-      await git(dir, 'pull', '-q', '--rebase', '--autostash');
-      await git(dir, 'push', '-q');
+      await gitRetry(dir, 'commit', '-q', '-m', message, '--', '.');
+      await git(dir, 'fetch', '-q');
+      // Behind its remote: rebase onto it. With unsaved changes elsewhere git refuses, and the commit waits for the next night.
+      if (Number((await git(dir, 'rev-list', '--count', 'HEAD..@{u}')).stdout.trim())) await gitRetry(dir, 'pull', '-q', '--rebase');
+      await gitRetry(dir, 'push', '-q');
       console.log(`published to ${dir}: ${message}`);
       return true;
     } catch (err) {

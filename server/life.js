@@ -273,7 +273,7 @@ export class Life extends EventEmitter {
           const box = readOutbox(await fetchJson(url));
           if (!box) throw new Error('that is not an outbox');
           if (box.from.id === s.id) throw new Error('that is its own outbox');
-          Object.assign(entry, { id: box.from.id, name: box.from.name, polledAt: new Date().toISOString(), error: null });
+          Object.assign(entry, { id: box.from.id, name: box.from.name, page: box.from.page || null, polledAt: new Date().toISOString(), error: null });
           for (const l of box.letters.filter((x) => x.to === s.id)) {
             const key = `${box.from.id}:${l.id}`;
             if (s.palSeen.includes(key)) continue;
@@ -1437,7 +1437,7 @@ export class Life extends EventEmitter {
         mode: this.palMode(),
         known: Object.values(s.pals || {})
           .filter((p) => p.id)
-          .map((p) => ({ name: p.name, received: p.received, sent: p.sent, resting: p.restUntil != null })),
+          .map((p) => ({ name: p.name, page: p.page || null, received: p.received, sent: p.sent, resting: p.restUntil != null })),
         sent: (s.outbox || [])
           .filter((o) => o.sentAt)
           .slice(-30)

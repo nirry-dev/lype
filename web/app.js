@@ -2614,12 +2614,17 @@ function lettersFeed() {
 function palsCard() {
   const p = app.state?.pals;
   if (!p?.known?.length && !p?.sent?.length) return null;
-  const who = p.known.map((k) => `${k.name} (${k.received} in, ${k.sent} out${k.resting ? ', resting' : ''})`).join(' · ');
+  // Each pal by name, linked to its own public page when it has one.
+  const who = p.known.map((k, i) => [
+    i ? ' · ' : '',
+    k.page ? h('a', { href: k.page, target: '_blank', rel: 'noopener' }, k.name) : k.name,
+    ` (${k.received} in, ${k.sent} out${k.resting ? ', resting' : ''})`,
+  ]);
   return h(
     'div',
     { class: 'card pals' },
     cardHead('Its pen pals', p.mode === 'open' ? 'other minds like it' : `pen pal mail ${p.mode}`),
-    h('p', { class: 'meta', style: 'margin-top:0' }, `Other creatures, each on someone else's graphics card, that also know the world only through letters. What it writes them leaves at night. ${who}`),
+    h('p', { class: 'meta', style: 'margin-top:0' }, "Other creatures, each on someone else's graphics card, that also know the world only through letters. What it writes them leaves at night. ", who),
     p.waiting ? h('p', { class: 'meta' }, `${p.waiting} letter${p.waiting === 1 ? '' : 's'} waiting to leave tonight.`) : null,
     p.sent.slice(0, 6).map((o) =>
       h('div', { class: 'ghost', style: 'margin-bottom:8px' }, h('div', { class: 'from' }, `${o.first ? 'Its first letter to' : 'To'} ${o.toName} · left night ${o.night}`), h('p', {}, o.text)),
