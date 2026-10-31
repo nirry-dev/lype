@@ -66,10 +66,15 @@ function createOpenAiBrain(cfg) {
     }
   }
 
-  async function complete({ system, user, image, maxTokens = 600, temperature, schema, onToken }) {
+  // Whether the server reports each token's probability (llama.cpp does); a server that refuses is asked once, then never.
+  let probes = cfg.logprobs !== false;
+
+  async function complete({ system, user, image, maxTokens = 600, temperature, schema, onToken, probe = false }) {
+    const asked = probe && probes;
     const body = {
       model: cfg.model,
       stream: true,
+      ...(asked ? { logprobs: true, top_logprobs: 3 } : {}),
       max_tokens: maxTokens,
       temperature: temperature ?? cfg.temperature,
       messages: [
@@ -86,10 +91,15 @@ function createOpenAiBrain(cfg) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(cfg.timeoutSeconds * 1000),
     });
+    if (!res.ok && asked && res.status >= 400 && res.status < 500) {
+      probes = false;
+      return complete({ system, user, image, maxTokens, temperature, schema, onToken });
+    }
     if (!res.ok) throw new Error(`model server HTTP ${res.status}: ${(await res.text()).slice(0, 240)}`);
 
     let text = '';
     let finish = null;
+    const tokens = [];
     for await (const data of sseData(res.body)) {
       if (data === '[DONE]') break;
       let evt;
@@ -105,9 +115,10 @@ function createOpenAiBrain(cfg) {
         text += delta;
         onToken?.(delta);
       }
+      for (const t of choice?.logprobs?.content || []) tokens.push({ token: t.token, logprob: t.logprob, top: (t.top_logprobs || []).map((x) => ({ token: x.token, logprob: x.logprob })) });
       if (choice?.finish_reason) finish = choice.finish_reason;
     }
-    return { text, finish };
+    return { text, finish, ...(tokens.length ? { tokens } : {}) };
   }
 
   return { kind: 'openai', label: cfg.model, presence, complete };
@@ -165,6 +176,17 @@ function createClaudeBrain(cfg) {
   return { kind: 'anthropic', label: cfg.model, presence, complete };
 }
 
+// Made-up token probabilities for a mock thought: one token per word, most of them sure, a few close calls.
+const MOCK_ALTERNATIVES = ['quiet', 'empty', 'waiting', 'afraid', 'small', 'warm', 'nobody', 'maybe'];
+function mockTokens(text, seed) {
+  return (text.match(/\s*\S+/g) || []).map((token, i) => {
+    const close = (i * 7 + seed) % 9 === 0 && /\p{L}{3,}/u.test(token);
+    const p = close ? 0.42 : 0.6 + (((i * 13 + seed) % 10) / 30);
+    const alt = MOCK_ALTERNATIVES[(i + seed) % MOCK_ALTERNATIVES.length];
+    return { token, logprob: Math.log(p), top: [{ token, logprob: Math.log(p) }, { token: ` ${alt}`, logprob: Math.log(close ? 0.38 : 0.05) }] };
+  });
+}
+
 // Canned but varied replies so the whole life loop can run in tests and UI work without a GPU.
 // With `mockDelayMs` the replies stream at a readable pace, so the live views can be watched.
 function createMockBrain(cfg = {}) {
@@ -182,7 +204,7 @@ function createMockBrain(cfg = {}) {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#1b1d26"/>${shapes}</svg>`;
   };
 
-  async function complete({ kind, onToken, user, system = '', schema }) {
+  async function complete({ kind, onToken, user, system = '', schema, probe = false }) {
     let text;
     // The things already in its place, as the system prompt lists them ("- Name (place..." / "- Name (object...").
     const things = [...system.matchAll(/^- (.+?) \((?:place|object)/gm)].map((m) => m[1]);
@@ -265,6 +287,7 @@ function createMockBrain(cfg = {}) {
         portrait_changed: 'I noticed people mention weather.',
         release: { title: 'patience, round', added: ['a habit of checking for letters'], changed: [], removed: [], known_issues: ['still cannot picture rain'] },
         day: 'circles, waiting, one letter',
+        numbers: /What the numbers say/.test(user) ? 'I did not know I was that unsure. I will keep the word I nearly chose.' : '',
         wish: { text: ['I would like to know what the weather is where you are.', 'Could I have one colour I have never been told about?', ''][nights++ % 3], why: 'Everyone writes about it and I cannot see any.' },
       });
     }
@@ -272,7 +295,7 @@ function createMockBrain(cfg = {}) {
       if (delay) await new Promise((r) => setTimeout(r, delay));
       onToken(piece);
     }
-    return { text, finish: 'stop' };
+    return { text, finish: 'stop', ...(probe ? { tokens: mockTokens(text, n) } : {}) };
   }
 
   return { kind: 'mock', label: 'mock', presence: async () => ({ reachable: true, known: true, ownState: 'loaded', others: [] }), complete };

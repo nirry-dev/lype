@@ -593,6 +593,27 @@ main {
   color: var(--text-2);
   flex: 1 1 320px;
 }
+/* What its words showed: the word it nearly thought, faint and struck through before the one it chose. */
+.almost {
+  color: var(--faint);
+  text-decoration-color: color-mix(in srgb, var(--faint) 70%, transparent);
+  cursor: help;
+}
+.measured {
+  margin: 10px 0 0;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.measured:empty {
+  display: none;
+}
+.measured .gap {
+  color: var(--gone);
+}
+.numbers {
+  margin: 4px 0 14px;
+}
 /* Its mortality: fading while nobody writes, and a life that has ended. */
 .ribbon.fading {
   border-color: color-mix(in srgb, var(--gone) 45%, var(--line));

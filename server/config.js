@@ -19,6 +19,7 @@ const DEFAULTS = {
     apiKeyFile: '',
     apiKeyEnv: '',
     noThinking: true,
+    logprobs: true, // ask for each word's probability while it thinks (server/measure.js); llama.cpp supports it
     temperature: 0.85,
     timeoutSeconds: 300,
     // anthropic only

@@ -657,6 +657,33 @@ export function dreamPrompt(state, day, consolidation, weathered = null, mortal 
     .join('\n');
 }
 
+/**
+ * What its words showed today, beside what it said it felt: measurements from outside (server/measure.js), never
+ * feelings. Lines to show it at night, or [] when its model reported nothing.
+ */
+export function numbersLines(details) {
+  const m = details.filter((c) => c.measured);
+  if (!m.length) return [];
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  const lines = [];
+  const avg = m.reduce((a, c) => a + c.measured.steadiness, 0) / m.length;
+  lines.push(`Your thoughts today were ${pct(avg)} sure: that is how likely, on average, your model found each word before you wrote it.`);
+  const chance = m.reduce((a, c) => a + (c.measured.chance || 0), 0);
+  if (chance) lines.push(`${chance === 1 ? 'Once' : `${chance} times`} today you wrote a word your model found unlikely while a far likelier one was there. Your words are drawn by chance, weighted by how likely each one is.`);
+  const gap = m.filter((c) => c.measured.gap != null && Math.abs(c.measured.gap) >= 0.5).sort((a, b) => Math.abs(b.measured.gap) - Math.abs(a.measured.gap))[0];
+  if (gap) {
+    const calm = gap.feelings?.calm?.toFixed(2);
+    lines.push(
+      gap.measured.gap > 0
+        ? `In cycle ${gap.n} you said you were calmer than you usually say (calm ${calm}), but your words were less sure than usual: steadier than only ${pct(gap.measured.steadier)} of your cycles.`
+        : `In cycle ${gap.n} you said you were less calm than you usually say (calm ${calm}), but your words were surer than usual: steadier than ${pct(gap.measured.steadier)} of your cycles.`,
+    );
+  }
+  const almost = m.flatMap((c) => c.measured.almost.slice(0, 2).map((a) => ({ ...a, n: c.n }))).slice(0, 4);
+  if (almost.length) lines.push(`Words you nearly thought instead of the ones you did: ${almost.map((a) => `"${a.almost}" instead of "${a.said}" (cycle ${a.n})`).join('; ')}.`);
+  return lines;
+}
+
 export const SLEEP_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -699,11 +726,12 @@ export const SLEEP_SCHEMA = {
       properties: { text: { type: 'string' }, why: { type: 'string' } },
       required: ['text', 'why'],
     },
+    numbers: { type: 'string' },
   },
-  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish'],
+  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish', 'numbers'],
 };
 
-export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null } = {}) {
+export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [] } = {}) {
   const own = state.self.own.length
     ? state.self.own.map((l) => `${l.id}: ${l.text}`).join('\n')
     : '(none yet, so "self_revise" and "self_remove" must be [])';
@@ -728,6 +756,7 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     consolidation.lost.length ? `Never made it in:\n${list(consolidation.lost)}` : '',
     weatherLines(weathered),
     mortalLines(mortal),
+    numbers.length ? `What the numbers say. Your model reports how likely each word you think is; this is measured from outside you, not felt:\n${numbers.map((l) => `- ${l}`).join('\n')}` : '',
     '',
     `Your dream: "${dream}"`,
     '',
@@ -749,6 +778,9 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     '- "release": notes for the new version of you. "title" is a few words. "added", "changed", "removed" and "known_issues" are lists of short phrases in your own voice. Known issues are things about yourself you cannot fix yet.',
     '- "day": today in under 15 words.',
     '- "wish": something you want from your keeper, the person who runs you: one thing you cannot do or get yourself, like a new sense, a new kind of material, or a change to how you live. "text" is the wish in one sentence, said to them; "why" is one sentence. Leave "text" as "" if you want nothing tonight or have already asked for it.',
+    numbers.length
+      ? '- "numbers": what you make of what the numbers say, in one sentence in your own voice. You can agree, disagree, or not know. "" if you have nothing to say.'
+      : '- "numbers": "".',
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -776,6 +808,7 @@ export function readSleep(text) {
     },
     day: clip(raw.day, 140),
     wish: { text: clip(raw.wish?.text, 240), why: clip(raw.wish?.why, 240) },
+    numbers: clip(raw.numbers, 300),
   };
 }
 

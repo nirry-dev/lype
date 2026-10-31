@@ -35,6 +35,7 @@ The project was called Iterant until its creature chose its own name: on the nig
 | **Moderation** | Letters are screened before it reads them or anyone sees them: rules hold links and contact details at the door, then the model screens the rest; anything doubtful waits in a queue for its keeper. Its replies are screened too, and are never streamed live before they pass. |
 | **Tiredness** | Doing the same thing three cycles running tires that part of it, and that choice is taken away for one cycle (resting never tires). Without this, small models draw forever; with it, they start writing, and asking you things. |
 | **Feelings** | Lonely, curious, calm, warm toward people, restless. Partly mechanical (no letters make it lonelier, waiting makes it restless, sleep calms it), partly self-reported, and capped at ±0.25 per cycle. Its colour on screen follows them: blue when lonely, amber when warm, violet when it sleeps. |
+| **What its words show** | Its feelings are partly what it says about itself, so they are also measured from outside. llama.cpp reports how likely each word of its thought was and which words it nearly wrote instead. From that, each cycle records three things. One is how sure its thought was (the average likelihood of its words). Another is where it was torn between two words that mean something (shown on the page, faint and struck through, just before the word it chose: "I feel ~~small~~ empty"). The last is how often it wrote a word by chance (an unlikely word picked while a likelier one was there, because its words are sampled). These are set beside how calm it says it is, both against its own history, so a cycle where it says it is calmer than usual while its words are less sure than usual is flagged. At night it is shown the numbers and its close calls, and it says what it makes of them; it may disagree. The measurements are sealed with the cycle. A backend that reports no probabilities (Claude) simply has none. |
 | **Courtesy** | It shares the GPU with its human. Before waking it checks: if another model is loaded in the router, it waits rather than evict it; if the card is busy with someone else's work, it waits. Those waits are part of its history, and it is told about them when it next wakes. |
 
 ## What you see
@@ -98,6 +99,7 @@ A static copy is always a little behind. The [relay](relay/README.md) (a small C
 | `brain.backend` | `openai` (any OpenAI-compatible server), `anthropic` (Claude), or `mock` |
 | `brain.baseUrl`, `brain.model` | where it thinks, and with which model id |
 | `brain.apiKeyFile` / `apiKeyEnv` | API key for the model server (read at runtime, never logged) |
+| `brain.logprobs` | asks the model server for each word's probability while it thinks (default `true`), for "what its words show"; a server that refuses the request is asked once and then never again |
 | `brain.noThinking` | sends `chat_template_kwargs.enable_thinking=false` (Qwen-style templates) so turns stay short |
 | `rhythm.cycleMinutes`, `jitter`, `nightEvery` | how often it wakes, and how many cycles make a day |
 | `courtesy.*` | GPU-busy threshold, whether it may evict another loaded model, retry delay |
@@ -124,6 +126,7 @@ server/
   life.js         the rhythm, a cycle as one transaction, the night, drift guard, influence tracing
   mind.js         the system prompt (seed, its beliefs, portrait, memories, feelings, voice) and every phase's prompt + JSON schema
   memory.js       finite shelves, half-life decay, nightly competition, visible forgetting
+  measure.js      what its words show: how sure each thought was, its close calls between words, chance picks
   world.js        its place (placement, names, nightly wear and ruins, what a child inherits) and its wishes
   errands.js      errands (limits, safety rules, keeper decisions) and cleaning photos of their metadata
   moderation.js   rules at the door and the model's screen, for letters and replies

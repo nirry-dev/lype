@@ -9,6 +9,7 @@ import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, wor
 import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
+import { compare, measure } from './measure.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
 import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, placeNear, untoldAnswers, weather } from './world.js';
@@ -87,6 +88,8 @@ export function cycleSummary(c) {
     mood: c.moodAfter,
     letters: c.letters.map((l) => l.id),
     replies: c.replies.length,
+    steady: c.measured?.steadiness ?? null, // how sure its words were (server/measure.js)
+    saidCalm: c.feelings?.calm ?? null, // how calm it said it was
   };
 }
 
@@ -815,8 +818,10 @@ export class Life extends EventEmitter {
 
     this.live.reading = chosen.map((l) => ({ id: l.id, from: l.from }));
     this.setPhase(chosen.length ? 'reading' : 'thinking', chosen.length ? `a letter from ${listNames(chosen.map((l) => l.from))}` : '');
-    const thought = await this.brain.complete({ kind: 'think', system, user: mind.thinkPrompt(ctx), maxTokens: 360, onToken: (t) => this.stream('think', t) });
+    const thought = await this.brain.complete({ kind: 'think', system, user: mind.thinkPrompt(ctx), maxTokens: 360, probe: true, onToken: (t) => this.stream('think', t) });
     const monologue = mind.cleanProse(thought.text, 1400) || '…';
+    // How sure it was of each word of that thought, and the words it nearly thought instead (when its model says).
+    const measured = measure(thought.tokens);
 
     this.setPhase('deciding');
     const can = { canTend: ctx.world.count > 0, canErrand: ctx.errands.canPost };
@@ -1002,6 +1007,7 @@ export class Life extends EventEmitter {
       reinforced,
       moodBefore,
       moodAfter: { ...s.mood },
+      ...(measured ? { measured: { ...measured, ...compare({ measured, feelings: reflection.feelings }, this.cycles) } } : {}),
     };
     this.store.write(`cycles/${pad(n)}.json`, this.seal('cycle', n, record));
     this.notes = [];
@@ -1216,7 +1222,7 @@ export class Life extends EventEmitter {
     const details = [];
     for (let n = from; n <= to; n++) {
       const c = this.store.read(`cycles/${pad(n)}.json`, null);
-      if (c) details.push({ n, what: whatText(cycleSummary(c)), diary: c.diary, letters: c.letters });
+      if (c) details.push({ n, what: whatText(cycleSummary(c)), diary: c.diary, letters: c.letters, measured: c.measured || null, feelings: c.feelings });
     }
     const dayLetters = details.flatMap((d) => d.letters);
     this.live = { night: version, phase: 'dreaming', dream: '' };
@@ -1243,11 +1249,12 @@ export class Life extends EventEmitter {
       });
       const dream = mind.cleanProse(dreamRaw.text, 900);
 
+      const numbers = mind.numbersLines(details);
       this.setPhase('rewriting', `becoming version ${version}`);
       const sleepRaw = await this.brain.complete({
         kind: 'sleep',
         system,
-        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal }),
+        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal, numbers }),
         maxTokens: 1600,
         temperature: 0.7,
         schema: mind.SLEEP_SCHEMA,
@@ -1298,6 +1305,8 @@ export class Life extends EventEmitter {
         self,
         portrait,
         name,
+        // What its words showed today beside what it said it felt, and what it made of that.
+        ...(numbers.length ? { numbers: { shown: numbers, answer: plan.numbers } } : {}),
         ...(chosen && !chosen.name ? { naming: { tries: chosen.tries, candidates: chosen.candidates } } : {}),
         influences,
         world: weathered,

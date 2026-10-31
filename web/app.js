@@ -623,7 +623,7 @@ async function openCycle(n) {
     c.notes?.length ? h('p', { class: 'muted' }, c.notes.join(' ')) : null,
     section('The machine', h('div', { class: 'senses', style: 'border:0;padding:0' }, sensesLine(c.senses))),
     c.letters.length ? section('It read', h('div', { class: 'feed' }, c.letters.map(letterView))) : null,
-    section('It thought', h('p', { class: 'monologue' }, c.monologue)),
+    section('It thought', h('p', { class: 'monologue' }, ...withAlmost(c.monologue, c.measured?.almost)), h('p', { class: 'measured' }, measuredLine(c))),
     section({ drawing: 'It drew', writing: 'It wrote', question: 'It asked', errand: 'It sent people on an errand', building: 'It built', tending: 'It tended its place' }[c.work?.kind] || 'It rested', workView(c)),
     section('Its diary', h('p', { class: 'voice', style: 'font-size:18px;margin:0' }, c.diary)),
     c.remembered.length
@@ -689,7 +689,7 @@ async function renderNow(current) {
             )
           : null,
         lifeCard(),
-        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('span', { class: 'label', id: 'thought-label' }), h('span', { class: 'meta', id: 'thought-meta' })), h('p', { class: 'monologue', id: 'monologue' })),
+        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('span', { class: 'label', id: 'thought-label' }), h('span', { class: 'meta', id: 'thought-meta' })), h('p', { class: 'monologue', id: 'monologue' }), h('p', { class: 'measured', id: 'measured' })),
         h('div', { class: 'card', id: 'making-card' }),
         h('div', { class: 'feed', id: 'exchange' }),
         h('div', { class: 'diary', id: 'diary' }),
@@ -753,6 +753,48 @@ function renderSenses() {
   if (el) fill(el, ...sensesLine(app.state.senses));
 }
 
+/**
+ * A thought with the words it almost thought instead, struck through and faint just before the words it chose.
+ * Each close call names the word it wrote and which time that word appears (server/measure.js).
+ */
+function withAlmost(text, almost) {
+  if (!almost?.length) return [text];
+  const marks = [];
+  for (const a of almost) {
+    const re = new RegExp(`(^|[^\\p{L}])(${a.said.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?![\\p{L}])`, 'giu');
+    const hit = [...text.matchAll(re)][a.nth];
+    if (hit) marks.push({ at: hit.index + hit[1].length, a });
+  }
+  marks.sort((x, y) => x.at - y.at);
+  const out = [];
+  let i = 0;
+  for (const { at, a } of marks) {
+    if (at < i) continue;
+    out.push(text.slice(i, at), h('s', { class: 'almost', title: `it nearly thought “${a.almost}” (${Math.round(a.q * 100)}%) instead of “${a.said}” (${Math.round(a.p * 100)}%)` }, a.almost), ' ');
+    i = at;
+  }
+  out.push(text.slice(i));
+  return out;
+}
+
+/** How sure its words were, beside what it said it felt: both against its own history. */
+function measuredLine(c) {
+  const m = c.measured;
+  if (!m) return null;
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  const calm = c.feelings?.calm ?? c.mood?.calm;
+  return [
+    h('b', {}, 'Measured: '),
+    `its model gave each word of this thought a ${pct(m.steadiness)} chance on average`,
+    m.steadier != null ? ` (steadier than ${pct(m.steadier)} of its cycles)` : '',
+    calm != null ? `. It said it felt calm ${calm.toFixed(2)}${m.calmer != null ? `, calmer than it says in ${pct(m.calmer)} of them` : ''}` : '',
+    '. ',
+    m.gap != null && Math.abs(m.gap) >= 0.5 ? h('span', { class: 'gap' }, m.gap > 0 ? 'It said it was calmer than its words were. ' : 'Its words were steadier than it said it was. ') : null,
+    m.hesitations ? `It was torn between two words ${m.hesitations === 1 ? 'once' : `${m.hesitations} times`}. ` : 'It was never torn between two words. ',
+    m.chance ? `${m.chance === 1 ? 'One word was' : `${m.chance} words were`} chance: unlikely, picked while a likelier one was there.` : '',
+  ];
+}
+
 /** Refresh the Now view. While tokens stream in, only the parts that are being written change. */
 function updateNow({ streaming = false } = {}) {
   if (app.view !== 'now' || !$('#monologue')) return;
@@ -798,7 +840,9 @@ function updateNow({ streaming = false } = {}) {
   }
   $('#thought-label').textContent = label;
   $('#thought-meta').textContent = meta || '';
-  mono.textContent = text;
+  const shown = text === latest?.monologue && !awake && !night ? latest : null;
+  fill(mono, ...(shown ? withAlmost(text, shown.measured?.almost) : [text]));
+  fill($('#measured'), shown ? measuredLine(shown) : null);
   mono.classList.toggle('caret', typing);
   mono.classList.toggle('stale', !awake && !night);
 
@@ -2384,6 +2428,15 @@ function versionCard(n, j) {
               n.world.worn.map((t) => h('li', { class: 'mod' }, h('span', { class: 'sign' }, '~'), h('span', {}, h('q', {}, t.name), h('span', { class: 'because' }, `wearing away (${Math.round(t.condition * 100)}% left)`)))),
             ),
           ]
+        : null,
+      n.numbers
+        ? h(
+            'div',
+            { class: 'numbers' },
+            h('div', { class: 'label', style: 'margin-bottom:6px' }, 'What the numbers told it'),
+            h('ul', { class: 'list-plain' }, n.numbers.shown.map((l) => h('li', { class: 'meta' }, l))),
+            n.numbers.answer ? h('p', { class: 'voice', style: 'margin:6px 0 0' }, `“${n.numbers.answer}”`) : null,
+          )
         : null,
       n.mortality?.fading && !n.mortality.last ? h('p', { class: 'meta' }, `It was fading: no letter for ${n.mortality.quiet} nights; ${n.mortality.left} more and its life would end.`) : null,
       n.will ? [h('div', { class: 'label', style: 'margin-bottom:8px' }, 'Its last night: what it left its child'), willView(n.will, app.state.name)] : null,
