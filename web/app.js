@@ -364,7 +364,7 @@ function renderChrome() {
   $('#brand-dot').style.setProperty('--dot', moodColor(s.mood));
   const palMode = $('#admin-pals');
   if (palMode && s.pals && document.activeElement !== palMode) palMode.value = s.pals.mode;
-  document.title = s.name || 'Lype';
+  document.title = s.name || 'An unnamed mind';
   for (const a of $$('#tabs a')) {
     if (a.dataset.view === app.view) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
