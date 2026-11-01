@@ -4,6 +4,7 @@ import { publicSeal } from '../web/lib/seal.js';
 import { pad } from './store.js';
 import { borrowed, loadCatalogue } from './models.js';
 import { CARD } from './world.js';
+import { MADE_BY } from './maker.js';
 
 const spriteSrc = (n) => (n ? `works/${pad(n)}.svg` : null);
 
@@ -78,12 +79,14 @@ export function world(life) {
       sprite: spriteSrc(t.sprite),
       form: form || null,
       borrowed: borrowed(life.catalogue, form),
+      made: life.maker.status((form?.parts || []).filter((p) => p.made).map((p) => p.made)),
       from: t.from.filter((id) => readable.has(id)).map((id) => ({ id, from: readable.get(id) })),
       people: t.people,
       ...(t.builtBy ? { builtBy: t.builtBy } : {}),
       history: t.history,
     })),
     credit: things.some(([, form]) => form?.parts.some((p) => p.model)) ? life.catalogue.credit : null,
+    madeBy: things.some(([, form]) => form?.parts.some((p) => p.made)) ? MADE_BY : null,
     wishes: s.wishes.map(publicWish).reverse(),
   };
 }

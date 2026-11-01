@@ -5,6 +5,7 @@ import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, 
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
 import { formSchema, readForm, standing } from '../web/lib/form.js';
 import { loadCatalogue, shortlist } from './models.js';
+import { Maker } from './maker.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
@@ -159,6 +160,7 @@ export class Life extends EventEmitter {
     this.store = store;
     this.brain = brain;
     this.state = store.read('state.json', null);
+    this.maker = new Maker(config, store);
     this.letters = store.read('letters.json', []);
     this.journal = store.read('journal.json', []);
     this.cycles = store.list('cycles').map((f) => cycleSummary(store.read(`cycles/${f}`)));
@@ -750,6 +752,31 @@ export class Life extends EventEmitter {
     return { ok: true };
   }
 
+  /**
+   * What it asked to be made, made while the card is free, one thing after a cycle: only when nothing but its own model
+   * (or a sibling's, resting) is on the card and the card is idle. Its model is put down for it, and picked up again at
+   * its next wake. It is told, at that wake, that what it described now stands where it put it.
+   */
+  async makeWaiting() {
+    const next = this.maker.enabled && this.brain.loaded && this.maker.waiting()[0];
+    if (!next) return;
+    const ours = new Set([this.cfg.brain.model, this.cfg.brain.eyes, ...(this.cfg.courtesy.household || [])].filter(Boolean));
+    const onCard = await this.brain.loaded();
+    if (onCard.some((m) => !ours.has(m))) return; // someone else's model: not now
+    const senses = await readSenses();
+    if (senses.gpu && senses.gpu.util > this.cfg.courtesy.maxGpuBusy) return; // the card is working for someone
+    for (const m of onCard) await this.brain.unload(m);
+    for (let i = 0; i < 30 && (await this.brain.loaded()).length; i++) await new Promise((r) => setTimeout(r, 500));
+    this.setPhase('making', next.describe);
+    const done = await this.maker.makeOne();
+    if (done?.status === 'made') {
+      const where = this.state.world.things.find((t) => t.form?.parts.some((p) => p.made === done.id));
+      this.notes.push(`Something you asked to be made has been made: "${done.describe}". It stands ${where ? `in "${where.name}"` : 'in your place'}, where you put it. You cannot see it; another model drew it from your words and a third made it solid.`);
+      this.journalAdd({ kind: 'made', text: `What it described was made: "${done.describe}".`, made: done.id });
+      this.milestone('first-made', `Something it described was made for the first time: "${done.describe}".`);
+    } else if (done) this.journalAdd({ kind: 'made', text: `What it described could not be made this time: "${done.describe}".`, made: done.id, failed: true });
+  }
+
   recordWait(check) {
     this.state.stats.waits++;
     this.waits[check.reason] = (this.waits[check.reason] || 0) + 1;
@@ -783,6 +810,7 @@ export class Life extends EventEmitter {
       await this.screenLetters();
       await this.runCycle(senses);
       if (this.state.cycle - this.state.lastNightCycle >= this.cfg.rhythm.nightEvery) await this.runNight();
+      await this.makeWaiting();
       return { ok: true };
     } catch (err) {
       this.state.stats.faltered++;
@@ -1229,15 +1257,15 @@ export class Life extends EventEmitter {
     const raw = await this.brain.complete({
       kind: 'form',
       system,
-      user: mind.formPrompt(title, what, { kind, before: shown, models }),
+      user: mind.formPrompt(title, what, { kind, before: shown, models, made: this.maker.enabled }),
       maxTokens: 2000,
       temperature: 0.7,
-      schema: formSchema(models),
+      schema: formSchema(models, { made: this.maker.enabled }),
       onToken: (t) => this.stream('form', t),
     });
     const offered = new Set(models);
     const model = (name) => (offered.has(name) ? this.catalogue.byName.get(name)?.id || null : null); // only what it was offered
-    return readForm(raw.text, { model });
+    return readForm(raw.text, { model, made: (words) => this.maker.request(words, { cycle: s.cycle }) });
   }
 
   /** It goes back to something it built: what it does to it, and a new drawing if it looks different now. */
@@ -1502,20 +1530,20 @@ export class Life extends EventEmitter {
     const state = newName ? { ...s, name: newName } : s;
     const memories = [...Object.values(s.memory.shelves).flat(), ...s.memory.today].map((m) => m.text);
     const models = shortlist(this.catalogue, { about: [state.name || '', s.portrait?.text || '', ...s.self.own.map((l) => l.text)].join(' '), thoughts: [dream, ...memories].join(' ') });
-    const schema = formSchema(models);
+    const schema = formSchema(models, { made: this.maker.enabled });
     schema.properties.why = { type: 'string' };
     schema.required = [...schema.required, 'why'];
     const raw = await this.brain.complete({
       kind: 'body',
       system,
-      user: mind.bodyPrompt(state, dream, models),
+      user: mind.bodyPrompt(state, dream, models, { made: this.maker.enabled }),
       maxTokens: 2000,
       temperature: 0.8,
       schema,
       onToken: (t) => this.stream('body', t),
     });
     const offered = new Set(models);
-    const form = readForm(raw.text, { model: (n) => (offered.has(n) ? this.catalogue.byName.get(n)?.id || null : null) });
+    const form = readForm(raw.text, { model: (n) => (offered.has(n) ? this.catalogue.byName.get(n)?.id || null : null), made: (words) => this.maker.request(words, { cycle: s.cycle }) });
     return { form, why: mind.clip(mind.parseJson(raw.text)?.why, 300) || '' };
   }
 

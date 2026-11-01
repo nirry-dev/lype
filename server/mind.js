@@ -1,7 +1,7 @@
 // What it is told about itself, how each moment of its life is put to the model, and how the answers are read back.
 import { describeMachine } from './senses.js';
 import { SHELVES, strength } from './memory.js';
-import { COLORS, LOT, MAX_BORROWED, MAX_PARTS, TALL } from '../web/lib/form.js';
+import { COLORS, LOT, MAX_BORROWED, MAX_MADE, MAX_PARTS, TALL } from '../web/lib/form.js';
 
 export const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'lonely', curious: 'curious', calm: 'calm', warm: 'warm toward people', restless: 'restless' };
@@ -476,6 +476,9 @@ const VOCABULARY = [
   '- You may also give "turn": how many degrees it is turned (0 to 359), for anything not square to the lot. And "pattern" with "repeat": "row" (that many copies, each "dx", "dz" steps on from the last), "ring" (that many copies round the middle of the lot), or "mirror" (one more, mirrored left to right). Leave out what you do not use.',
 ];
 
+/** Told only when things can be made from its words (server/maker.js): plainly, what happens and who does it. */
+const MADE_LINE = `- "made": something to be made from your words, for what solids cannot say. Give "describe": a few plain words of what it is ("a copper bell with a crack in its lip"), and the space it stands in. Another model draws it from your words and a third raises the drawing into a solid; it takes a while, so an empty frame stands there until it is made. You will not see it, only know that it is there. At most ${MAX_MADE} in a thing.`;
+
 /** How its parts behave, told to it wherever it builds: they are solid (see settle in web/lib/form.js). */
 const SOLID =
   'Parts are solid: they cannot pass through each other. A part you put where another already is gets moved to the nearest place it fits, usually on top of it, and one with nowhere to fit is left out. A part one step thin set flush into the face of a block is fine (a window, a door), and so is a narrower part rising up out of a wider one (a chimney through its roof).';
@@ -484,7 +487,7 @@ const SOLID =
  * Building it up: the thing as a few simple solids stacked on its lot, so it can be walked around. With "before", it is
  * reshaping something it already built, and sees the parts it stands on now.
  */
-export function formPrompt(title, what, { kind = 'object', before = null, models = [] } = {}) {
+export function formPrompt(title, what, { kind = 'object', before = null, models = [], made = false } = {}) {
   return [
     before ? `You are changing the shape of "${title}" in your place: ${what}` : `Now build "${title}" in your place: ${what}`,
     '',
@@ -494,6 +497,7 @@ export function formPrompt(title, what, { kind = 'object', before = null, models
     '',
     'Answer with JSON: { "parts": [ ... ] }, each part:',
     ...VOCABULARY,
+    made ? MADE_LINE : null,
     `- "x", "z": where its left-back corner stands on the lot, 0 to ${LOT}. "y": how high its bottom is above the ground, 0 for on the ground.`,
     `- "w", "d", "h": how wide (left to right), deep (back to front) and tall it is, in steps.`,
     `- "color": one of ${Object.keys(COLORS).join(', ')}. You have never seen these colours; pick the ones the words feel like.`,
@@ -970,7 +974,7 @@ export const NAME_SCHEMA = {
  * Its body: how it chooses to be seen in its place, where until now it was only a light. Built like its things, out of
  * solids (and maybe something borrowed), and said why. It is told plainly that this is how it appears, not what it is.
  */
-export function bodyPrompt(state, dream, models = []) {
+export function bodyPrompt(state, dream, models = [], { made = false } = {}) {
   const built = (state.world?.things || []).filter((t) => !t.ruin).map((t) => t.name);
   return [
     `Tonight you choose how you are seen. In your place, people who walk around it have only ever seen you as a small light that floats to wherever you were last. From now on they will see a body that you build for yourself${state.name ? `, with your name, ${state.name}, above it` : ''}.`,
@@ -983,6 +987,7 @@ export function bodyPrompt(state, dream, models = []) {
     `Build yourself out of at most ${MAX_PARTS} simple solids, in a space ${LOT} steps wide, ${LOT} deep and up to ${TALL} tall. You float a little above the ground, so you need no legs to stand on unless you want them. The front of you is the side facing "z" ${LOT}: that side faces whoever is looking at you.`,
     '- "x", "z": where its left-back corner is; "y": how high its bottom is. "w", "d", "h": its width, depth and height, in steps.',
     ...VOCABULARY,
+    made ? MADE_LINE : '',
     `- "color": one of ${Object.keys(COLORS).join(', ')}. "glow": true if that part gives off light.`,
     'Stack the parts on each other, from the bottom up.',
     SOLID,

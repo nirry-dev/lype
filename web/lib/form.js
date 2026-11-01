@@ -17,6 +17,11 @@ export const PATTERNS = ['none', 'row', 'ring', 'mirror'];
 /** A part may instead be a ready-made model it borrows (see server/models.js), at most this many in one thing. */
 export const MODEL = 'model';
 export const MAX_BORROWED = 6;
+/** A part may instead be something made from its words (see server/maker.js), at most this many in one thing. */
+export const MADE = 'made';
+export const MAX_MADE = 2;
+/** A borrowed model or a made thing: a mesh that keeps its own proportions inside the space it is given. */
+export const isMesh = (shape) => shape === MODEL || shape === MADE;
 
 /** The colours it can build with: things it has been told about, never seen. */
 export const COLORS = {
@@ -42,8 +47,11 @@ export const COLORS = {
 
 const int = (lo, hi) => ({ type: 'integer', minimum: lo, maximum: hi });
 
-/** What it answers with. Offered models to borrow, a part may be "model" and name one of them ("none" otherwise). */
-export function formSchema(models = []) {
+/**
+ * What it answers with. Offered models to borrow, a part may be "model" and name one of them ("none" otherwise); able to
+ * have things made, a part may be "made" and "describe" it.
+ */
+export function formSchema(models = [], { made = false } = {}) {
   const borrow = models.length ? { model: { type: 'string', enum: ['none', ...models] } } : {};
   return {
     type: 'object',
@@ -57,7 +65,7 @@ export function formSchema(models = []) {
           type: 'object',
           additionalProperties: false,
           properties: {
-            shape: { type: 'string', enum: [...SHAPES, ...PIECES, ...(models.length ? [MODEL] : [])] },
+            shape: { type: 'string', enum: [...SHAPES, ...PIECES, ...(models.length ? [MODEL] : []), ...(made ? [MADE] : [])] },
             ...borrow,
             x: int(0, LOT),
             z: int(0, LOT),
@@ -74,6 +82,7 @@ export function formSchema(models = []) {
             pattern: { type: 'string', enum: PATTERNS },
             dx: int(-10, 10),
             dz: int(-10, 10),
+            ...(made ? { describe: { type: 'string', maxLength: 120 } } : {}),
           },
           required: ['shape', ...Object.keys(borrow), 'x', 'z', 'y', 'w', 'd', 'h', 'color', 'glow'],
         },
@@ -92,14 +101,23 @@ const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v)) 
  * model must be one `model(name)` knows (it gives the model's id), or the part is dropped; without `model` (on the
  * page, while it is still writing) its name is kept as written.
  */
-export function cleanPart(raw, { model = null } = {}) {
+export function cleanPart(raw, { model = null, made = null } = {}) {
   if (!raw || typeof raw !== 'object') return null;
+  // something to be made from its words: its id once the server has taken the words (on the page, the words alone)
+  let wanted = null;
+  if (raw.shape === MADE) {
+    const describe = typeof raw.describe === 'string' ? raw.describe.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    if (describe.length < 3) return null;
+    const id = made ? made(describe) : null;
+    if (made && !id) return null;
+    wanted = { describe, ...(id ? { made: id } : {}) };
+  }
   let borrowed = null;
   if (raw.shape === MODEL) {
     borrowed = model ? model(raw.model) : typeof raw.model === 'string' && raw.model !== 'none' ? raw.model.slice(0, 80) : null;
     if (!borrowed) return null;
   }
-  let shape = borrowed ? MODEL : SHAPES.includes(raw.shape) || PIECES.includes(raw.shape) ? raw.shape : 'block';
+  let shape = wanted ? MADE : borrowed ? MODEL : SHAPES.includes(raw.shape) || PIECES.includes(raw.shape) ? raw.shape : 'block';
   const w = clampInt(raw.w, 1, LOT);
   const d = clampInt(raw.d, 1, LOT);
   const h = clampInt(raw.h, 1, TALL);
@@ -125,6 +143,7 @@ export function cleanPart(raw, { model = null } = {}) {
     color: Object.hasOwn(COLORS, raw.color) ? raw.color : 'stone',
     glow: raw.glow === true,
     ...(borrowed ? { model: borrowed } : {}),
+    ...(wanted || {}),
     ...(turn ? { turn } : {}),
     ...(points ? { points } : {}),
     ...(pattern && (repeat > 1 || pattern === 'mirror') ? { pattern, repeat, dx: clampInt(raw.dx, -10, 10), dz: clampInt(raw.dz, -10, 10) } : {}),
@@ -258,7 +277,7 @@ function room(p, standing) {
   if (!hit(p).length) return p;
   const cost = (s) => Math.abs(s.x - p.x) + Math.abs(s.z - p.z) + (s.y - p.y) + (p.w - s.w) + (p.d - s.d);
   const inside = (s) => {
-    if (p.shape !== MODEL) return s;
+    if (!isMesh(p.shape)) return s;
     const w = Math.min(s.w, LOT - Math.max(0, s.x)) - Math.max(0, -s.x);
     const d = Math.min(s.d, LOT - Math.max(0, s.z)) - Math.max(0, -s.z);
     return w < 1 || d < 1 ? s : { ...s, x: Math.max(0, s.x), z: Math.max(0, s.z), w, d };
@@ -356,7 +375,7 @@ function standUp(parts) {
 export const standing = (form) => (!form?.parts?.length || form.solid ? form : { ...form, parts: settle(form.parts), solid: true });
 
 /** A shape from what it answered (JSON text or already parsed), or null if nothing in it can stand. */
-export function readForm(answer, { model = null } = {}) {
+export function readForm(answer, { model = null, made = null } = {}) {
   let raw = answer;
   if (typeof raw === 'string') {
     try {
@@ -368,11 +387,14 @@ export function readForm(answer, { model = null } = {}) {
   const seen = new Set();
   const written = [];
   let lent = 0;
+  let asked = 0;
   for (const p of Array.isArray(raw?.parts) ? raw.parts : []) {
-    const c = cleanPart(p, { model });
+    if (p?.shape === MADE && asked >= MAX_MADE) continue; // asked of the maker only when it will be used
+    const c = cleanPart(p, { model, made });
     const key = c && JSON.stringify(c);
     if (!c || seen.has(key)) continue;
     if (c.shape === MODEL && ++lent > MAX_BORROWED) continue; // mostly its own work
+    if (c.shape === MADE) asked++;
     seen.add(key);
     written.push(c);
     if (written.length >= MAX_PARTS) break;

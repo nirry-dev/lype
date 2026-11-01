@@ -280,6 +280,19 @@ async function api(req, res, url) {
   return json(res, 404, { error: 'not found' });
 }
 
+/** Something made from its words, once it is made. */
+async function serveMade(res, path) {
+  const m = /^\/made\/([0-9a-f]{12})\.bin$/.exec(path);
+  if (!m || life.maker.read(m[1])?.status !== 'made') return json(res, 404, { error: 'not found' });
+  try {
+    const bin = await readFile(store.path(`made/${m[1]}.bin`));
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-content-type-options': 'nosniff', 'cache-control': 'public, max-age=86400' });
+    res.end(bin);
+  } catch {
+    json(res, 404, { error: 'not found' });
+  }
+}
+
 async function serveWork(res, path) {
   const m = /^\/works\/(\d{6})\.svg$/.exec(path);
   if (!m) return json(res, 404, { error: 'not found' });
@@ -344,6 +357,7 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://local');
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname.startsWith('/works/')) return await serveWork(res, url.pathname);
+    if (url.pathname.startsWith('/made/')) return await serveMade(res, url.pathname);
     if (url.pathname.startsWith('/returns/')) return await servePhoto(res, url);
     if (url.pathname.startsWith('/ancestors/')) return await serveAncestor(res, url.pathname);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });

@@ -91,6 +91,7 @@ const PHASE_TITLE = {
   writing: 'Writing',
   asking: 'Asking you something',
   building: 'Building something in its place',
+  making: 'Having something it described made',
   tending: 'Tending its place',
   resting: 'Letting the cycle pass',
   replying: 'Writing back',
@@ -2050,10 +2051,15 @@ function selectThing(id) {
 
 /** What a thing is made of: the solids it stacked itself, and what it borrowed (and from whom). */
 function builtOf(t) {
-  const own = t.form.parts.filter((p) => p.shape !== 'model').length;
+  const own = t.form.parts.filter((p) => p.shape !== 'model' && p.shape !== 'made').length;
   const mine = `${own} solid${own === 1 ? '' : 's'} it chose and stacked itself`;
-  if (!t.borrowed?.length) return `Built of ${mine}.`;
-  return [`Built of ${mine}, and borrowed: ${t.borrowed.join(', ')}. `, h('span', { class: 'muted' }, app.world?.credit || '')];
+  const made = Object.values(t.made || {});
+  const madeText = made.length ? ` It asked for ${made.map((m) => `"${m.describe}"${m.status === 'made' ? '' : ' (still being made)'}`).join(' and ')} to be made from its words. ` : '';
+  if (!t.borrowed?.length && !made.length) return `Built of ${mine}.`;
+  return [
+    `Built of ${mine}${t.borrowed?.length ? `, and borrowed: ${t.borrowed.join(', ')}` : ''}.${madeText} `,
+    h('span', { class: 'muted' }, [t.borrowed?.length ? app.world?.credit : '', made.length ? app.world?.madeBy : ''].filter(Boolean).join(' ')),
+  ];
 }
 
 /** While it builds, the site on the map shows its drawing arriving shape by shape. */

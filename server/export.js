@@ -69,6 +69,15 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
     write(`data/cycles/${pad(c.n)}.json`, views.cycle(store, c.n));
     copyWork(c.n);
   }
+  // What it asked to be made, once made (and never the pictures they were made from).
+  for (const t of life.state.world.things) {
+    for (const p of t.form?.parts || []) {
+      const bin = p.made && store.path(`made/${p.made}.bin`);
+      if (!bin || !existsSync(bin)) continue;
+      mkdirSync(join(out, 'data/made'), { recursive: true });
+      copyFileSync(bin, join(out, `data/made/${p.made}.bin`));
+    }
+  }
   // Drawings it inherited with its place were made by its parent, not in any of its own cycles.
   for (const t of life.state.world.things) if (t.sprite) copyWork(t.sprite);
 

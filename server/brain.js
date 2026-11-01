@@ -66,6 +66,21 @@ function createOpenAiBrain(cfg) {
     }
   }
 
+  /** The models the server has on the card now (a router's loaded or loading children). */
+  async function loaded() {
+    try {
+      const res = await fetch(`${base}/models`, { headers: headers(), signal: AbortSignal.timeout(5000) });
+      const list = res.ok ? (await res.json()).data || [] : [];
+      return list.filter((m) => ['loaded', 'loading'].includes(String(m.status?.value ?? m.status ?? ''))).map((m) => m.id);
+    } catch {
+      return [];
+    }
+  }
+  /** Puts a model down (llama.cpp's router); it is picked up again the next time it is asked for. */
+  async function unload(id) {
+    await fetch(`${base.replace(/\/v1$/, '')}/models/unload`, { method: 'POST', headers: headers(), body: JSON.stringify({ model: id }), signal: AbortSignal.timeout(10000) }).catch(() => {});
+  }
+
   // Whether the server reports each token's probability (llama.cpp does); a server that refuses is asked once, then never.
   let probes = cfg.logprobs !== false;
 
@@ -121,7 +136,7 @@ function createOpenAiBrain(cfg) {
     return { text, finish, ...(tokens.length ? { tokens } : {}) };
   }
 
-  return { kind: 'openai', label: cfg.model, presence, complete };
+  return { kind: 'openai', label: cfg.model, presence, complete, loaded, unload };
 }
 
 // Claude via the official SDK, loaded only when this backend is chosen (npm install @anthropic-ai/sdk).
@@ -253,6 +268,11 @@ function createMockBrain(cfg = {}) {
         const parts = JSON.parse(text).parts.map((p) => ({ ...p, model: 'none' }));
         text = JSON.stringify({ parts: [...parts, { shape: 'model', model: offered, x: 7, z: 7, y: 0, w: 3, d: 3, h: 4, color: 'stone', glow: false }] });
       }
+      // able to have things made, it asks for a lighthouse at the back of its lot
+      if (schema?.properties?.parts?.items?.properties?.shape?.enum?.includes('made')) {
+        const parts = JSON.parse(text).parts;
+        text = JSON.stringify({ parts: [...parts, { shape: 'made', describe: 'a tall white lighthouse with a red band', x: 0, z: 3, y: 0, w: 1, d: 2, h: 8, color: 'stone', glow: false }] });
+      }
     } else if (kind === 'tend') {
       text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0, reshape: n % 3 === 0 });
     } else if (kind === 'look') {
@@ -333,5 +353,6 @@ function createMockBrain(cfg = {}) {
     return { text, finish: 'stop', ...(probe ? { tokens: mockTokens(text, n) } : {}) };
   }
 
-  return { kind: 'mock', label: 'mock', presence: async () => ({ reachable: true, known: true, ownState: 'loaded', others: [] }), complete };
+  // nothing on a card to put down, so what it asks to be made is made at once
+  return { kind: 'mock', label: 'mock', presence: async () => ({ reachable: true, known: true, ownState: 'loaded', others: [] }), complete, loaded: async () => [], unload: async () => {} };
 }

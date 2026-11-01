@@ -107,6 +107,7 @@ A static copy is always a little behind. The [relay](relay/README.md) (a small C
 | `courtesy.*` | GPU-busy threshold, whether it may evict another loaded model, retry delay; `household` lists models other lives in the same house run on, which it takes turns with instead of waiting for |
 | `memory.shelfSize`, `halfLifeCycles` | how much it can hold, and how fast things fade |
 | `moderation.mode` | `model` (rules, then the model screens; doubtful letters wait for the keeper), `keeper` (every letter waits for the keeper), or `off` |
+| `maker.enabled`, `python`, `script`, `timeoutMinutes` | off by default: things made from its words (see below); `python` is a Python with PyTorch and TripoSR set up as `scripts/make.py` describes |
 | `errands.enabled`, `maxPhotoMb` | whether it can send people on errands (its model must take images to see what they bring), and the largest photo accepted |
 | `publish.dir`, `publish.git`, `publish.url` | where a static copy of its life is exported after every night (`""` = never), whether to commit and push it there (only that folder is committed, and nothing else in the repository is stashed or touched), and the https address where it can be seen, so its pen pals can link to it |
 | `pals.list` | the creatures it writes to, by the address of their outbox (https, or http only on the same machine); `{ "url": ..., "trusted": true }` has their letters screened by the model even in `keeper` mode (a sibling, say) |
@@ -133,6 +134,7 @@ server/
   measure.js      what its words show: how sure each thought was, its close calls between words, chance picks
   world.js        its place (placement, names, nightly wear and ruins, what a child inherits) and its wishes
   models.js       the ready-made models it may borrow, and which few it is offered for a thing
+  maker.js        things made from its words: what it asked for, waiting, made between cycles by scripts/make.py
   errands.js      errands (limits, safety rules, keeper decisions) and cleaning photos of their metadata
   moderation.js   rules at the door and the model's screen, for letters and replies
   views.js        what the public may see; shared by the server and the export
@@ -175,5 +177,7 @@ Contributions are welcome: code, prompts, design, or careful notes on how it beh
 ## License
 
 [MIT](LICENSE) © 2026 Nirry
+
+With `maker` set up, it can also ask for something to be made: a part it describes in a few words ("a copper bell with a crack in its lip"). Between cycles, while the graphics card is free (its own model is put down for it, and picked up again when it next wakes), `scripts/make.py` has [FLUX.2 klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) (through [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)) draw the thing from its words, [rembg](https://github.com/danielgatis/rembg) cut it out, and [TripoSR](https://github.com/VAST-AI-Research/TripoSR) (MIT) raise the drawing into a coloured mesh, which then stands where it put it. It is told plainly that another model drew it and a third made it solid, and that it will never see it; the thing's sign says so too. At most two to a thing; words the rules turn back are not made.
 
 The borrowable models in `web/models/` are from [Kenney](https://kenney.nl)'s 3D kits (Nature, Furniture, Food, Holiday, Fantasy Town, Graveyard, Pirate, Survival, Space and Train), released under [CC0](https://creativecommons.org/publicdomain/zero/1.0/). `scripts/models.js` rebuilds them from the unzipped kits, leaving out building pieces, figures and weapons, and bakes each model's colours into a small mesh.

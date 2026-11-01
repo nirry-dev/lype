@@ -62,6 +62,15 @@ const DEFAULTS = {
     enabled: true,
     maxPhotoMb: 3,
   },
+  maker: {
+    // Things made from its words (server/maker.js, scripts/make.py): an image model draws what it describes, and TripoSR
+    // raises the drawing into a mesh, between cycles while the card is free. Off unless "python" is a Python with
+    // PyTorch, TripoSR and its models (see scripts/make.py); then it is told it can ask for things to be made.
+    enabled: false,
+    python: '',
+    script: 'scripts/make.py',
+    timeoutMinutes: 15,
+  },
   publish: {
     // After each night, a static copy of its life is exported here ("" = never), and committed and pushed if "git" is true.
     dir: '',
@@ -143,6 +152,7 @@ export function loadConfig(argv = process.argv.slice(2)) {
   const at = (p) => (isAbsolute(expandHome(p)) ? expandHome(p) : join(ROOT, p));
   cfg.dataDir = at(cfg.dataDir);
   cfg.seedFile = at(cfg.seedFile);
+  cfg.maker = { ...cfg.maker, script: at(cfg.maker.script), python: cfg.maker.python ? expandHome(cfg.maker.python) : '' };
   // Only the configured life is published: never a mock, another --data folder, or the demo.
   const other = ['--mock', '--data', '--demo'].some((f) => argv.includes(f));
   cfg.publish = { ...cfg.publish, dir: cfg.publish.dir && !other ? at(cfg.publish.dir) : '' };

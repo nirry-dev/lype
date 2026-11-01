@@ -6,7 +6,10 @@
 // chose one, as a light), wandering from thing to thing while it rests, at its card while it thinks, at its building
 // site while it builds, and settled on the card at night. What it borrowed (ready-made models
 // from the catalogue in models/) stands among its own solids, in the colours it came in.
-import { COLORS, LOT, MODEL, formHeight, inlay, partialParts } from './lib/form.js';
+import { COLORS, LOT, MADE, formHeight, inlay, isMesh, partialParts } from './lib/form.js';
+
+/** Which mesh a part stands as: a borrowed model's id, or "made:<id>" for something made from its words. */
+const meshRef = (p) => (p.shape === MADE ? (p.made ? `made:${p.made}` : null) : p.model);
 import { moodRGB } from './presence.js';
 
 const PAPER = '#efe4d0';
@@ -668,12 +671,12 @@ function placedParts(t, form, dimsOf = () => null) {
   const out = [];
   form.parts.forEach((p, i) => {
     const salt = `${t.id}|${i}`;
-    const base = p.shape === MODEL ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
+    const base = isMesh(p.shape) ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
     const fade = t.ruin ? 0.75 : (1 - c) * 0.7;
     const color = base.map((v, k) => lerp(v, GREY[k], fade) * (t.ruin ? 0.8 : 1));
     const size = [(p.w / LOT) * SPAN, p.h / LOT, (p.d / LOT) * SPAN];
     // a borrowed model keeps its own proportions inside the space it was given
-    const dims = p.shape === MODEL && dimsOf(p.model);
+    const dims = isMesh(p.shape) && dimsOf(meshRef(p));
     if (dims) {
       const fit = Math.min(size[0] / dims[0], size[1] / dims[1], size[2] / dims[2]);
       for (let k = 0; k < 3; k++) size[k] = dims[k] * fit;
@@ -825,6 +828,23 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   function modelFor(ref) {
     if (!ref) return null;
     let id = ref;
+    if (ref.startsWith('made:')) {
+      const got = models.get(ref);
+      if (got) return typeof got === 'object' ? got : null;
+      models.set(ref, 'loading');
+      fetch(asset(`made/${ref.slice(5)}.bin`))
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+        .then((buf) => {
+          const { v, col, dims } = unpackModel(buf);
+          const colors = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, colors);
+          gl.bufferData(gl.ARRAY_BUFFER, col, gl.STATIC_DRAW);
+          models.set(ref, { mesh: mesh(gl, v), colors, dims });
+          refit();
+        })
+        .catch(() => setTimeout(() => models.delete(ref), 60000)); // not made yet: an empty frame, and ask again later
+      return null;
+    }
     if (!ref.includes('/')) {
       if (names === null) {
         names = 'loading';
@@ -950,8 +970,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
 
   /** A solid: lit by the sun or moon and the sky. A borrowed model not here yet is a faint box where it will stand. */
   function solid(shape, at, size, color, { yaw = 0, tilt = 0, glow = 0, alpha = 1, model = null, points = null } = {}) {
-    const m = shape === MODEL ? modelFor(model) : null;
-    if (shape === MODEL && !m) {
+    const m = isMesh(shape) ? modelFor(model) : null;
+    if (isMesh(shape) && !m) {
       draw(mat.model(at, yaw, tilt, size), meshes.block, tex.white, [...color, 0.18 * alpha], { shade: 1, depthWrite: false });
       return;
     }
@@ -1114,7 +1134,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const lift = th === selected ? 0.03 + (reduced ? 0 : 0.015 * Math.sin(t * 2.4)) : 0;
       for (const q of th.placed) {
         const at = [th.pos[0] + q.at[0], q.at[1] + lift, th.pos[2] + q.at[2]];
-        solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow ? 0.6 + night * 0.4 : 0, model: q.p.model, points: q.p.points });
+        solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow ? 0.6 + night * 0.4 : 0, model: meshRef(q.p), points: q.p.points });
         if (q.glow) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: Math.max(q.size[0], q.size[1], q.size[2]), color: q.color });
       }
       // its drawing, pinned to the front of its widest wall, as well as on its sign
@@ -1217,7 +1237,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const k = reduced ? 1 : clamp((now - site.parts[i].at) / 700, 0, 1);
       const ease = 1 - (1 - k) ** 3;
       const at = [x + q.at[0], q.at[1] - (1 - ease) * 0.35, z + q.at[2]];
-      solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, glow: q.glow ? 0.6 + night * 0.4 : (1 - ease) * 0.8, alpha: 0.35 + 0.65 * ease, model: q.p.model, points: q.p.points });
+      solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, glow: q.glow ? 0.6 + night * 0.4 : (1 - ease) * 0.8, alpha: 0.35 + 0.65 * ease, model: meshRef(q.p), points: q.p.points });
       if (q.glow) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: Math.max(...q.size), color: q.color });
       if (k < 1) {
         gl.uniform1f(prog.uLight, 1);
@@ -1404,7 +1424,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     const now = performance.now();
     form.parts.forEach((p, i) => {
       let size = [p.w * BODY, p.h * BODY, p.d * BODY];
-      const dims = p.shape === MODEL && dimsOf(p.model);
+      const dims = isMesh(p.shape) && dimsOf(meshRef(p));
       if (dims) {
         const fit = Math.min(size[0] / dims[0], size[1] / dims[1], size[2] / dims[2]);
         size = dims.map((v) => v * fit);
@@ -1413,11 +1433,11 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const oz = (p.z + p.d / 2 - LOT / 2) * BODY;
       const rise = form.live && !reduced ? 1 - (1 - clamp((now - creature.born[i]) / 700, 0, 1)) ** 3 : 1;
       const at = [cx + cos * ox + sin * oz, cy + p.y * BODY + bob - (1 - rise) * 0.2, cz - sin * ox + cos * oz];
-      const color = p.shape === MODEL ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
+      const color = isMesh(p.shape) ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
       const glow = p.glow ? 0.6 + night * 0.4 : form.live ? (1 - rise) * 0.8 : 0;
       const yaw = creature.heading - ((p.turn || 0) * Math.PI) / 180;
-      if (ghost) solid(p.shape, at, size, mood, { yaw, glow: 0.8, alpha: 0.32 * rise, model: p.model, points: p.points });
-      else solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw, glow, alpha: 0.35 + 0.65 * rise, model: p.model, points: p.points });
+      if (ghost) solid(p.shape, at, size, mood, { yaw, glow: 0.8, alpha: 0.32 * rise, model: meshRef(p), points: p.points });
+      else solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw, glow, alpha: 0.35 + 0.65 * rise, model: meshRef(p), points: p.points });
     });
     return formHeight(form) * LOT * BODY;
   }
@@ -1452,7 +1472,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     for (const th of things) {
       const t = th.t;
       // a borrowed model has no colour of its own to show here
-      const own = th.form?.parts.filter((p) => p.shape !== MODEL) || [];
+      const own = th.form?.parts.filter((p) => !isMesh(p.shape)) || [];
       const main = own.length ? COLORS[own.reduce((a, p) => (p.w * p.d * p.h > a.w * a.d * a.h ? p : a)).color] : th.form ? '#b9a98c' : PAPER;
       g.globalAlpha = t.ruin ? 0.5 : 0.6 + 0.4 * t.condition;
       g.fillStyle = t.ruin ? '#6b6763' : main;
