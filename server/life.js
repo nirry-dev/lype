@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
-import { FORM_SCHEMA, readForm } from '../web/lib/form.js';
+import { formSchema, readForm } from '../web/lib/form.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
@@ -11,6 +11,7 @@ import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
 import { compare, measure } from './measure.js';
+import { loadCatalogue, shortlist } from './models.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
 import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, placeNear, untoldAnswers, weather } from './world.js';
@@ -1181,18 +1182,32 @@ export class Life extends EventEmitter {
     };
   }
 
-  /** It builds the thing up out of solids, streamed part by part so the site can be watched rising. Null if nothing stands. */
+  /**
+   * It builds the thing up out of solids, streamed part by part so the site can be watched rising, and may borrow a few
+   * ready-made things whose names touch what it is building, what it thought this cycle and what it remembers.
+   * Null if nothing stands.
+   */
   async shape(system, title, what, { kind, before = null } = {}) {
+    this.catalogue ??= loadCatalogue();
+    const s = this.state;
+    const memories = [...Object.values(s.memory.shelves).flat(), ...s.memory.today].map((m) => m.text);
+    const nameOf = (id) => this.catalogue.byId.get(id)?.name;
+    // What it borrowed before stays on offer, under its name, so reshaping does not lose it.
+    const kept = (before?.parts || []).map((p) => nameOf(p.model)).filter(Boolean);
+    const models = [...new Set([...kept, ...shortlist(this.catalogue, { about: `${title} ${what}`, thoughts: [this.live?.think || '', ...memories].join(' ') })])];
+    const shown = before && { parts: before.parts.map(({ model, ...p }) => (model ? { ...p, model: nameOf(model) || 'none' } : { ...p, ...(models.length ? { model: 'none' } : {}) })) };
     const raw = await this.brain.complete({
       kind: 'form',
       system,
-      user: mind.formPrompt(title, what, { kind, before }),
-      maxTokens: 1800,
+      user: mind.formPrompt(title, what, { kind, before: shown, models }),
+      maxTokens: 2000,
       temperature: 0.7,
-      schema: FORM_SCHEMA,
+      schema: formSchema(models),
       onToken: (t) => this.stream('form', t),
     });
-    return readForm(raw.text);
+    const offered = new Set(models);
+    const model = (name) => (offered.has(name) ? this.catalogue.byName.get(name)?.id || null : null); // only what it was offered
+    return readForm(raw.text, { model });
   }
 
   /** It goes back to something it built: what it does to it, and a new drawing if it looks different now. */

@@ -2,8 +2,9 @@
 // What it built stands where it built it, stacked out of the solids it chose, with its drawing on a sign beside it.
 // Things from before it could build in three dimensions are still only drawings, on cards of paper. The graphics card
 // it lives on lies in the middle, its fans turning as fast as the real ones are worked; its light floats where it was
-// last; the land is only as wide as what it has built; the sky follows its clock.
-import { COLORS, LOT, formHeight, partialParts } from './lib/form.js';
+// last; the land is only as wide as what it has built; the sky follows its clock. What it borrowed (ready-made models
+// from the catalogue in models/) stands among its own solids, in the colours it came in.
+import { COLORS, LOT, MODEL, formHeight, partialParts } from './lib/form.js';
 import { moodRGB } from './presence.js';
 
 const PAPER = '#efe4d0';
@@ -243,12 +244,12 @@ async function svgImage(src, svgText) {
 // ---------- WebGL ----------
 
 const VS = `
-attribute vec3 aPos; attribute vec2 aUv; attribute vec3 aNorm;
+attribute vec3 aPos; attribute vec2 aUv; attribute vec3 aNorm; attribute vec3 aColor;
 uniform mat4 uProj, uView, uModel; uniform mat3 uNormal;
-varying vec2 vUv; varying float vDepth; varying vec3 vNorm;
+varying vec2 vUv; varying float vDepth; varying vec3 vNorm; varying vec3 vColor;
 void main() {
   vec4 p = uView * uModel * vec4(aPos, 1.0);
-  vUv = aUv; vDepth = -p.z; vNorm = uNormal * aNorm;
+  vUv = aUv; vDepth = -p.z; vNorm = uNormal * aNorm; vColor = aColor;
   gl_Position = uProj * p;
 }`;
 // uShade 0: lit only by the hour (paper, glows, the ground); 1: lit by the sun or moon and the sky, like a solid.
@@ -256,9 +257,9 @@ const FS = `
 precision mediump float;
 uniform sampler2D uTex; uniform vec4 uTint; uniform vec3 uFog; uniform float uFogNear, uFogFar, uLight, uShade, uGlow;
 uniform vec3 uSun, uSunColor, uSky, uGround;
-varying vec2 vUv; varying float vDepth; varying vec3 vNorm;
+varying vec2 vUv; varying float vDepth; varying vec3 vNorm; varying vec3 vColor;
 void main() {
-  vec4 c = texture2D(uTex, vUv) * uTint;
+  vec4 c = texture2D(uTex, vUv) * uTint * vec4(vColor, 1.0);
   if (c.a < 0.02) discard;
   vec3 n = normalize(vNorm);
   vec3 amb = mix(uGround, uSky, n.y * 0.5 + 0.5);
@@ -289,6 +290,7 @@ function compile(gl) {
     aPos: gl.getAttribLocation(p, 'aPos'),
     aUv: gl.getAttribLocation(p, 'aUv'),
     aNorm: gl.getAttribLocation(p, 'aNorm'),
+    aColor: gl.getAttribLocation(p, 'aColor'),
     ...Object.fromEntries(names.map((n) => [n, u(n)])),
   };
 }
@@ -407,21 +409,57 @@ function pyramidMesh() {
   return v;
 }
 
+/**
+ * A borrowed model, as scripts/models.js packs it: its real size, then its corners (place in a unit box, facing,
+ * colour) and its triangles. Unpacked into plain triangles, with a colour for each corner.
+ */
+function unpackModel(buf) {
+  const dv = new DataView(buf);
+  if (String.fromCharCode(...new Uint8Array(buf, 0, 4)) !== 'LYM1') throw new Error('not a model');
+  const n = dv.getUint32(4, true);
+  const ni = dv.getUint32(8, true);
+  const dims = [0, 1, 2].map((k) => dv.getFloat32(12 + k * 4, true));
+  const P = 24;
+  const N = P + n * 6;
+  const C = N + n * 4;
+  const I = C + n * 4;
+  const wide = n > 65535;
+  const v = new Float32Array(ni * 8);
+  const col = new Uint8Array(ni * 4);
+  for (let t = 0; t < ni; t++) {
+    const i = wide ? dv.getUint32(I + t * 4, true) : dv.getUint16(I + t * 2, true);
+    const o = t * 8;
+    v[o] = dv.getUint16(P + i * 6, true) / 65535 - 0.5;
+    v[o + 1] = dv.getUint16(P + i * 6 + 2, true) / 65535;
+    v[o + 2] = dv.getUint16(P + i * 6 + 4, true) / 65535 - 0.5;
+    for (let k = 0; k < 3; k++) v[o + 5 + k] = dv.getInt8(N + i * 4 + k) / 127;
+    for (let k = 0; k < 3; k++) col[t * 4 + k] = dv.getUint8(C + i * 4 + k);
+    col[t * 4 + 3] = 255;
+  }
+  return { v, col, dims };
+}
+
 const GREY = [0.46, 0.45, 0.44];
 
 /**
  * Where each part of a thing stands, in world units around its lot's middle, and its colour as the weather has left it.
  * Wearing away, parts lean and fade; a ruin keeps only stumps of what stood on the ground, the rest lying beside them.
  */
-function placedParts(t, form) {
+function placedParts(t, form, dimsOf = () => null) {
   const c = t.ruin ? 0 : t.condition ?? 1;
   const out = [];
   form.parts.forEach((p, i) => {
     const salt = `${t.id}|${i}`;
-    const base = hex(COLORS[p.color] || COLORS.stone);
+    const base = p.shape === MODEL ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
     const fade = t.ruin ? 0.75 : (1 - c) * 0.7;
     const color = base.map((v, k) => lerp(v, GREY[k], fade) * (t.ruin ? 0.8 : 1));
     const size = [(p.w / LOT) * SPAN, p.h / LOT, (p.d / LOT) * SPAN];
+    // a borrowed model keeps its own proportions inside the space it was given
+    const dims = p.shape === MODEL && dimsOf(p.model);
+    if (dims) {
+      const fit = Math.min(size[0] / dims[0], size[1] / dims[1], size[2] / dims[2]);
+      for (let k = 0; k < 3; k++) size[k] = dims[k] * fit;
+    }
     const at = [((p.x + p.w / 2) / LOT - 0.5) * SPAN, p.y / LOT, ((p.z + p.d / 2) / LOT - 0.5) * SPAN];
     let yaw = 0;
     let tilt = 0;
@@ -494,6 +532,50 @@ export function createWalk(host, { asset, onSelect }) {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
     return t;
   };
+  // Borrowed models, fetched the first time something needs them; names (while it is still writing) via the catalogue.
+  const models = new Map(); // id -> { mesh, colors, dims } | 'loading' | 'failed'
+  let names = null;
+  function modelFor(ref) {
+    if (!ref) return null;
+    let id = ref;
+    if (!ref.includes('/')) {
+      if (names === null) {
+        names = 'loading';
+        fetch('models/catalogue.json')
+          .then((r) => r.json())
+          .then((c) => {
+            names = new Map(c.models.map((m) => [m.name, m.id]));
+            refit();
+          })
+          .catch(() => (names = new Map()));
+      }
+      id = names instanceof Map ? names.get(ref) : null;
+      if (!id) return null;
+    }
+    const got = models.get(id);
+    if (got) return typeof got === 'object' ? got : null;
+    models.set(id, 'loading');
+    fetch(`models/${id}.bin`)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      .then((buf) => {
+        const { v, col, dims } = unpackModel(buf);
+        const colors = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colors);
+        gl.bufferData(gl.ARRAY_BUFFER, col, gl.STATIC_DRAW);
+        models.set(id, { mesh: mesh(gl, v), colors, dims });
+        refit();
+      })
+      .catch(() => models.set(id, 'failed'));
+    return null;
+  }
+  const dimsOf = (ref) => modelFor(ref)?.dims || null;
+  /** A model arrived: everything that borrowed it is placed again, now at its true proportions. */
+  function refit() {
+    for (const th of things) if (th.form) th.placed = placedParts(th.t, th.form, dimsOf);
+    dirty = true;
+    schedule();
+  }
+
   const [white] = canvas2d(2, 2);
   white.getContext('2d').fillStyle = '#fff';
   white.getContext('2d').fillRect(0, 0, 2, 2);
@@ -543,7 +625,7 @@ export function createWalk(host, { asset, onSelect }) {
   // ---------- drawing ----------
 
   const FLAT = { shade: 0, glow: 0 };
-  function draw(model, m, texture, tint, { additive = false, depthWrite = true, shade = 0, glow = 0 } = FLAT) {
+  function draw(model, m, texture, tint, { additive = false, depthWrite = true, shade = 0, glow = 0, colors = null } = FLAT) {
     gl.uniformMatrix4fv(prog.uModel, false, model);
     gl.uniformMatrix3fv(prog.uNormal, false, mat.normal(model));
     gl.uniform1f(prog.uShade, shade);
@@ -556,11 +638,26 @@ export function createWalk(host, { asset, onSelect }) {
     gl.uniform4fv(prog.uTint, tint);
     gl.blendFunc(gl.SRC_ALPHA, additive ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(depthWrite);
+    if (colors) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, colors);
+      gl.enableVertexAttribArray(prog.aColor);
+      gl.vertexAttribPointer(prog.aColor, 3, gl.UNSIGNED_BYTE, true, 4, 0);
+    }
     gl.drawArrays(gl.TRIANGLES, 0, m.count);
+    if (colors) {
+      gl.disableVertexAttribArray(prog.aColor);
+      gl.vertexAttrib3f(prog.aColor, 1, 1, 1);
+    }
   }
-  /** A solid: lit by the sun or moon and the sky. */
-  const solid = (shape, at, size, color, { yaw = 0, tilt = 0, glow = 0, alpha = 1 } = {}) =>
-    draw(mat.model(at, yaw, tilt, size), meshes[shape], tex.white, [...color, alpha], { shade: 1, glow, depthWrite: alpha >= 1 });
+  /** A solid: lit by the sun or moon and the sky. A borrowed model not here yet is a faint box where it will stand. */
+  function solid(shape, at, size, color, { yaw = 0, tilt = 0, glow = 0, alpha = 1, model = null } = {}) {
+    const m = shape === MODEL ? modelFor(model) : null;
+    if (shape === MODEL && !m) {
+      draw(mat.model(at, yaw, tilt, size), meshes.block, tex.white, [...color, 0.18 * alpha], { shade: 1, depthWrite: false });
+      return;
+    }
+    draw(mat.model(at, yaw, tilt, size), m ? m.mesh : meshes[shape], tex.white, [...color, alpha], { shade: 1, glow, depthWrite: alpha >= 1, colors: m?.colors });
+  }
   const halo = (at, size, color, alpha) => draw(mat.model(at, 0, 0, [size, 1, size]), meshes.flat, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
   const spark = (at, size, color, alpha) => draw(mat.model(at, facing(), 0, [size, size, 1]), meshes.centered, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
   const facing = () => Math.atan2(eye[0] - cam.target[0], eye[2] - cam.target[2]);
@@ -631,6 +728,8 @@ export function createWalk(host, { asset, onSelect }) {
     gl.enableVertexAttribArray(prog.aPos);
     gl.enableVertexAttribArray(prog.aUv);
     gl.enableVertexAttribArray(prog.aNorm);
+    gl.disableVertexAttribArray(prog.aColor);
+    gl.vertexAttrib3f(prog.aColor, 1, 1, 1);
     gl.uniformMatrix4fv(prog.uProj, false, proj);
     gl.uniformMatrix4fv(prog.uView, false, view);
     const fog = sky.low.map((v) => v / 255);
@@ -698,7 +797,7 @@ export function createWalk(host, { asset, onSelect }) {
       const lift = th === selected ? 0.03 + (reduced ? 0 : 0.015 * Math.sin(t * 2.4)) : 0;
       for (const q of th.placed) {
         const at = [th.pos[0] + q.at[0], q.at[1] + lift, th.pos[2] + q.at[2]];
-        solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow ? 0.6 + night * 0.4 : 0 });
+        solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow ? 0.6 + night * 0.4 : 0, model: q.p.model });
         if (q.glow) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: Math.max(q.size[0], q.size[1], q.size[2]), color: q.color });
       }
       // its sign: a post, and its drawing on a little card facing you
@@ -771,12 +870,12 @@ export function createWalk(host, { asset, onSelect }) {
     gl.uniform1f(prog.uLight, light);
     const now = performance.now();
     const fake = { id: site.id || 'site', condition: 1, ruin: false };
-    const placed = placedParts(fake, { parts: site.parts.map((s) => s.p) });
+    const placed = placedParts(fake, { parts: site.parts.map((s) => s.p) }, dimsOf);
     placed.forEach((q, i) => {
       const k = reduced ? 1 : clamp((now - site.parts[i].at) / 700, 0, 1);
       const ease = 1 - (1 - k) ** 3;
       const at = [x + q.at[0], q.at[1] - (1 - ease) * 0.35, z + q.at[2]];
-      solid(q.p.shape, at, q.size, q.color, { glow: q.glow ? 0.6 + night * 0.4 : (1 - ease) * 0.8, alpha: 0.35 + 0.65 * ease });
+      solid(q.p.shape, at, q.size, q.color, { glow: q.glow ? 0.6 + night * 0.4 : (1 - ease) * 0.8, alpha: 0.35 + 0.65 * ease, model: q.p.model });
       if (q.glow) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: Math.max(...q.size), color: q.color });
       if (k < 1) {
         gl.uniform1f(prog.uLight, 1);
@@ -866,7 +965,9 @@ export function createWalk(host, { asset, onSelect }) {
     for (const p of [world.card, ...world.things]) g.fillRect((p.x - 1) * cell, (p.y - 1) * cell, cell * 3, cell * 3);
     for (const th of things) {
       const t = th.t;
-      const main = th.form ? COLORS[th.form.parts.reduce((a, p) => (p.w * p.d * p.h > a.w * a.d * a.h ? p : a)).color] : PAPER;
+      // a borrowed model has no colour of its own to show here
+      const own = th.form?.parts.filter((p) => p.shape !== MODEL) || [];
+      const main = own.length ? COLORS[own.reduce((a, p) => (p.w * p.d * p.h > a.w * a.d * a.h ? p : a)).color] : th.form ? '#b9a98c' : PAPER;
       g.globalAlpha = t.ruin ? 0.5 : 0.6 + 0.4 * t.condition;
       g.fillStyle = t.ruin ? '#6b6763' : main;
       g.fillRect(t.x * cell + 1, t.y * cell + 1, cell - 2, cell - 2);
@@ -1091,7 +1192,7 @@ export function createWalk(host, { asset, onSelect }) {
         const th = same ? Object.assign(old, { t }) : { t, pos: toWorld(t), tex: null, signTex: null, label: old?.label || label(t.name) };
         th.pos = toWorld(t);
         th.form = t.form?.parts?.length ? t.form : null;
-        th.placed = th.form ? placedParts(t, th.form) : [];
+        th.placed = th.form ? placedParts(t, th.form, dimsOf) : [];
         th.top = th.form ? (t.ruin ? 0.35 : formHeight(th.form)) : 0.85;
         th.label.textContent = t.name;
         th.label.classList.toggle('ruin', Boolean(t.ruin));

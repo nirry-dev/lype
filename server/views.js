@@ -2,6 +2,7 @@
 import { letterStatus, publicCycle, publicLetter, publicLook, publicWish } from './life.js';
 import { publicSeal } from '../web/lib/seal.js';
 import { pad } from './store.js';
+import { borrowed, loadCatalogue } from './models.js';
 import { CARD } from './world.js';
 
 const spriteSrc = (n) => (n ? `works/${pad(n)}.svg` : null);
@@ -50,6 +51,7 @@ export function works(life, store) {
 /** Its place: everything it built, where, from whose letters, and how worn; and the wishes it left its keeper. */
 export function world(life) {
   const s = life.state;
+  life.catalogue ??= loadCatalogue();
   const readable = new Map(life.letters.filter((l) => letterStatus(l) === 'allowed').map((l) => [l.id, l.from]));
   return {
     name: s.name,
@@ -73,11 +75,13 @@ export function world(life) {
       ruinedAt: t.ruinedAt ?? null,
       sprite: spriteSrc(t.sprite),
       form: t.form || null,
+      borrowed: borrowed(life.catalogue, t.form),
       from: t.from.filter((id) => readable.has(id)).map((id) => ({ id, from: readable.get(id) })),
       people: t.people,
       ...(t.builtBy ? { builtBy: t.builtBy } : {}),
       history: t.history,
     })),
+    credit: s.world.things.some((t) => t.form?.parts.some((p) => p.model)) ? life.catalogue.credit : null,
     wishes: s.wishes.map(publicWish).reverse(),
   };
 }

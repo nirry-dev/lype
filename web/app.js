@@ -1974,7 +1974,7 @@ function selectThing(id) {
     thingFrame(t.sprite ? asset(t.sprite) : null, t.name),
     h('p', { class: 'voice plaque' }, t.plaque),
     h('p', { class: 'meta' }, by ? `${status}. Built by ${by.name}, the mind that lived here before, in its cycle ${by.cycle}; handed down when it died.` : `${status}. Built in cycle ${t.built}, as version ${t.version}.`),
-    h('p', { class: 'meta' }, t.form ? `Built of ${t.form.parts.length} solid${t.form.parts.length === 1 ? '' : 's'} it chose and stacked itself.` : 'Only a drawing so far: it has not given this a shape yet.'),
+    h('p', { class: 'meta' }, t.form ? builtOf(t) : 'Only a drawing so far: it has not given this a shape yet.'),
     t.from.length ? h('p', { class: 'meta' }, 'Made from ', t.from.map((f, i) => [i ? ' and ' : '', h('b', { class: 'human' }, f.from), '’s letter']), '.') : h('p', { class: 'meta' }, 'Made from nothing but itself.'),
     t.history.length > 1
       ? h(
@@ -1985,6 +1985,14 @@ function selectThing(id) {
       : null,
     h('div', { class: 'rp-row' }, by ? null : h('button', { class: 'btn', type: 'button', onclick: () => openCycle(t.built) }, 'The cycle it was built'), h('a', { class: 'btn', href: `#/atlas?focus=${t.id}&at=end` }, 'In the atlas')),
   );
+}
+
+/** What a thing is made of: the solids it stacked itself, and what it borrowed (and from whom). */
+function builtOf(t) {
+  const own = t.form.parts.filter((p) => p.shape !== 'model').length;
+  const mine = `${own} solid${own === 1 ? '' : 's'} it chose and stacked itself`;
+  if (!t.borrowed?.length) return `Built of ${mine}.`;
+  return [`Built of ${mine}, and borrowed: ${t.borrowed.join(', ')}. `, h('span', { class: 'muted' }, app.world?.credit || '')];
 }
 
 /** While it builds, the site on the map shows its drawing arriving shape by shape. */

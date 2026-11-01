@@ -242,6 +242,12 @@ function createMockBrain(cfg = {}) {
         { shape: n % 2 ? 'roof' : 'pyramid', x: 1, z: 1, y: 7, w: 8, d: 8, h: 5, color: 'slate', glow: false },
         { shape: 'cylinder', x: 6, z: 3, y: 9, w: 1, d: 1, h: 4, color: 'brick', glow: false },
       ] });
+      // offered something to borrow, a mock life borrows the first thing it was offered and sets it by the door
+      const offered = schema?.properties?.parts?.items?.properties?.model?.enum?.[1];
+      if (offered) {
+        const parts = JSON.parse(text).parts.map((p) => ({ ...p, model: 'none' }));
+        text = JSON.stringify({ parts: [...parts, { shape: 'model', model: offered, x: 7, z: 7, y: 0, w: 3, d: 3, h: 4, color: 'stone', glow: false }] });
+      }
     } else if (kind === 'tend') {
       text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0, reshape: n % 3 === 0 });
     } else if (kind === 'look') {

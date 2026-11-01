@@ -1,10 +1,10 @@
 // Shapes: what it builds stands in three dimensions, stacked out of a few solids it chooses itself.
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { FORM_SCHEMA, LOT, MAX_PARTS, TALL, formHeight, partialParts, readForm } from '../web/lib/form.js';
+import { FORM_SCHEMA, LOT, MAX_PARTS, TALL, formHeight, formSchema, partialParts, readForm } from '../web/lib/form.js';
 import { createBrain } from '../server/brain.js';
 import { loadConfig } from '../server/config.js';
 import { Life } from '../server/life.js';
@@ -115,4 +115,62 @@ test('an older life is told once that its place has a third dimension', () => {
   later.start();
   later.stop();
   assert.ok(!later.notes.some((n) => n.includes('third dimension')), 'only once');
+});
+
+test('it is offered ready-made things whose names touch what it builds and thinks, and borrows only those, four at most', async () => {
+  const { loadCatalogue, shortlist, borrowed } = await import('../server/models.js');
+  const cat = loadCatalogue();
+  assert.ok(cat.models.length > 500, 'the catalogue is built');
+  assert.ok(cat.credit.includes('CC0'));
+  const names = shortlist(cat, { about: 'A lantern for the bench by the well', thoughts: 'I remember the snow and a pumpkin.' });
+  assert.ok(names.some((n) => n.startsWith('lantern')) && names.some((n) => n.startsWith('bench')), names.join(', '));
+  assert.ok(names.length <= 16 && names.length >= 8);
+  assert.ok(shortlist(cat, { about: 'zzzz qqqq' }).length >= 1, 'with nothing matching, plain things are offered');
+
+  const lantern = names.find((n) => n.startsWith('lantern'));
+  const offered = new Set(names);
+  const model = (n) => (offered.has(n) ? cat.byName.get(n)?.id : null) || null;
+  const f = readForm(
+    {
+      parts: [
+        part(),
+        { ...part({ shape: 'model', x: 6, w: 3, h: 6 }), model: lantern },
+        { ...part({ shape: 'model' }), model: 'a spaceship it was never shown' },
+        ...Array.from({ length: 6 }, (_, i) => ({ ...part({ shape: 'model', z: i }), model: lantern })),
+      ],
+    },
+    { model },
+  );
+  const lent = f.parts.filter((p) => p.shape === 'model');
+  assert.equal(lent.length, 4, 'four borrowed things at most');
+  assert.ok(lent.every((p) => cat.byId.has(p.model)), 'kept by id');
+  assert.deepEqual(borrowed(cat, f), [lantern]);
+  assert.ok(formSchema(names).properties.parts.items.properties.model.enum.includes('none'));
+  assert.ok(!FORM_SCHEMA.properties.parts.items.properties.model, 'nothing offered, nothing to borrow');
+});
+
+test('a mock life borrows what it is offered, its page names it, and an export carries the model', async () => {
+  const { exportLife } = await import('../server/export.js');
+  const dir = mkdtempSync(join(tmpdir(), 'iterant-borrow-'));
+  dirs.push(dir);
+  const life = makeLife(dir);
+  life.birth();
+  for (let i = 0; i < 8 && !life.state.world.things.length; i++) assert.ok((await life.wake('test')).ok);
+  clearTimeout(life.timer);
+  const t = life.state.world.things[0];
+  const lent = t.form.parts.find((p) => p.shape === 'model');
+  assert.ok(lent, 'it borrowed something');
+  const view = views.world(life).things[0];
+  assert.equal(view.borrowed.length, 1);
+  assert.match(views.world(life).credit, /Kenney/);
+
+  // Reshaping keeps what it borrowed on offer under its name.
+  life.live = { title: '', change: '', sprite: '', form: '', building: null, think: '' };
+  const again = await life.shape('system', t.name, 'I add to it.', { kind: t.kind, before: t.form });
+  assert.ok(again.parts.some((p) => p.model === lent.model), 'still borrowed after reshaping');
+
+  const out = join(dir, 'site');
+  exportLife({ ...life.cfg }, out, { allModels: false });
+  assert.ok(existsSync(join(out, 'models', `${lent.model}.bin`)), 'its model is published with it');
+  assert.ok(existsSync(join(out, 'models', 'catalogue.json')));
 });

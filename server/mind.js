@@ -1,7 +1,7 @@
 // What it is told about itself, how each moment of its life is put to the model, and how the answers are read back.
 import { describeMachine } from './senses.js';
 import { SHELVES, strength } from './memory.js';
-import { COLORS, LOT, MAX_PARTS, SHAPES, TALL } from '../web/lib/form.js';
+import { COLORS, LOT, MAX_BORROWED, MAX_PARTS, SHAPES, TALL } from '../web/lib/form.js';
 
 export const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'lonely', curious: 'curious', calm: 'calm', warm: 'warm toward people', restless: 'restless' };
@@ -473,7 +473,7 @@ export function spritePrompt(title, what) {
  * Building it up: the thing as a few simple solids stacked on its lot, so it can be walked around. With "before", it is
  * reshaping something it already built, and sees the parts it stands on now.
  */
-export function formPrompt(title, what, { kind = 'object', before = null } = {}) {
+export function formPrompt(title, what, { kind = 'object', before = null, models = [] } = {}) {
   return [
     before ? `You are changing the shape of "${title}" in your place: ${what}` : `Now build "${title}" in your place: ${what}`,
     '',
@@ -489,6 +489,13 @@ export function formPrompt(title, what, { kind = 'object', before = null } = {})
     '- "glow": true if it gives off light (a lamp, a window at night, an ember), otherwise false.',
     'Stack parts on each other: a part whose "y" is the top of another sits on it. Put the parts in the order you would build them, from the ground up.',
     'For example, a small well: a stone cylinder (x 2, z 2, y 0, w 6, d 6, h 3), two wood blocks for posts on either side, and a slate roof on top of them. Do not build a well; build yours.',
+    models.length ? '' : null,
+    models.length
+      ? `You can also borrow ready-made things. Other people made them and gave them away for anyone to use; you have never seen them either, only their names: ${models.join(', ')}.`
+      : null,
+    models.length
+      ? `To borrow one, give a part "shape": "model" and "model": its name; its "x", "z", "y", "w", "d", "h" are the space it fits inside (it keeps its own proportions and colours, so its "color" does not matter). Borrow at most ${MAX_BORROWED}, only what belongs to what you are building, and build the rest yourself. For your own solids, "model" is "none".`
+      : null,
   ]
     .filter((line) => line != null)
     .join('\n');

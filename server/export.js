@@ -9,11 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { ROOT, loadConfig } from './config.js';
 import { Life } from './life.js';
 import { createStore, pad } from './store.js';
+import { loadCatalogue } from './models.js';
 import { outbox } from './pals.js';
 import * as views from './views.js';
 
 /** Writes one life (cfg.dataDir) to `out`, and the lives before it to out/ancestors/<k>/. Returns what it wrote. */
-export function exportLife(cfg, out, { relayUrl = '' } = {}) {
+export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   const store = createStore(cfg.dataDir);
   const files = store.list('cycles');
   const lastRecord = files.length ? store.read(`cycles/${files.at(-1)}`) : null;
@@ -83,9 +84,20 @@ export function exportLife(cfg, out, { relayUrl = '' } = {}) {
   write('index.html', page);
   for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js', 'lib/form.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
 
+  // The things it can borrow: all of them for a life that may still borrow more while people watch; for a life that
+  // has ended, only what it borrowed.
+  const catalogue = loadCatalogue();
+  const used = new Set(life.state.world?.things.flatMap((t) => (t.form?.parts || []).map((p) => p.model).filter(Boolean)) || []);
+  if (catalogue.models.length) write('models/catalogue.json', readFileSync(join(web, 'models', 'catalogue.json'), 'utf8'));
+  for (const m of catalogue.models) {
+    if (!allModels && !used.has(m.id)) continue;
+    mkdirSync(dirname(join(out, 'models', `${m.id}.bin`)), { recursive: true });
+    copyFileSync(join(web, 'models', `${m.id}.bin`), join(out, 'models', `${m.id}.bin`));
+  }
+
   // The lives before it: each its own read-only page, with no relay (they will never be live again).
   const ancestors = life.lineage.filter((a) => existsSync(join(cfg.dataDir, a.dir, 'state.json')));
-  for (const a of ancestors) exportLife({ ...cfg, dataDir: join(cfg.dataDir, a.dir) }, join(out, a.dir));
+  for (const a of ancestors) exportLife({ ...cfg, dataDir: join(cfg.dataDir, a.dir) }, join(out, a.dir), { allModels: false });
   return { name: state.name, cycles: life.cycles.length, nights: life.nights.length, ancestors: ancestors.length };
 }
 
