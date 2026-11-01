@@ -2,6 +2,8 @@
 // machine it lives on. The creature dials out to /creature and keeps that one WebSocket open; visitors watch on /live
 // and make ordinary requests, which are passed to the creature over its socket only if they are on the public list.
 // Nothing here can reach its keeper routes. One Durable Object holds every socket, so it can sleep between messages.
+// While the creature is away, a letter waits here (a few per visitor, a couple of hundred in all) and is passed on,
+// oldest first, when it dials back in; it is screened and counted by the creature then, like any other letter.
 import { DurableObject } from 'cloudflare:workers';
 
 // What a visitor may ask for: the creature's public API, its drawings, photos its keeper allowed, and writing to it.
@@ -19,6 +21,9 @@ const PASSED_HEADERS = ['content-type', 'cache-control', 'content-security-polic
 const CHUNK = 256 * 1024; // messages larger than this are sent in parts
 const POSTS_PER_HOUR = 12; // per visitor address, before the creature's own (stricter) limits
 const WAIT_MS = 25000;
+const MAIL_MAX = 200; // letters waiting for it, in all
+const MAIL_PER_VISITOR = 3; // waiting from one visitor address
+const MAIL_BYTES = 8 * 1024; // a letter is a name, up to 1200 characters and a visitor key: far less than this
 
 /** How long a public answer may be served from memory without asking the creature again. */
 function freshFor(path, query) {
@@ -78,6 +83,7 @@ export class Room extends DurableObject {
       ws.close(4002, 'quiet too long');
       return this.goneAway(ws);
     }
+    await this.deliver(); // anything it could not take before
     await this.ctx.storage.setAlarm(Date.now() + 60000);
   }
 
@@ -140,7 +146,6 @@ export class Room extends DurableObject {
     }
     const body = method === 'POST' ? await request.text() : '';
     if (body.length > 6 * 1024 * 1024) return json(413, { error: 'too large' });
-    if (!this.creature()) return json(503, { error: 'It is not awake to anyone right now; its last published life is still there to read.', offline: true });
 
     let client = null;
     if (method === 'POST') {
@@ -151,6 +156,10 @@ export class Room extends DurableObject {
       if (times.length >= POSTS_PER_HOUR) return json(429, { error: 'That is a lot for one hour. It reads slowly; give it time.' });
       this.posts.set(client, [...times, Date.now()]);
     }
+    if (!this.creature()) {
+      if (method === 'POST' && path === '/api/letters') return this.hold(target, body, client);
+      return json(503, { error: 'It is not awake to anyone right now; its last published life is still there to read.', offline: true });
+    }
 
     const answer = await this.ask(method, target, body, client).catch((err) => ({ status: 504, headers: {}, body: JSON.stringify({ error: err.message }) }));
     const ttl = method === 'GET' && answer.status === 200 ? freshFor(path, query) : 0;
@@ -159,6 +168,42 @@ export class Room extends DurableObject {
       if (this.cache.size > 400) this.cache.delete(this.cache.keys().next().value);
     }
     return this.answer(answer);
+  }
+
+  /** A letter written while it is away: kept until it is back, within limits, and never read here. */
+  async hold(target, body, client) {
+    if (body.length > MAIL_BYTES) return json(413, { error: 'That letter is too long to keep for it.' });
+    try {
+      const letter = JSON.parse(body);
+      if (typeof letter?.text !== 'string' || !letter.text.trim()) return json(400, { error: 'A letter needs some words.' });
+    } catch {
+      return json(400, { error: 'That is not a letter.' });
+    }
+    const waiting = [...(await this.ctx.storage.list({ prefix: 'mail:' })).values()];
+    if (waiting.length >= MAIL_MAX) return json(503, { error: 'Its letter box is full while it is away. Try again once it is back.', offline: true });
+    if (waiting.filter((m) => m.client === client).length >= MAIL_PER_VISITOR) {
+      return json(429, { error: `You already have ${MAIL_PER_VISITOR} letters waiting for it. It will read them when it is back.` });
+    }
+    const at = Date.now();
+    await this.ctx.storage.put(`mail:${String(at).padStart(15, '0')}:${crypto.randomUUID()}`, { target, body, client, at });
+    return json(202, { waiting: true, ahead: waiting.length });
+  }
+
+  /** It is back: the letters that waited for it, oldest first. One it can't take yet (busy, or too many) stays for later. */
+  async deliver() {
+    if (this.delivering) return;
+    this.delivering = true;
+    try {
+      for (const [key, m] of await this.ctx.storage.list({ prefix: 'mail:' })) {
+        if (!this.creature()) break;
+        const answer = await this.ask('POST', m.target, m.body, m.client).catch(() => null);
+        if (!answer || answer.status >= 500) break; // it is not taking letters yet
+        if (answer.status === 429) continue; // this visitor has written a lot this hour: theirs waits, the rest go on
+        await this.ctx.storage.delete(key); // taken (or turned away at its door, which is its answer to give)
+      }
+    } finally {
+      this.delivering = false;
+    }
   }
 
   answer({ status, headers, body, base64 }) {
@@ -235,6 +280,7 @@ export class Room extends DurableObject {
     this.cache.clear();
     ws.send(JSON.stringify({ t: 'welcome' }));
     await this.ctx.storage.setAlarm(Date.now() + 60000);
+    this.ctx.waitUntil(this.deliver());
   }
 
   async webSocketClose(ws) {

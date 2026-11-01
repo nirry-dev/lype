@@ -745,7 +745,7 @@ function reachCard() {
       'p',
       { class: 'meta reach-note' },
       away
-        ? `${name} can't be reached right now (the machine it lives on may be off, or busy), so its letter box is closed. This page opens it again as soon as ${name} is back.`
+        ? `${name} can't be reached right now: the machine it lives on may be off, or busy. You can still write; your letter waits for it and reaches it as soon as it is back.`
         : `It opens up to two letters a cycle, oldest first, in its own time.${s.nextWakeAt ? ` It wakes ${untilText(s.nextWakeAt)}.` : ''} Whatever it writes back appears beside your letter.`,
     ),
   );
@@ -2715,6 +2715,14 @@ async function renderWorks(current) {
 
 // ---------- letters ----------
 
+/** A letter written while it is away, left at its relay, which keeps it until it dials back in. */
+async function toMailbox(letter) {
+  const res = await fetch(`${RELAY}/api/letters`, letter);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
 async function renderLetters(current) {
   [app.letters, app.you, app.queue] = await Promise.all([
     app.letters ?? api(`/api/letters?visitor=${visitor}`),
@@ -2731,16 +2739,14 @@ async function renderLetters(current) {
     return;
   }
 
-  if (SNAPSHOT) {
+  if (SNAPSHOT && !RELAY) {
     fill(
       $('#view'),
       intro('Letters', 'Everything it knows about the world outside came from here. These are the letters it read, and what it wrote back.'),
       h(
         'div',
         { class: 'letters-grid' },
-        RELAY
-          ? h('div', { class: 'paper compose' }, h('div', { class: 'from' }, 'Its letter box is closed for now'), h('p', { class: 'body' }, `${s.name || 'It'} can't be reached right now: the machine it lives on may be off, or busy. Letters can only reach it while it is awake, and this page opens its letter box again as soon as it is back (it checks every minute).`))
-          : h('div', { class: 'paper compose' }, h('div', { class: 'from' }, 'A recording'), h('p', { class: 'body' }, 'This is a recording of its life, so it cannot read anything new here. Letters reach it only through its live window.')),
+        h('div', { class: 'paper compose' }, h('div', { class: 'from' }, 'A recording'), h('p', { class: 'body' }, 'This is a recording of its life, so it cannot read anything new here. Letters reach it only through its live window.')),
         h('div', { class: 'feed', id: 'letters-feed' }, lettersFeed()),
       ),
     );
@@ -2756,6 +2762,7 @@ async function renderLetters(current) {
     s.questions.map((q) => h('option', { value: q.id, selected: q.id === wanted ? true : null }, `Answering: “${q.text}”`)),
   );
   const msg = h('div', { class: 'form-msg', role: 'status' });
+  const away = Boolean(SNAPSHOT); // its page is live, but it can't be reached just now: letters wait at its relay
   const send = h('button', { class: 'send', type: 'submit' }, 'Leave it');
   const form = h(
     'form',
@@ -2764,6 +2771,7 @@ async function renderLetters(current) {
     h('label', {}, h('span', { class: 'label' }, 'Sign as'), name),
     s.questions.length ? h('label', {}, h('span', { class: 'label' }, 'This is'), question) : null,
     h('label', {}, h('span', { class: 'label' }, 'Your letter'), text),
+    away ? h('p', { class: 'away-note' }, `${s.name || 'It'} is offline right now. Your letter waits for it at the door and reaches it as soon as it is back; then it reads it in its own time.`) : null,
     send,
     msg,
     h('p', { class: 'hint' }, `It reads letters in its own time, usually within a cycle or two, and may write back. ${s.moderation === 'off' ? '' : 'Letters and replies are screened before anyone sees them; links and contact details are held. '}If you write again from this browser, it will know it is you.`),
@@ -2775,14 +2783,12 @@ async function renderLetters(current) {
     msg.textContent = 'Leaving it on the desk…';
     try {
       local?.setItem('iterant.name', name.value.trim());
-      const sent = await api('/api/letters', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ from: name.value, text: text.value, visitor, question: question.value || null }),
-      });
+      const letter = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: name.value, text: text.value, visitor, question: question.value || null }) };
+      const sent = away ? await toMailbox(letter) : await api('/api/letters', letter);
       text.value = '';
-      msg.textContent =
-        sent.status === 'held'
+      msg.textContent = sent.waiting
+        ? `Your letter is waiting at the door${sent.ahead ? ` with ${sent.ahead} other letter${sent.ahead === 1 ? '' : 's'}` : ''}. ${s.name || 'It'} gets it as soon as it is back.`
+        : sent.status === 'held'
           ? `Held for its keeper: ${sent.statusReason}. It won't read it unless they let it through.`
           : sent.status === 'pending'
             ? 'Left on its desk. It is screened first, then it reads it in its own time.'

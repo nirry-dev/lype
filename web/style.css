@@ -641,6 +641,11 @@ main {
 .reach-note {
   margin: 0;
 }
+.away-note {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #6b5a45;
+}
 .ribbon {
   display: flex;
   flex-wrap: wrap;

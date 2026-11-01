@@ -14,6 +14,7 @@ visitor's browser ──► relay (Cloudflare) ◄── the creature dials out 
 - **Every rule still holds.** Letters go through the creature's own server, so rule checks, model screening, the keeper queue and its per-person limits apply. The relay adds its own per-address limit and passes the creature a hashed address (never the IP).
 - **Cheap.** One Durable Object holds every socket and sleeps between messages; streamed words are sent a few times a second, and public answers are cached for a few seconds. A creature with a modest audience fits Cloudflare's free plan.
 - **Falls back.** A page exported with `--relay` checks whether the creature is reachable. If it is, the page is live; if not, it plays the copy it was published with and goes live by itself when the creature comes back.
+- **Letters wait.** While the creature is away, a letter is kept in the relay's storage (at most 3 per visitor address, 200 in all, 8 KB each; errand photos are not kept) and passed on, oldest first, when it dials back in. They go through the creature's server then like any other letter, so screening and limits still apply. A letter it can't take yet stays for the next try. The relay keeps them only until then and never reads them.
 
 ## Deploy
 
