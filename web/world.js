@@ -22,6 +22,10 @@ const mat = {
     const nf = 1 / (near - far);
     return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
   },
+  ortho(r, near, far) {
+    const nf = 1 / (near - far);
+    return [1 / r, 0, 0, 0, 0, 1 / r, 0, 0, 0, 0, 2 * nf, 0, 0, 0, (far + near) * nf, 1];
+  },
   lookAt(eye, at, up = [0, 1, 0]) {
     let z = norm(sub(eye, at));
     let x = norm(cross(up, z));
@@ -248,32 +252,73 @@ async function svgImage(src, svgText) {
 
 const VS = `
 attribute vec3 aPos; attribute vec2 aUv; attribute vec3 aNorm; attribute vec3 aColor;
-uniform mat4 uProj, uView, uModel; uniform mat3 uNormal;
-varying vec2 vUv; varying float vDepth; varying vec3 vNorm; varying vec3 vColor;
+uniform mat4 uProj, uView, uModel, uLightVP; uniform mat3 uNormal;
+varying vec2 vUv; varying float vDepth; varying vec3 vNorm; varying vec3 vColor; varying vec4 vShadow; varying float vY;
 void main() {
-  vec4 p = uView * uModel * vec4(aPos, 1.0);
+  vec4 w = uModel * vec4(aPos, 1.0);
+  vec4 p = uView * w;
   vUv = aUv; vDepth = -p.z; vNorm = uNormal * aNorm; vColor = aColor;
+  vShadow = uLightVP * w; vY = w.y;
   gl_Position = uProj * p;
 }`;
 // uShade 0: lit only by the hour (paper, glows, the ground); 1: lit by the sun or moon and the sky, like a solid.
+// Shadows: uShadowMap holds, for the sun (or moon), how far it can see in every direction, packed into RGBA (no
+// extension needed). A surface it can't see is in shadow: the sun's light leaves it, and the ground darkens there.
+// Softer light: the sun wraps a little round edges, and things darken a little where they meet the ground. Mist lies
+// low on the ground in the early morning.
 const FS = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
-uniform sampler2D uTex; uniform vec4 uTint; uniform vec3 uFog; uniform float uFogNear, uFogFar, uLight, uShade, uGlow;
-uniform vec3 uSun, uSunColor, uSky, uGround;
-varying vec2 vUv; varying float vDepth; varying vec3 vNorm; varying vec3 vColor;
+#endif
+uniform sampler2D uTex, uShadowMap; uniform vec4 uTint; uniform vec3 uFog; uniform float uFogNear, uFogFar, uLight, uShade, uGlow;
+uniform vec3 uSun, uSunColor, uSky, uGround; uniform float uShadowOn, uShadowStrength, uReceive, uMist;
+varying vec2 vUv; varying float vDepth; varying vec3 vNorm; varying vec3 vColor; varying vec4 vShadow; varying float vY;
+float unpack(vec4 c) { return dot(c, vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0)); }
+float sunlit(float bias) {
+  vec3 p = vShadow.xyz / vShadow.w * 0.5 + 0.5;
+  if (uShadowOn < 0.5 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
+  float lit = 0.0;
+  for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+    float d = unpack(texture2D(uShadowMap, p.xy + vec2(float(i), float(j)) / 2048.0));
+    lit += p.z - bias > d ? 0.0 : 1.0;
+  }
+  return lit / 9.0;
+}
 void main() {
   vec4 c = texture2D(uTex, vUv) * uTint * vec4(vColor, 1.0);
   if (c.a < 0.02) discard;
   vec3 n = normalize(vNorm);
-  vec3 amb = mix(uGround, uSky, n.y * 0.5 + 0.5);
-  vec3 solid = amb + uSunColor * max(dot(n, uSun), 0.0);
+  float ndl = dot(n, uSun);
+  float sh = (uShade > 0.5 || uReceive > 0.5) ? sunlit(0.0015 + 0.004 * (1.0 - clamp(abs(ndl), 0.0, 1.0))) : 1.0;
+  float ao = mix(0.74, 1.0, clamp(vY / 0.35, 0.0, 1.0));
+  vec3 amb = mix(uGround, uSky, n.y * 0.5 + 0.5) * ao;
+  vec3 solid = amb + uSunColor * clamp(ndl * 0.85 + 0.15, 0.0, 1.0) * mix(1.0, sh, uShadowStrength);
   vec3 lit = c.rgb * mix(vec3(uLight), solid, uShade);
-  lit = mix(lit, c.rgb * 1.25, uGlow);
+  lit *= mix(1.0, 1.0 - 0.5 * uShadowStrength * (1.0 - sh), uReceive);
+  lit = mix(lit, c.rgb * 1.45, uGlow);
   float f = clamp((vDepth - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
-  gl_FragColor = vec4(mix(lit, uFog, f), c.a);
+  f = max(f, uMist * (1.0 - clamp(vY / 0.5, 0.0, 1.0)) * clamp(vDepth / 6.0, 0.0, 1.0));
+  gl_FragColor = vec4(mix(lit, uFog, f * (1.0 - uGlow * 0.5)), c.a);
+}`;
+// The light's view: how far it sees, packed into a colour.
+const DEPTH_VS = `
+attribute vec3 aPos; uniform mat4 uModel, uLightVP; varying float vZ;
+void main() { gl_Position = uLightVP * uModel * vec4(aPos, 1.0); vZ = gl_Position.z * 0.5 + 0.5; }`;
+const DEPTH_FS = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying float vZ;
+void main() {
+  vec4 c = fract(vZ * vec4(1.0, 255.0, 65025.0, 16581375.0));
+  gl_FragColor = c - c.yzww * vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
 }`;
 
-function compile(gl) {
+function compile(gl, vs = VS, fs = FS, names = ['uProj', 'uView', 'uModel', 'uNormal', 'uTex', 'uTint', 'uFog', 'uFogNear', 'uFogFar', 'uLight', 'uShade', 'uGlow', 'uSun', 'uSunColor', 'uSky', 'uGround', 'uLightVP', 'uShadowMap', 'uShadowOn', 'uShadowStrength', 'uReceive', 'uMist']) {
   const shader = (type, src) => {
     const s = gl.createShader(type);
     gl.shaderSource(s, src);
@@ -282,12 +327,11 @@ function compile(gl) {
     return s;
   };
   const p = gl.createProgram();
-  gl.attachShader(p, shader(gl.VERTEX_SHADER, VS));
-  gl.attachShader(p, shader(gl.FRAGMENT_SHADER, FS));
+  gl.attachShader(p, shader(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fs));
   gl.linkProgram(p);
   if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
   const u = (n) => gl.getUniformLocation(p, n);
-  const names = ['uProj', 'uView', 'uModel', 'uNormal', 'uTex', 'uTint', 'uFog', 'uFogNear', 'uFogFar', 'uLight', 'uShade', 'uGlow', 'uSun', 'uSunColor', 'uSky', 'uGround'];
   return {
     p,
     aPos: gl.getAttribLocation(p, 'aPos'),
@@ -521,6 +565,54 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     return null;
   }
   const prog = compile(gl);
+  // The sun's view of the place, redrawn each frame from what the frame before drew (a frame late, which can't be seen).
+  const SHADOW = 2048;
+  const depthProg = compile(gl, DEPTH_VS, DEPTH_FS, ['uModel', 'uLightVP']);
+  const shadow = (() => {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, SHADOW, SHADOW, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    const depth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, SHADOW, SHADOW);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return ok ? { tex, depth, fb, casters: [], drawn: 0 } : null;
+  })();
+  let casting = []; // what this frame draws solid, for the next frame's shadows
+  /** The sun's (or moon's) view of the whole place, never so low that shadows run off forever. */
+  function lightView(dir) {
+    const l = norm([dir[0], Math.max(dir[1], 0.3), dir[2]]);
+    const c = [world.w / 2 - world.card.x, 0, world.h / 2 - world.card.y];
+    const r = Math.hypot(world.w, world.h) / 2 + 2;
+    return mat.mul(mat.ortho(r, 1, 120), mat.lookAt([c[0] + l[0] * 60, l[1] * 60, c[2] + l[2] * 60], c));
+  }
+  function drawShadows(lightVP) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shadow.fb);
+    gl.viewport(0, 0, SHADOW, SHADOW);
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.BLEND);
+    gl.enable(gl.DEPTH_TEST);
+    // only its position: the scene's other arrays, still enabled from the frame before, would point past these meshes
+    for (const a of [prog.aPos, prog.aUv, prog.aNorm, prog.aColor]) if (a >= 0) gl.disableVertexAttribArray(a);
+    gl.useProgram(depthProg.p);
+    gl.uniformMatrix4fv(depthProg.uLightVP, false, lightVP);
+    gl.enableVertexAttribArray(depthProg.aPos);
+    for (const c of shadow.casters) {
+      gl.uniformMatrix4fv(depthProg.uModel, false, c.model);
+      gl.bindBuffer(gl.ARRAY_BUFFER, c.mesh.buf);
+      gl.vertexAttribPointer(depthProg.aPos, 3, gl.FLOAT, false, 32, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, c.mesh.count);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    shadow.drawn = shadow.casters.length;
+  }
   const meshes = {
     upright: mesh(gl, QUAD_UPRIGHT),
     centered: mesh(gl, QUAD_CENTERED),
@@ -600,8 +692,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   let site = null; // { x, y, id, name, pos, tex, label, svg, parts: [{ p, at }] }
   const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 9, target: [0, 0.4, 0], goal: null };
   // Where it is and where it is going: a spot on the ground (x, z), a height it floats at, which way it faces.
-  const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };
-  const keys = new Set();
+  const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };  const keys = new Set();
   let fan = 0;
   let raf = 0;
   let last = performance.now();
@@ -660,6 +751,18 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       gl.vertexAttrib3f(prog.aColor, 1, 1, 1);
     }
   }
+  /** Where its drawing hangs on what it built: the front of its widest block wall, if one is wide and tall enough. */
+  function mural(th) {
+    let best = null;
+    for (const q of th.placed) {
+      if (q.p.shape !== 'block' || q.yaw || q.tilt || q.p.w < 3 || q.p.h < 3) continue;
+      if (!best || q.p.w * q.p.h > best.p.w * best.p.h) best = q;
+    }
+    if (!best) return null;
+    const size = Math.min(best.size[0], best.size[1]) * 0.7;
+    return { at: [best.at[0], best.at[1] + (best.size[1] - size) / 2, best.at[2] + best.size[2] / 2 + 0.004], size };
+  }
+
   /** A solid: lit by the sun or moon and the sky. A borrowed model not here yet is a faint box where it will stand. */
   function solid(shape, at, size, color, { yaw = 0, tilt = 0, glow = 0, alpha = 1, model = null } = {}) {
     const m = shape === MODEL ? modelFor(model) : null;
@@ -667,7 +770,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       draw(mat.model(at, yaw, tilt, size), meshes.block, tex.white, [...color, 0.18 * alpha], { shade: 1, depthWrite: false });
       return;
     }
-    draw(mat.model(at, yaw, tilt, size), m ? m.mesh : meshes[shape], tex.white, [...color, alpha], { shade: 1, glow, depthWrite: alpha >= 1, colors: m?.colors });
+    const placed = mat.model(at, yaw, tilt, size);
+    if (alpha >= 1) casting.push({ model: placed, mesh: m ? m.mesh : meshes[shape] });
+    draw(placed, m ? m.mesh : meshes[shape], tex.white, [...color, alpha], { shade: 1, glow, depthWrite: alpha >= 1, colors: m?.colors });
   }
   const halo = (at, size, color, alpha) => draw(mat.model(at, 0, 0, [size, 1, size]), meshes.flat, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
   const spark = (at, size, color, alpha) => draw(mat.model(at, facing(), 0, [size, size, 1]), meshes.centered, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
@@ -730,6 +835,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     const ahead = [cam.target[0] - Math.sin(cam.yaw) * 150, 0, cam.target[2] - Math.cos(cam.yaw) * 150];
     const hy = mat.apply(mat.mul(proj, view), ahead)[1];
     host.style.setProperty('--horizon', `${clamp(((1 - hy) / 2) * 100, 0, 100).toFixed(1)}%`);
+    const lightVP = lightView(sun.day > 0.05 ? sun.sun : sun.moon);
+    if (shadow) drawShadows(lightVP);
+    casting = [];
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -743,6 +851,17 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     gl.vertexAttrib3f(prog.aColor, 1, 1, 1);
     gl.uniformMatrix4fv(prog.uProj, false, proj);
     gl.uniformMatrix4fv(prog.uView, false, view);
+    gl.uniformMatrix4fv(prog.uLightVP, false, lightVP);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, shadow ? shadow.tex : tex.white);
+    gl.uniform1i(prog.uShadowMap, 1);
+    gl.uniform1f(prog.uShadowOn, shadow && shadow.drawn ? 1 : 0);
+    // shadows are sharpest in full sun, faint by moonlight, and gone when it is too dark to tell
+    gl.uniform1f(prog.uShadowStrength, sun.day > 0.05 ? 0.35 + 0.55 * sun.day : 0.3);
+    gl.uniform1f(prog.uReceive, 0);
+    // mist: low on the ground around dawn, thinning by mid-morning
+    const h = look.hour;
+    gl.uniform1f(prog.uMist, h > 3.5 && h < 10 ? 0.35 * Math.sin(((h - 3.5) / 6.5) * Math.PI) : 0.05);
     const fog = sky.low.map((v) => v / 255);
     gl.uniform3fv(prog.uFog, fog);
     gl.uniform1i(prog.uTex, 0);
@@ -785,7 +904,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     const gx = gw / 2 - world.card.x - MARGIN;
     const gz = gh / 2 - world.card.y - MARGIN;
     draw(mat.model([0, -0.02, 0], 0, 0, [500, 1, 500]), meshes.flat, tex.white, [0.063, 0.075, 0.09, 1]);
+    gl.uniform1f(prog.uReceive, 1); // the ground takes the shadows of what stands on it
     draw(mat.model([gx, 0, gz], 0, 0, [gw, 1, gh]), meshes.flat, tex.ground, [1, 1, 1, 1]);
+    gl.uniform1f(prog.uReceive, 0);
 
     // pools of light on the ground: its light, you
     gl.uniform1f(prog.uLight, 1);
@@ -810,6 +931,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
         solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow ? 0.6 + night * 0.4 : 0, model: q.p.model });
         if (q.glow) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: Math.max(q.size[0], q.size[1], q.size[2]), color: q.color });
       }
+      // its drawing, pinned to the front of its widest wall, as well as on its sign
+      const wall = !th.t.ruin && th.t.sprite && th.tex && mural(th);
+      if (wall) draw(mat.model([th.pos[0] + wall.at[0], wall.at[1] + lift, th.pos[2] + wall.at[2]], 0, 0, [wall.size, wall.size, 1]), meshes.upright, th.tex, [1, 1, 1, 1], { shade: 1 });
       // its sign: a post, and its drawing on a little card facing you
       if (th.signTex) {
         const sx = th.pos[0] + SPAN * 0.42;
@@ -881,7 +1005,12 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     placeLabels();
     drawMini();
     dirty = false;
-    if (moving || !reduced) schedule();
+    if (shadow) {
+      const fresh = !shadow.drawn && casting.length;
+      shadow.casters = casting;
+      if (fresh) dirty = true; // a frame with its shadows, even when nothing moves
+    }
+    if (moving || !reduced || dirty) schedule();
   }
 
   function drawSite(t, light, night, mood, glows) {
