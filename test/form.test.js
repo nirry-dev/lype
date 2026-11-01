@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { FORM_SCHEMA, LOT, MAX_PARTS, TALL, formHeight, formSchema, partialParts, readForm } from '../web/lib/form.js';
+import { FORM_SCHEMA, LOT, MAX_PARTS, TALL, formHeight, formSchema, partialParts, readForm, standing } from '../web/lib/form.js';
 import { createBrain } from '../server/brain.js';
 import { loadConfig } from '../server/config.js';
 import { Life } from '../server/life.js';
@@ -34,7 +34,7 @@ test('a shape is held inside its lot: known solids and colours, no part outside,
       part({ x: 9, w: 6, y: 30, h: 40 }),
       part({ w: 0, d: -3, h: 2.6 }),
       part(),
-      ...Array.from({ length: 30 }, (_, i) => part({ x: i % 7, z: Math.floor(i / 7), y: 4, h: 1 })),
+      ...Array.from({ length: 30 }, (_, i) => part({ x: i % 10, z: 5 + Math.floor(i / 10), y: 4, w: 1, d: 1, h: 1 })),
     ],
   });
   assert.equal(f.parts[0].shape, 'block', 'an unknown shape is a block');
@@ -65,6 +65,51 @@ test('a roof given too high comes down onto its walls; a window set into a wall 
   assert.equal(window.y, 2, 'the window stays in the wall');
   assert.equal(lantern.y, 12, 'the lantern floats');
   assert.equal(formHeight(f), 1.3, 'the lantern is its highest point');
+});
+
+test('its parts are solid: what runs into another moves to the nearest place it fits, or is left out; a window, a door and a chimney stay set in', () => {
+  const f = readForm({
+    parts: [
+      part({ w: 10, d: 10, h: 6, color: 'stone' }),
+      part({ x: 3, z: 3, y: 4, w: 4, d: 4, h: 1, color: 'paper' }), // a box given inside the walls
+      part({ shape: 'roof', y: 6, w: 10, d: 10, h: 3, color: 'slate' }),
+      part({ x: 4, z: 9, y: 0, w: 2, d: 1, h: 3, color: 'wood' }), // a door set into the front
+      part({ x: 0, z: 4, y: 3, w: 1, d: 2, h: 1, color: 'glass', glow: true }), // a window set into the side
+      part({ shape: 'cylinder', x: 7, z: 2, y: 7, w: 1, d: 1, h: 4, color: 'brick' }), // a chimney up through the roof
+    ],
+  });
+  const [walls, box, roof, door, window, chimney] = f.parts;
+  assert.equal(f.solid, true);
+  assert.equal(box.y, roof.y + roof.h, 'the box goes on top of the roof, not inside the walls');
+  assert.equal(roof.y, walls.y + walls.h);
+  assert.deepEqual([door.y, window.y, chimney.y], [0, 3, 7], 'set in where they were put');
+  const setIn = [door, window, chimney];
+  for (const p of f.parts)
+    for (const q of f.parts)
+      if (p !== q && p.x < q.x + q.w && q.x < p.x + p.w && p.z < q.z + q.d && q.z < p.z + p.d && p.y < q.y + q.h && q.y < p.y + p.h)
+        assert.ok(setIn.includes(p) || setIn.includes(q), `${p.color} and ${q.color} share no space`);
+
+  const full = readForm({ parts: [part({ w: 10, d: 10, h: TALL }), part({ shape: 'ball', x: 3, z: 3, y: 5, w: 2, d: 2, h: 2, color: 'gold' })] });
+  assert.equal(full.parts.length, 1, 'a ball given inside something filling its lot, with no room above, is left out');
+  const wide = readForm({
+    parts: [part({ w: 10, d: 10, h: 20 }), part({ x: 2, z: 2, y: 20, w: 6, d: 6, h: 4, glow: true }), part({ shape: 'pyramid', y: 20, w: 10, d: 10, h: 4 })],
+  });
+  assert.deepEqual(wide.parts.map((p) => p.shape), ['block', 'pyramid'], 'where two start at the same height, the bigger stands');
+
+  const posts = readForm({ parts: [part({ w: 2, d: 2, h: 5 }), part({ x: 1, w: 2, d: 2, h: 5, color: 'wood' })] });
+  assert.equal(posts.parts[1].x, 2, 'a post given half inside another stands beside it');
+  assert.equal(posts.parts[1].y, 0);
+
+  // a lantern given by the door, half in the wall: up onto the step and along the wall, its space narrowed at the lot's edge
+  const lamp = readForm({ parts: [part({ x: 1, z: 1, w: 8, d: 8, h: 1 }), part({ x: 2, z: 2, y: 1, w: 6, d: 6, h: 6 }), { ...part({ shape: 'model', x: 7, z: 7, w: 3, d: 3 }), model: 'lantern' }] });
+  const { x, z, y, w, d } = lamp.parts[2];
+  assert.deepEqual({ x, z, y, w, d }, { x: 8, z: 7, y: 1, w: 2, d: 3 });
+
+  const before = { parts: [part({ w: 8, d: 8, h: 2 }), part({ x: 2, z: 2, y: 0, w: 2, d: 2, h: 1, color: 'gold' })] };
+  const now = standing(before);
+  assert.equal(now.parts[1].y, 2, 'a shape kept from before is shown standing');
+  assert.equal(before.parts[1].y, 0, 'and is left as it was built');
+  assert.equal(standing(now), now);
 });
 
 test('while its answer is still arriving, the parts it has finished can already be shown', () => {

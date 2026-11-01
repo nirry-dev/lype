@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
-import { formSchema, readForm } from '../web/lib/form.js';
+import { formSchema, readForm, standing } from '../web/lib/form.js';
 import { loadCatalogue, shortlist } from './models.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
@@ -1194,6 +1194,7 @@ export class Life extends EventEmitter {
    */
   async shape(system, title, what, { kind, before = null } = {}) {
     this.catalogue ??= loadCatalogue();
+    before = standing(before); // as it stands, its parts solid
     const s = this.state;
     const memories = [...Object.values(s.memory.shelves).flat(), ...s.memory.today].map((m) => m.text);
     const nameOf = (id) => this.catalogue.byId.get(id)?.name;

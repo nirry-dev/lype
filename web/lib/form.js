@@ -103,24 +103,118 @@ export function cleanPart(raw, { model = null } = {}) {
 }
 
 const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.z < b.z + b.d && b.z < a.z + a.d;
-const touches = (a, b) => overlap(a, b) && a.y < b.y + b.h && b.y < a.y + a.h;
+const shares = (a, b) => overlap(a, b) && a.y < b.y + b.h && b.y < a.y + a.h;
+const size = (p) => p.w * p.d * p.h;
 
 /**
- * Parts that hang in the air, touching nothing, come down onto whatever is under them (or the ground): a roof given too
- * high lands on its walls. A part that touches another stays where it was put (a window set into a wall), and so does
- * one that glows (a lantern may float).
+ * The face of block `q` that a part one step thin is set flush into (a window in a wall, a door, a pool in a floor), as
+ * [axis, -1 | 1] pointing out of it; null if it is not set into it. The page draws such a part a hair proud of its face.
+ */
+export function inlay(p, q) {
+  if (p === q || q.shape !== 'block' || size(p) >= size(q) || !shares(p, q)) return null;
+  if (p.d === 1 && p.z === q.z) return ['z', -1];
+  if (p.d === 1 && p.z + 1 === q.z + q.d) return ['z', 1];
+  if (p.w === 1 && p.x === q.x) return ['x', -1];
+  if (p.w === 1 && p.x + 1 === q.x + q.w) return ['x', 1];
+  if (p.h === 1 && p.y + 1 === q.y + q.h) return ['y', 1];
+  return null;
+}
+
+/** A narrower part rising up out of a wider one, as a chimney comes up through its roof or a mast through a deck. */
+const through = (p, q) =>
+  p.y > q.y && p.y + p.h > q.y + q.h && p.w < q.w && p.d < q.d && p.x >= q.x && p.z >= q.z && p.x + p.w <= q.x + q.w && p.z + p.d <= q.z + q.d;
+
+/** Two parts that would be in the same space: solids do not pass through each other, unless one is set into the other. */
+const collide = (p, q) => shares(p, q) && !inlay(p, q) && !inlay(q, p) && !through(p, q) && !through(q, p);
+
+const fits = (p) => p.x >= 0 && p.z >= 0 && p.x + p.w <= LOT && p.z + p.d <= LOT && p.y + p.h <= TALL;
+
+/**
+ * Where a part can stand among those already standing: where it was put, if nothing is there; otherwise the nearest
+ * place it fits inside its lot, a few moves away (onto what it ran into, or beside it, or both: up onto a step, then
+ * along a wall). A borrowed model, which only keeps to the space it is given, may have that space narrowed at the edge
+ * of its lot. Null if there is no such place.
+ */
+function room(p, standing) {
+  const hit = (s) => standing.filter((q) => collide(s, q));
+  if (!hit(p).length) return p;
+  const cost = (s) => Math.abs(s.x - p.x) + Math.abs(s.z - p.z) + (s.y - p.y) + (p.w - s.w) + (p.d - s.d);
+  const inside = (s) => {
+    if (p.shape !== MODEL) return s;
+    const w = Math.min(s.w, LOT - Math.max(0, s.x)) - Math.max(0, -s.x);
+    const d = Math.min(s.d, LOT - Math.max(0, s.z)) - Math.max(0, -s.z);
+    return w < 1 || d < 1 ? s : { ...s, x: Math.max(0, s.x), z: Math.max(0, s.z), w, d };
+  };
+  const seen = new Set();
+  let best = null;
+  let tries = [p];
+  for (let step = 0; step < 3 && tries.length; step++) {
+    const next = [];
+    for (const s of tries) {
+      for (const q of hit(s)) {
+        for (const t of [{ ...s, y: q.y + q.h }, { ...s, x: q.x - s.w }, { ...s, x: q.x + q.w }, { ...s, z: q.z - s.d }, { ...s, z: q.z + q.d }].map(inside)) {
+          const key = `${t.x},${t.z},${t.y},${t.w},${t.d}`;
+          if (seen.has(key) || !fits(t)) continue;
+          seen.add(key);
+          if (!hit(t).length) {
+            if (!best || cost(t) < cost(best)) best = t;
+          } else if (next.length < 64) next.push(t);
+        }
+      }
+    }
+    tries = next;
+  }
+  if (best) return best;
+  let up = p; // failing all that, straight up onto whatever is in its way
+  for (let h; (h = hit(up)).length; ) up = { ...up, y: Math.max(...h.map((q) => q.y + q.h)) };
+  return fits(up) ? up : null;
+}
+
+/** What keeps a part up: something under it, something it is fixed to the side of, or something it is set into. */
+const holds = (q, p) =>
+  (overlap(p, q) && q.y + q.h === p.y) ||
+  shares(p, q) ||
+  (p.y < q.y + q.h &&
+    q.y < p.y + p.h &&
+    (((p.x + p.w === q.x || q.x + q.w === p.x) && p.z < q.z + q.d && q.z < p.z + p.d) ||
+      ((p.z + p.d === q.z || q.z + q.d === p.z) && p.x < q.x + q.w && q.x < p.x + p.w)));
+
+/**
+ * Its parts stood up in the world, from the ground up (the bigger first, where two start at the same height). They are
+ * solid: the parts that fit where they were put stand first, then each one put where another already is moves to the
+ * nearest place it fits (a box given inside a roof goes on top of it), and one with nowhere to fit is left out. Parts
+ * that hang in the air, held by nothing, come down onto whatever is under them, or the ground: a roof given too high
+ * lands on its walls. One that glows may float (a lantern). Returns the parts that stand, as new objects, in the order
+ * they were given.
  */
 export function settle(parts) {
-  const out = [];
-  for (const p of [...parts].sort((a, b) => a.y - b.y)) {
-    if (!p.glow && p.y > 0 && !out.some((q) => touches(p, q))) {
-      const under = out.filter((q) => overlap(p, q) && q.y + q.h <= p.y).map((q) => q.y + q.h);
-      p.y = Math.max(0, ...under);
+  const standing = [];
+  const kept = [];
+  const stand = (p, i) => {
+    if (!p.glow && p.y > 0 && !standing.some((q) => holds(q, p))) {
+      p.y = Math.max(0, ...standing.filter((q) => overlap(p, q) && q.y + q.h <= p.y).map((q) => q.y + q.h));
     }
-    out.push(p);
+    standing.push(p);
+    kept[i] = p;
+  };
+  const order = parts.map((p, i) => [p, i]).sort(([a, i], [b, j]) => a.y - b.y || size(b) - size(a) || i - j);
+  const moved = [];
+  for (const [given, i] of order) {
+    if (standing.some((q) => collide(given, q))) moved.push([given, i]);
+    else stand({ ...given }, i);
   }
-  return parts;
+  for (const [given, i] of moved) {
+    const p = room({ ...given }, standing);
+    if (p) stand(p, i);
+  }
+  return kept.filter(Boolean);
 }
+
+/**
+ * A shape as it stands now that its parts are solid. Shapes kept from before they were (`solid` unset) are stood up again
+ * for showing; what was kept is left as it was built.
+ */
+export const standing = (form) => (!form?.parts?.length || form.solid ? form : { ...form, parts: settle(form.parts), solid: true });
 
 /** A shape from what it answered (JSON text or already parsed), or null if nothing in it can stand. */
 export function readForm(answer, { model = null } = {}) {
@@ -142,9 +236,16 @@ export function readForm(answer, { model = null } = {}) {
     if (c.shape === MODEL && ++lent > MAX_BORROWED) continue; // mostly its own work
     seen.add(key);
     parts.push(c);
-    if (parts.length >= MAX_PARTS) break;
+    if (parts.length >= MAX_PARTS * 4) break;
   }
-  return parts.length ? { parts: settle(parts) } : null;
+  // the first sixteen that find room (a part left out for want of room makes way for the next one it gave)
+  let kept = [];
+  for (let n = Math.min(MAX_PARTS, parts.length); ; n++) {
+    kept = settle(parts.slice(0, n));
+    if (kept.length >= MAX_PARTS || n >= parts.length) break;
+  }
+  if (kept.length > MAX_PARTS) kept = settle(kept.slice(0, MAX_PARTS));
+  return kept.length ? { parts: kept, solid: true } : null;
 }
 
 /** The parts it has finished writing so far, while the rest of its answer is still arriving (for watching it build). */

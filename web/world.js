@@ -6,7 +6,7 @@
 // chose one, as a light), wandering from thing to thing while it rests, at its card while it thinks, at its building
 // site while it builds, and settled on the card at night. What it borrowed (ready-made models
 // from the catalogue in models/) stands among its own solids, in the colours it came in.
-import { COLORS, LOT, MODEL, formHeight, partialParts } from './lib/form.js';
+import { COLORS, LOT, MODEL, formHeight, inlay, partialParts } from './lib/form.js';
 import { moodRGB } from './presence.js';
 
 const PAPER = '#efe4d0';
@@ -464,6 +464,9 @@ function placedParts(t, form, dimsOf = () => null) {
       for (let k = 0; k < 3; k++) size[k] = dims[k] * fit;
     }
     const at = [((p.x + p.w / 2) / LOT - 0.5) * SPAN, p.y / LOT, ((p.z + p.d / 2) / LOT - 0.5) * SPAN];
+    // set flush into the face of a block (a window, a door), it is drawn a hair proud of it rather than in the same plane
+    const face = form.parts.map((q) => inlay(p, q)).find(Boolean);
+    if (face) at['xyz'.indexOf(face[0])] += face[1] * 0.004;
     let yaw = 0;
     let tilt = 0;
     if (t.ruin) {

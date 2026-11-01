@@ -4,6 +4,7 @@ import { publicSeal } from '../web/lib/seal.js';
 import { pad } from './store.js';
 import { borrowed, loadCatalogue } from './models.js';
 import { CARD } from './world.js';
+import { standing } from '../web/lib/form.js';
 
 const spriteSrc = (n) => (n ? `works/${pad(n)}.svg` : null);
 
@@ -74,7 +75,7 @@ export function world(life) {
       ruin: t.ruin,
       ruinedAt: t.ruinedAt ?? null,
       sprite: spriteSrc(t.sprite),
-      form: t.form || null,
+      form: standing(t.form) || null,
       borrowed: borrowed(life.catalogue, t.form),
       from: t.from.filter((id) => readable.has(id)).map((id) => ({ id, from: readable.get(id) })),
       people: t.people,

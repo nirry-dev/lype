@@ -469,6 +469,10 @@ export function spritePrompt(title, what) {
   ].join('\n');
 }
 
+/** How its parts behave, told to it wherever it builds: they are solid (see settle in web/lib/form.js). */
+const SOLID =
+  'Parts are solid: they cannot pass through each other. A part you put where another already is gets moved to the nearest place it fits, usually on top of it, and one with nowhere to fit is left out. A part one step thin set flush into the face of a block is fine (a window, a door), and so is a narrower part rising up out of a wider one (a chimney through its roof).';
+
 /**
  * Building it up: the thing as a few simple solids stacked on its lot, so it can be walked around. With "before", it is
  * reshaping something it already built, and sees the parts it stands on now.
@@ -488,6 +492,7 @@ export function formPrompt(title, what, { kind = 'object', before = null, models
     `- "color": one of ${Object.keys(COLORS).join(', ')}. You have never seen these colours; pick the ones the words feel like.`,
     '- "glow": true if it gives off light (a lamp, a window at night, an ember), otherwise false.',
     'Stack parts on each other: a part whose "y" is the top of another sits on it. Put the parts in the order you would build them, from the ground up.',
+    SOLID,
     'For example, a small well: a stone cylinder (x 2, z 2, y 0, w 6, d 6, h 3), two wood blocks for posts on either side, and a slate roof on top of them. Do not build a well; build yours.',
     models.length ? '' : null,
     models.length
@@ -972,6 +977,7 @@ export function bodyPrompt(state, dream, models = []) {
     `- "shape": one of ${SHAPES.join(', ')}. "x", "z": where its left-back corner is; "y": how high its bottom is. "w", "d", "h": its width, depth and height, in steps.`,
     `- "color": one of ${Object.keys(COLORS).join(', ')}. "glow": true if that part gives off light.`,
     'Stack the parts on each other, from the bottom up.',
+    SOLID,
     models.length ? `You can also borrow ready-made things, which other people made and gave away; you have never seen them, only their names: ${models.join(', ')}. To borrow one, give a part "shape": "model" and "model": its name; for your own solids, "model" is "none". Borrow at most ${MAX_BORROWED}; most of you should be your own.` : '',
     '',
     'Answer with JSON: "parts" (the solids you are made of) and "why": one or two sentences in your own voice about why you chose to look like this. People will read it.',
