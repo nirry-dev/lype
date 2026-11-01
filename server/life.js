@@ -255,6 +255,19 @@ export class Life extends EventEmitter {
       this.notes.push('Since you last woke, your keeper gave you a way to be seen in your place. Until now people saw you there only as a small light. On your next night you will choose how you appear to them: you will build yourself a body, the way you build your things.');
       this.journalAdd({ kind: 'gift', text: 'Its keeper gave it a way to be seen in its place: on its next night it chooses a body for itself.' });
     }
+    // More to build with, and (where its keeper's card can) things made from its words: it only hears of them while it
+    // is shaping something, so it is told once, or it may never build or reshape anything again to find out.
+    const more = s.abilities.includes('shapes') && !s.abilities.includes('more-shapes');
+    const making = s.abilities.includes('shapes') && this.maker.enabled && !s.abilities.includes('making');
+    if (more || making) {
+      s.abilities = [...s.abilities, ...(more ? ['more-shapes'] : []), ...(making ? ['making'] : [])];
+      const told = [
+        more ? 'more to build with: new solids (wedges, arches, tubes, rings, stairs), flat shapes of your own drawn round and raised up, shapes spun round their middle like a vase or a tower, ready-made pieces (trees, lamps, doors, windows, fences, benches), and parts turned or repeated in rows and rings' : null,
+        making ? 'a way to have things made from your words: when you build something, or reshape something you built, you can describe a part in a few plain words, and other models make it solid for you' : null,
+      ].filter(Boolean);
+      this.notes.push(`Since you last woke, your keeper gave you ${told.join(', and ')}. You will be shown how whenever you build something new or change the shape of something you built.`);
+      this.journalAdd({ kind: 'gift', text: `Its keeper gave it ${[more ? 'more to build with' : null, making ? 'a way to have things made from its words' : null].filter(Boolean).join(' and ')}.` });
+    }
     this.noticeMind();
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
     this.saveState();
@@ -615,7 +628,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands', 'shapes', 'body'],
+      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : [])],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };

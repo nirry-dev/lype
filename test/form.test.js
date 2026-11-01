@@ -295,3 +295,27 @@ test('an older life is told its next night is when it chooses how it is seen', (
   assert.ok(older.notes.some((n) => n.includes('choose how you appear')));
   assert.ok(older.state.abilities.includes('body'));
 });
+
+test('a life from before the new solids and the maker is told of them once, when it wakes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'iterant-tools-old-'));
+  dirs.push(dir);
+  const life = makeLife(dir);
+  life.birth();
+  assert.ok(life.state.abilities.includes('more-shapes'), 'born knowing');
+  assert.ok(!life.state.abilities.includes('making'), 'no maker here');
+  life.state.abilities = ['world', 'wishes', 'errands', 'shapes', 'body'];
+  life.saveState();
+  const older = makeLife(dir);
+  Object.defineProperty(older.maker, 'enabled', { value: true });
+  older.start();
+  older.stop();
+  const told = older.notes.filter((n) => n.includes('more to build with'));
+  assert.equal(told.length, 1);
+  assert.match(told[0], /made from your words/);
+  assert.ok(older.state.abilities.includes('more-shapes') && older.state.abilities.includes('making'));
+  const again = makeLife(dir);
+  Object.defineProperty(again.maker, 'enabled', { value: true });
+  again.start();
+  again.stop();
+  assert.ok(!again.notes.some((n) => n.includes('more to build with')), 'told once');
+});
