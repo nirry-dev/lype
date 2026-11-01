@@ -1,6 +1,7 @@
 // Between its cycles it is not gone: every minute or two it has a moment in its place. It goes somewhere (one of the
 // things it built, or its card), does one small thing there, and may say a few words. A moment is a tiny ask of its
-// own model, made only when that model is already on the card and nobody else is working the card hard; otherwise its
+// own model, made only when nobody else is working the card hard and no one else's model would have to make way for
+// it (its own is on the card, or the card is empty, as after a restart); otherwise its
 // body drifts on by itself, without a word, until it can think again. Its moments are told to it at its next cycle.
 // A card that holds one model at a time is shared by taking turns: when a life it shares the house with has had the
 // card for a while between cycles, it takes it back for its own moments (never from anyone else's model).
@@ -114,11 +115,16 @@ export class Moments {
       this.heldSince = null;
       return null;
     }
-    // Its model is not on the card. It never puts it on an empty card, or in place of anyone else's model; only in
-    // place of a household life's, and (unless it is at full power) only once that life has had a turn of its own.
+    // Its model is not on the card. An empty card it takes, as a cycle would (nobody makes way). It never puts its
+    // model in place of anyone else's; only in place of a household life's, and (unless it is at full power) only once
+    // that life has had a turn of its own.
     const others = p.others.filter((m) => m !== life.cfg.brain.eyes);
     const household = new Set(c.household || []);
-    if (!others.length || others.some((m) => !household.has(m))) {
+    if (!others.length) {
+      this.heldSince = null;
+      return null;
+    }
+    if (others.some((m) => !household.has(m))) {
       this.heldSince = null;
       return 'its model is not on the card';
     }

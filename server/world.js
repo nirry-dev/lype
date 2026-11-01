@@ -70,6 +70,7 @@ export function remembered(thing, memory) {
   return all.some(
     (m) =>
       (m.because || []).some((id) => thing.from.includes(id)) ||
+      (m.holds || []).includes(thing.id) || // a memory folded from others that held it
       (m.about && people.has(m.about.trim().toLowerCase())) ||
       (name.length >= 4 && m.text.toLowerCase().includes(name)),
   );

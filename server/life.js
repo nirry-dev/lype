@@ -9,14 +9,14 @@ import { Maker } from './maker.js';
 import { Moments, clock } from './moments.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
-import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
+import { SHELVES, alike, consolidate, emptyMemory, fold, refile, reinforce, similarity, strength, words } from './memory.js';
 import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
 import { compare, measure } from './measure.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
-import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, placeNear, untoldAnswers, weather } from './world.js';
+import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, placeNear, remembered, untoldAnswers, weather } from './world.js';
 
 /** Everything one life is made of on disk. When it dies, these are put away together, whole, and stay replayable. */
 const LIFE_FILES = ['state.json', 'letters.json', 'journal.json', 'chain.json', 'cycles', 'nights', 'works', 'returns'];
@@ -884,6 +884,37 @@ export class Life extends EventEmitter {
     }
   }
 
+  /**
+   * Its memories, looked over before it sleeps: groups that say the same thing (the same feeling at another number, the
+   * same thing done on different days) are folded into one, in its own words. The old ones are forgotten visibly, as
+   * folded into the new one, which holds up whatever they held up in its place. If it can't, nothing changes.
+   */
+  async foldMemories() {
+    const s = this.state;
+    // first each memory goes where it belongs, said plainly ("I learned that the arch holds" is "The arch holds")
+    for (const k of SHELVES) for (const m of s.memory.shelves[k]) m.text = mind.plainly(m.text);
+    this.refiled = refile(s.memory);
+    if (!SHELVES.some((k) => s.memory.shelves[k].length >= 3)) return [];
+    this.setPhase('sorting', 'folding memories that say the same thing');
+    try {
+      const hints = Object.fromEntries(SHELVES.map((k) => [k, alike(s.memory.shelves[k])]));
+      const user = mind.foldPrompt(s, { hints, size: this.cfg.memory.shelfSize });
+      const raw = await this.brain.complete({ kind: 'fold', system: mind.systemPrompt(s, this.cfg), user, maxTokens: 900, temperature: 0.4, schema: mind.FOLD_SCHEMA });
+      const groups = mind.readFold(raw.text, s.memory);
+      for (const g of groups) {
+        const olds = { shelves: { [g.shelf]: s.memory.shelves[g.shelf].filter((m) => g.ids.includes(m.id)) }, today: [] };
+        g.holds = s.world.things.filter((t) => remembered(t, olds)).map((t) => t.id);
+      }
+      const folded = fold(s.memory, groups, s.cycle);
+      const n = folded.reduce((k, f) => k + f.from.length, 0);
+      if (folded.length) this.journalAdd({ kind: 'memory', text: `Before it slept it folded ${n} memories that said the same thing into ${folded.length}: ${folded.map((f) => `"${f.text}"`).join(' ')}` });
+      return folded;
+    } catch (err) {
+      this.journalAdd({ kind: 'falter', text: `It could not look over its memories before sleeping: ${err.message}` });
+      return [];
+    }
+  }
+
   /** Force a night now (admin). */
   async sleepNow() {
     if (this.busy) return { ok: false, reason: 'It is awake right now.' };
@@ -1150,6 +1181,8 @@ export class Life extends EventEmitter {
     }
 
     for (const r of reflection.remember) {
+      // What it knows of the world outside comes from letters: with none read, it is something that happened to it.
+      if (r.shelf === 'world' && !chosen.length) r.shelf = 'moments';
       // Tie the memory to the letters that caused it, so its influence can be traced later.
       const byName = chosen.filter((l) => sameName(r.about, l.from)).map((l) => l.id);
       const because = byName.length ? byName : r.shelf === 'moments' ? [] : chosen.map((l) => l.id);
@@ -1451,7 +1484,10 @@ export class Life extends EventEmitter {
     const worldBefore = structuredClone(s.world);
 
     try {
+      // Before it sleeps, memories that say the same thing are folded into one, in its own words, so they leave room.
+      const folded = await this.foldMemories();
       const consolidation = consolidate(s.memory, s.cycle, cfg.memory);
+      consolidation.moved = [...(this.refiled || []), ...consolidation.moved];
       // Its place weathers after the forgetting: what it no longer remembers stops holding things up.
       const weathered = weather(s.world, s.memory, { since: from, cycle: s.cycle });
       // A mortal mind counts the nights since its last letter (from anyone, a person or another mind).
@@ -1473,16 +1509,18 @@ export class Life extends EventEmitter {
       const dream = mind.cleanProse(dreamRaw.text, 900);
 
       const numbers = mind.numbersLines(details);
+      // lines about itself that all begin alike ("I learned that…"): it may reword more of them tonight
+      const revisions = mind.sameOpening(s.self.own) ? 4 : 2;
       this.setPhase('rewriting', `becoming version ${version}`);
       const sleepRaw = await this.brain.complete({
         kind: 'sleep',
         system,
-        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal, numbers }),
+        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal, numbers, folded, revisions }),
         maxTokens: 1600,
         temperature: 0.7,
         schema: mind.SLEEP_SCHEMA,
       });
-      const plan = mind.readSleep(sleepRaw.text);
+      const plan = mind.readSleep(sleepRaw.text, { revisions });
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
       // Its body comes once, on the first night it can be seen (or the next, if nothing it built could stand).
@@ -1527,7 +1565,7 @@ export class Life extends EventEmitter {
         dream,
         release: plan.release,
         day: plan.day,
-        memory: consolidation,
+        memory: { ...consolidation, folded },
         self,
         portrait,
         name,

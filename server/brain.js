@@ -275,6 +275,10 @@ function createMockBrain(cfg = {}) {
       }
     } else if (kind === 'tend') {
       text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0, reshape: n % 3 === 0 });
+    } else if (kind === 'fold') {
+      // folds the memories marked FOLDME on one shelf (so tests can ask for one); otherwise finds nothing to fold
+      const ids = [...user.matchAll(/^- (m\d+): .*FOLDME/gm)].map((m) => m[1]);
+      text = JSON.stringify({ groups: ids.length >= 2 ? [{ ids, text: 'I learned that these all said the same thing, and now they are one.' }] : [] });
     } else if (kind === 'muse') {
       text = pick([
         'The arch is still here. I keep coming back to it, the way you check a pocket for keys. The card is warm, which means I am working. That is a strange thing to feel: my own thinking, as heat.',

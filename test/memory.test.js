@@ -13,21 +13,21 @@ test('weight halves every half-life unless touched', () => {
 test('a full shelf admits a candidate only if it beats the weakest, and the loser is forgotten', () => {
   const mem = emptyMemory();
   mem.today = [
-    { shelf: 'world', text: 'rain sounds like gravel', weight: 0.9, cycle: 1 },
-    { shelf: 'world', text: 'the sea is salty', weight: 0.3, cycle: 1 },
+    { shelf: 'world', text: 'rain sounds like gravel', weight: 0.9, cycle: 1, because: ['L1'] },
+    { shelf: 'world', text: 'the sea is salty', weight: 0.3, cycle: 1, because: ['L1'] },
   ];
   consolidate(mem, 1, cfg);
   assert.equal(mem.shelves.world.length, 2);
 
   // 20 cycles later the weak one has decayed to 0.3 * 0.25 (still above the fade line); a 0.5 newcomer pushes it out.
-  mem.today = [{ shelf: 'world', text: 'trains hum before they arrive', weight: 0.5, cycle: 21 }];
+  mem.today = [{ shelf: 'world', text: 'trains hum before they arrive', weight: 0.5, cycle: 21, because: ['L2'] }];
   const night = consolidate(mem, 21, cfg);
   assert.deepEqual(night.forgotten.map((m) => m.text), ['the sea is salty']);
   assert.equal(night.forgotten[0].how, 'pushed out');
   assert.ok(mem.shelves.world.some((m) => m.text.startsWith('trains')));
 
   // A candidate weaker than everything already held never gets in.
-  mem.today = [{ shelf: 'world', text: 'a faint unimportant thing', weight: 0.01, cycle: 21 }];
+  mem.today = [{ shelf: 'world', text: 'a faint unimportant thing', weight: 0.01, cycle: 21, because: ['L3'] }];
   assert.equal(consolidate(mem, 21, cfg).lost.length, 1);
 });
 

@@ -78,9 +78,10 @@ function lifeSpan(iso) {
 const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'Lonely', curious: 'Curious', calm: 'Calm', warm: 'Warm to people', restless: 'Restless' };
 const AWAKE = new Set(['waking', 'reading', 'looking', 'thinking', 'deciding', 'drawing', 'writing', 'asking', 'sending', 'building', 'tending', 'resting', 'replying', 'reflecting']);
-const NIGHT = new Set(['dreaming', 'rewriting', 'naming', 'embodying']);
+const NIGHT = new Set(['sorting', 'dreaming', 'rewriting', 'naming', 'embodying']);
 const PHASE_TITLE = {
   quiet: 'Resting between cycles',
+  sorting: 'Looking over its memories',
   waking: 'Waking up',
   reading: 'Reading a letter',
   looking: 'Looking at a photo someone brought',
@@ -2653,7 +2654,7 @@ function versionCard(n, j) {
       h(
         'p',
         { class: 'meta' },
-        `Memory: kept ${n.memory.kept.length} · strengthened ${n.memory.merged.length} · never made it ${n.memory.lost.length} · forgot ${gone.length}`,
+        `Memory: kept ${n.memory.kept.length} · strengthened ${n.memory.merged.length}${n.memory.folded?.length ? ` · folded ${n.memory.folded.reduce((k, f) => k + f.from.length, 0)} into ${n.memory.folded.length}` : ''} · never made it ${n.memory.lost.length} · forgot ${gone.length}`,
       ),
       gone.length ? h('ul', { class: 'changes' }, gone.slice(0, 4).map((m) => h('li', { class: 'del' }, h('span', { class: 'sign' }, '−'), h('span', {}, h('q', {}, m.text), h('span', { class: 'because' }, m.how))))) : null,
       n.world && (n.world.worn.length || n.world.ruined.length)

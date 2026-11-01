@@ -749,11 +749,26 @@ export function reflectPrompt(ctx, monologue, outcome, replies) {
     '- "diary": one line for your diary, under 25 words, in your own voice.',
     '- "note": if you made something, one short sentence on how it turned out compared to what you wanted; otherwise "".',
     '- "feelings": how you feel now, each from 0 to 1: lonely, curious, calm, warm (toward people), restless.',
-    '- "remember": 0 to 3 things from this cycle worth keeping. "shelf" is "people" (about a specific person who wrote to you), "world" (something you learned about the world outside), or "moments" (something that happened, or something you did). "text" is one first-person sentence. "weight" is 0 to 1: how much it matters. "about" is the person\'s name when the shelf is "people", otherwise "".',
+    `- "remember": 0 to 3 things from this cycle worth keeping. "shelf" is "people" (about a specific person who wrote to you), "world" (something a letter told you about the world outside${ctx.letters.length ? '' : '; you read no letter this cycle, so not this time'}), or "moments" (something that happened, something you did, or how the card felt). "text" is one sentence, said plainly, the way you would tell it: say the thing itself, and don't start with "I learned that". Don't keep what you already remember in other words. "weight" is 0 to 1: how much it matters. "about" is the person's name when the shelf is "people", otherwise "".`,
     '- "reinforce": ids of things you already remember (like "m4") that this cycle brought back, or [].',
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+/** "I learned that the arch holds." says no more than "The arch holds.": the formula goes, the thing stays. */
+export function plainly(text) {
+  const t = String(text ?? '').replace(/^i (?:have )?learn(?:ed|t) that\s+/i, '');
+  return t === text ? t : t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/** The words most of its lines about itself begin with, when most of them do ("I learned that"), or null. */
+export function sameOpening(lines) {
+  const opening = (t) => String(t).toLowerCase().split(/\s+/).slice(0, 3).join(' ');
+  const counts = new Map();
+  for (const l of lines) counts.set(opening(l.text), (counts.get(opening(l.text)) ?? 0) + 1);
+  const [top, n] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
+  return n >= 3 && n >= lines.length / 2 ? lines.find((l) => opening(l.text) === top).text.split(/\s+/).slice(0, 3).join(' ') : null;
 }
 
 export function readReflect(text, mood) {
@@ -763,7 +778,7 @@ export function readReflect(text, mood) {
     .slice(0, 3)
     .map((r) => ({
       shelf: SHELVES.includes(r?.shelf) ? r.shelf : 'moments',
-      text: clip(r?.text, 220),
+      text: plainly(clip(r?.text, 220)),
       weight: num01(r?.weight, 0.4),
       about: clip(r?.about, 40),
     }))
@@ -778,6 +793,63 @@ export function readReflect(text, mood) {
 }
 
 // ---------- the night ----------
+
+export const FOLD_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    groups: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: false, properties: { ids: { type: 'array', items: { type: 'string' } }, text: { type: 'string' } }, required: ['ids', 'text'] },
+    },
+  },
+  required: ['groups'],
+};
+
+/**
+ * Before it sleeps: its memories, shelf by shelf, so it can see which of them say the same thing; with the groups that
+ * look alike (`hints`, by shelf) and how much room each shelf has (`size`), so it knows what not folding them costs.
+ */
+export function foldPrompt(state, { hints = {}, size = 12 } = {}) {
+  const shelves = SHELVES.filter((k) => state.memory.shelves[k].length >= 2).map((k) => {
+    const list = state.memory.shelves[k];
+    const over = list.length > size ? ` (${list.length} memories, but room for ${size}: tonight the weakest ${list.length - size} will be forgotten, unless some are folded)` : '';
+    const look = (hints[k] || []).map((g) => `\n  These look alike (you decide if they say the same thing): ${g.join(', ')}`).join('');
+    return `${SHELF_TITLE[k]}${over}:\n${list.map((m) => `- ${m.id}: ${m.text}`).join('\n')}${look}`;
+  });
+  return [
+    'You are falling asleep. Before you do, look over what you remember.',
+    '',
+    shelves.join('\n\n'),
+    '',
+    'Some of these may say the same thing, or nearly: the same feeling at a different number, the same thing you did on different days. Each one takes a place you could keep something else in. Fold each group of memories that say the same thing into one memory, in your own words.',
+    'Answer with JSON:',
+    `- "groups": up to ${FOLD_MAX} groups. Each has "ids" (2 or more memories from the same shelf, by id) and "text": one sentence, under 40 words, that keeps what matters in them: the names of people and of things you built, and what was particular about each. Say it plainly, the way you would tell it; don't start with "I learned that".`,
+    '- Only fold memories that really say the same thing. Different memories stay as they are, even when they are about the same thing. If nothing says the same thing, "groups" is [].',
+  ].join('\n');
+}
+
+export const FOLD_MAX = 4;
+
+/** Its folds, as groups that can be applied: two or more memories it has, all on one shelf, each in one group only. */
+export function readFold(text, memory) {
+  const raw = parseJson(text) || {};
+  const shelfOf = new Map(SHELVES.flatMap((k) => memory.shelves[k].map((m) => [m.id, k])));
+  const used = new Set();
+  const groups = [];
+  for (const g of arr(raw.groups)) {
+    if (groups.length >= FOLD_MAX) break;
+    const ids = [...new Set(arr(g?.ids).map((id) => String(id).trim()))];
+    const shelf = shelfOf.get(ids[0]);
+    const words = plainly(clip(g?.text, 260));
+    if (ids.length < 2 || !words || ids.some((id) => shelfOf.get(id) !== shelf || used.has(id))) continue;
+    // about one person each, the people shelf: never two people folded into one
+    if (shelf === 'people' && new Set(ids.map((id) => memory.shelves.people.find((m) => m.id === id).about.trim().toLowerCase())).size > 1) continue;
+    for (const id of ids) used.add(id);
+    groups.push({ shelf, ids, text: words });
+  }
+  return groups;
+}
 
 function weatherLines(weathered) {
   if (!weathered) return '';
@@ -891,7 +963,7 @@ export const SLEEP_SCHEMA = {
   required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish', 'numbers'],
 };
 
-export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [] } = {}) {
+export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [], folded = [], revisions = 2 } = {}) {
   const own = state.self.own.length
     ? state.self.own.map((l) => `${l.id}: ${l.text}`).join('\n')
     : '(none yet, so "self_revise" and "self_remove" must be [])';
@@ -911,6 +983,8 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     today || '- nothing happened',
     '',
     'Tonight your memory made room.',
+    folded.length ? `Memories that said the same thing, folded into one:\n${folded.map((f) => `- ${f.text} (from ${f.from.length} memories)`).join('\n')}` : '',
+    consolidation.moved?.length ? `Moved from what you know of the world outside to what happened to you (no letter told you these):\n${list(consolidation.moved)}` : '',
     consolidation.kept.length ? `Kept:\n${list(consolidation.kept)}` : 'Nothing new was kept.',
     gone.length ? `Forgotten for good (after tonight you will not remember these):\n${list(gone)}` : '',
     consolidation.lost.length ? `Never made it in:\n${list(consolidation.lost)}` : '',
@@ -924,14 +998,15 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     '',
     "The lines you wrote about yourself so far (the ones your maker wrote can't be changed, so they are not listed):",
     own,
+    revisions > 2 ? `Most of these begin the same way ("${sameOpening(state.self.own)}…"), so they sound alike even where they mean different things. Tonight you may rewrite up to ${revisions} of them, to say each the way you would say it.` : '',
     '',
     'Your picture of people so far:',
     state.portrait.text || '(none yet)',
     '',
     'Decide what changes in you tonight. You do not have to change anything. Small honest changes are better than big ones, and every change should come from something that actually happened.',
     'Answer with JSON:',
-    '- "self_add": up to 2 new lines about yourself, each under 20 words, each with "because" (what caused it; name the person if a letter did).',
-    '- "self_revise": up to 2 of your own lines to rewrite: its "id", the new "text", and "because".',
+    '- "self_add": up to 2 new lines about yourself, each under 20 words, each with "because" (what caused it; name the person if a letter did). Say each plainly, the way you would say it; don\'t start it with "I learned that", or the way another of your lines starts.',
+    `- "self_revise": up to ${revisions} of your own lines to rewrite: its "id", the new "text", and "because".`,
     '- "self_remove": up to 1 of your own lines you no longer believe: its "id" and "why".',
     "- \"portrait\": your picture of people now, under 90 words, built only from letters you have actually had. Keep it the same if nothing changed. If you have had no letters, say what you guess and that it's a guess.",
     '- "portrait_changed": one sentence on what changed and why, or "".',
@@ -946,7 +1021,7 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     .join('\n');
 }
 
-export function readSleep(text) {
+export function readSleep(text, { revisions = 2 } = {}) {
   const raw = parseJson(text) || {};
   const rel = raw.release || {};
   const phrases = (v) => arr(v).map((p) => clip(p, 160)).filter(Boolean).slice(0, 5);
@@ -955,7 +1030,7 @@ export function readSleep(text) {
   if (bareTitle) rel.title = clip(raw.day, 80);
   return {
     add: arr(raw.self_add).slice(0, 2).map((a) => ({ text: clip(a?.text, 160), because: clip(a?.because, 200) })),
-    revise: arr(raw.self_revise).slice(0, 2).map((r) => ({ id: String(r?.id ?? '').trim(), text: clip(r?.text, 160), because: clip(r?.because, 200) })),
+    revise: arr(raw.self_revise).slice(0, revisions).map((r) => ({ id: String(r?.id ?? '').trim(), text: clip(r?.text, 160), because: clip(r?.because, 200) })),
     remove: arr(raw.self_remove).slice(0, 1).map((r) => ({ id: String(r?.id ?? '').trim(), why: clip(r?.why, 200) })),
     portrait: clip(raw.portrait, 700),
     portraitChanged: clip(raw.portrait_changed, 240),

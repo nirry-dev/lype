@@ -81,7 +81,7 @@ test('no moment while it is awake, nor when its model is not already on the card
 
   life.brain.presence = async () => ({ reachable: true, known: true, ownState: 'unloaded', others: ['someone-elses-model'] });
   const drifted = await life.moments.one();
-  assert.equal(asked.length, 0, 'it never loads its model for a moment');
+  assert.equal(asked.length, 0, 'it never puts its model in place of someone else’s');
   assert.ok(drifted.drift);
   assert.equal(drifted.say, '');
   assert.equal(await life.moments.one(), null, 'it stays a while before drifting again');
@@ -91,6 +91,12 @@ test('no moment while it is awake, nor when its model is not already on the card
   assert.ok(await life.moments.one());
   assert.equal(asked.at(-1).kind, 'moment');
   assert.match(asked.at(-1).user, /This is your first moment since your last cycle/, 'a drift is not told to it as something it did');
+
+  // an empty card (after a restart, say): nobody makes way, so it takes it, as a cycle would
+  life.brain.presence = async () => ({ reachable: true, known: true, ownState: 'unloaded', others: [] });
+  const n = asked.length;
+  assert.ok(await life.moments.one());
+  assert.equal(asked.length, n + 1);
 });
 
 test('its answer is read as one of the places it was offered', () => {
