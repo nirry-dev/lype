@@ -2194,6 +2194,13 @@ a.btn {
 .walk-label.selected {
   background: color-mix(in srgb, var(--curious) 34%, rgba(12, 14, 18, 0.8));
 }
+.walk-label.say {
+  max-width: 260px;
+  white-space: normal;
+  text-align: center;
+  font: italic 400 12px var(--serif, Georgia, serif);
+  background: rgba(12, 14, 18, 0.72);
+}
 .walk-label.ruin {
   color: var(--dim);
   text-decoration: line-through;

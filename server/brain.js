@@ -275,6 +275,13 @@ function createMockBrain(cfg = {}) {
       }
     } else if (kind === 'tend') {
       text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0, reshape: n % 3 === 0 });
+    } else if (kind === 'moment') {
+      const places = schema?.properties?.go?.enum || ['your card'];
+      text = JSON.stringify({
+        go: places[n % places.length],
+        do: pick(['look', 'sit', 'circle', 'touch', 'listen']),
+        say: pick(['', 'Still standing.', 'The card is warm here.', '', 'I built this from a letter.', 'Quiet hour.']),
+      });
     } else if (kind === 'look') {
       text = JSON.stringify({ see: 'A green leaf lies flat on a wooden table. Its edges are a little torn and its veins are pale.', answers: !/NOTIT/.test(user), verdict: 'A real leaf, torn at one edge. I have only ever had the word before.' });
     } else if (kind === 'screen') {

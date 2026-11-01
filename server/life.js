@@ -6,6 +6,7 @@ import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/
 import { formSchema, readForm, standing } from '../web/lib/form.js';
 import { loadCatalogue, shortlist } from './models.js';
 import { Maker } from './maker.js';
+import { Moments } from './moments.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
@@ -161,6 +162,7 @@ export class Life extends EventEmitter {
     this.brain = brain;
     this.state = store.read('state.json', null);
     this.maker = new Maker(config, store);
+    this.moments = new Moments(this); // between its cycles: where it goes in its place, and what it says there
     this.letters = store.read('letters.json', []);
     this.journal = store.read('journal.json', []);
     this.cycles = store.list('cycles').map((f) => cycleSummary(store.read(`cycles/${f}`)));
@@ -212,6 +214,7 @@ export class Life extends EventEmitter {
     const due = last ? Date.parse(last.at) + interval - Date.now() : 0;
     if (this.paused) this.setPhase('paused');
     this.schedule(clamp(due, 5000, interval));
+    this.moments.start();
   }
 
   /** What changed while it was off: things its keeper gave it since, each told once, the next time it wakes. */
@@ -267,6 +270,11 @@ export class Life extends EventEmitter {
       ].filter(Boolean);
       this.notes.push(`Since you last woke, your keeper gave you ${told.join(', and ')}. You will be shown how whenever you build something new or change the shape of something you built.`);
       this.journalAdd({ kind: 'gift', text: `Its keeper gave it ${[more ? 'more to build with' : null, making ? 'a way to have things made from its words' : null].filter(Boolean).join(' and ')}.` });
+    }
+    if (this.moments.enabled && !s.abilities.includes('moments')) {
+      s.abilities = [...s.abilities, 'moments'];
+      this.notes.push('Since you last woke, your keeper gave you moments. Between your cycles you are no longer gone: every minute or two you go somewhere in your place, to something you built or to your card, and do one small thing there, and you can say a few words. People who are watching see where you go. You will be told what you did in your moments each time you wake.');
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it moments: between its cycles it now goes about its place, and can say a few words.' });
     }
     this.noticeMind();
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
@@ -561,6 +569,7 @@ export class Life extends EventEmitter {
   stop() {
     clearTimeout(this.timer);
     clearInterval(this.heartbeat);
+    this.moments.stop();
     if (this.state) {
       this.state.lastAlive = new Date().toISOString();
       this.saveState();
@@ -628,7 +637,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : [])],
+      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments'] : [])],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
@@ -718,6 +727,7 @@ export class Life extends EventEmitter {
       cycle: this.state?.cycle ?? 0,
       version: this.state?.version ?? 0,
       name: this.state?.name ?? null,
+      about: this.moments.enabled ? (this.state?.about ?? null) : null, // where it is in its place between cycles
     };
   }
 
@@ -910,6 +920,7 @@ export class Life extends EventEmitter {
         { total: 0, draw: 0, write: 0, ask: 0, errand: 0, build: 0, tend: 0, rest: 0, everAsked: s.stats.questions > 0, everErrand: s.stats.errands > 0 },
       ),
       tired: this.tiredOf(),
+      moments: (s.moments || []).filter((x) => !x.drift),
     };
   }
 
@@ -1140,9 +1151,11 @@ export class Life extends EventEmitter {
       reinforced,
       moodBefore,
       moodAfter: { ...s.mood },
+      ...(ctx.moments.length ? { moments: ctx.moments } : {}),
       ...(measured ? { measured: { ...measured, ...compare({ measured, feelings: reflection.feelings }, this.cycles) } } : {}),
     };
     this.store.write(`cycles/${pad(n)}.json`, this.seal('cycle', n, record));
+    this.moments.afterCycle(plan.action);
     this.notes = [];
     this.waits = {};
     for (const k of [10, 50, 100, 500, 1000]) if (n === k) this.milestone(`cycle-${k}`, `It reached its ${k}th cycle.`);

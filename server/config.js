@@ -31,6 +31,12 @@ const DEFAULTS = {
     cycleMinutes: 20, // time between wakes
     jitter: 0.2, // +-20% so it doesn't tick like a clock
     nightEvery: 8, // cycles per day; then it sleeps and becomes a new version
+    // Between cycles, a moment every so often (0 = none): it goes somewhere in its place and may say a few words, a
+    // small ask of its model made only while that model is already on the card and the card is not busy (server/moments.js).
+    momentSeconds: 90,
+    // On a card that holds one model at a time, how long a life it shares the house with keeps the card between
+    // cycles before this one takes it back for its own moments (`courtesy.household` names those lives' models).
+    momentTurnMinutes: 6,
   },
   courtesy: {
     enabled: true,
@@ -140,7 +146,7 @@ export function loadConfig(argv = process.argv.slice(2)) {
 
   if (argv.includes('--fast')) {
     // Demo pace: wake every ~15 s and sleep every 4 cycles.
-    cfg.rhythm = { ...cfg.rhythm, cycleMinutes: 0.25, jitter: 0, nightEvery: 4 };
+    cfg.rhythm = { ...cfg.rhythm, cycleMinutes: 0.25, jitter: 0, nightEvery: 4, momentSeconds: cfg.rhythm.momentSeconds && 4 };
     cfg.courtesy = { ...cfg.courtesy, retryMinutes: 0.5 };
   }
   if (argv.includes('--mock')) cfg.brain = { ...cfg.brain, backend: 'mock' };

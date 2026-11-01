@@ -349,6 +349,16 @@ function statusMode(phase) {
   if (phase === 'unreachable' || phase === 'faltered') return 'down';
   return 'rest';
 }
+// Between cycles, what it is doing in its place (server/moments.js): where it went, and what it does there.
+const ABOUT_THING = { look: 'looking at', sit: 'sitting by', circle: 'walking round', touch: 'touching', listen: 'standing still by' };
+const ABOUT_CARD = { look: 'looking at its card', sit: 'sitting on its card', circle: 'walking round its card', touch: 'touching its card', listen: 'listening to its card' };
+function aboutText(s) {
+  const a = !SNAPSHOT && s.phase === 'quiet' && s.about;
+  if (!a) return '';
+  if (a.at === 'card') return ABOUT_CARD[a.doing] || ABOUT_CARD.look;
+  const thing = app.world?.things.find((t) => t.id === a.at);
+  return thing ? `${ABOUT_THING[a.doing] || ABOUT_THING.look} ${thing.name}` : 'about its place';
+}
 function statusText(s) {
   if (s.phase === 'recorded') return `a recording · ${dayName(s.snapshotAt)}`;
   if (s.phase === 'quiet') return s.nextWakeAt ? `resting · wakes ${untilText(s.nextWakeAt)}` : 'resting';
@@ -857,7 +867,11 @@ function updateNow({ streaming = false } = {}) {
     app.presence?.setMood(s.mood);
     app.presence?.setPhase(s.phase);
     let detail = s.detail;
-    if (s.phase === 'quiet') detail = s.nextWakeAt ? `wakes ${untilText(s.nextWakeAt)} · sleeps after ${s.rhythm.untilNight} more cycle${s.rhythm.untilNight === 1 ? '' : 's'}` : '';
+    if (s.phase === 'quiet') {
+      const about = aboutText(s);
+      const said = about && s.about.say ? `: “${s.about.say}”` : '';
+      detail = [about ? `${about}${said}` : '', s.nextWakeAt ? `wakes ${untilText(s.nextWakeAt)} · sleeps after ${s.rhythm.untilNight} more cycle${s.rhythm.untilNight === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+    }
     fill($('#phase-line'), h('span', { class: 'phase' }, PHASE_TITLE[s.phase] || s.phase), detail ? h('span', { class: 'phase-detail' }, detail) : null);
     fill($('#meters'), ...FEELINGS.map((f) => meter(f, s.mood[f])));
     renderSenses();
@@ -1816,7 +1830,8 @@ function updateWalkHud() {
   if (!hud || !app.state) return;
   const s = app.state;
   const b = !SNAPSHOT && s.busy && app.live.building;
-  const doing = b ? `${b.id ? 'reshaping' : app.live.form ? 'building' : 'drawing'} “${b.name}”` : statusText(s);
+  const about = aboutText(s);
+  const doing = b ? `${b.id ? 'reshaping' : app.live.form ? 'building' : 'drawing'} “${b.name}”` : about ? `${about}${s.nextWakeAt ? ` · wakes ${untilText(s.nextWakeAt)}` : ''}` : statusText(s);
   const text = `${s.name || 'It'} is ${doing}`;
   app.walk?.setLook(walkLook());
   if (hud.textContent !== text) fill(hud, h('span', { class: 'walk-hud-dot', style: `--dot:${moodColor(s.mood)}` }), h('span', {}, text));
@@ -1837,6 +1852,8 @@ function walkLook() {
     name: s.name || '',
     body: s.body?.form || null,
     bodyLive: !SNAPSHOT && s.phase === 'embodying' ? app.live.body || '' : null,
+    // between cycles, where it really is and what it said there (each viewer sees the same); otherwise it wanders
+    about: !SNAPSHOT && s.phase === 'quiet' ? s.about || null : null,
   };
 }
 

@@ -811,6 +811,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   const labels = document.createElement('div');
   labels.className = 'walk-labels';
   labels.setAttribute('aria-hidden', 'true');
+  const sayLabel = document.createElement('div'); // what it says in a moment, over its head for a while
+  sayLabel.className = 'walk-label say';
+  sayLabel.hidden = true;
   const selfLabel = document.createElement('div');
   const mini = document.createElement('canvas');
   mini.className = 'walk-mini';
@@ -820,7 +823,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   focus.className = 'walk-focus';
   host.append(canvas, focus, labels, mini);
   selfLabel.className = 'walk-label self';
-  labels.append(selfLabel);
+  labels.append(selfLabel, sayLabel);
 
   const gl = canvas.getContext('webgl', { antialias: true, premultipliedAlpha: false, alpha: true });
   if (!gl) {
@@ -988,7 +991,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   let site = null; // { x, y, id, name, pos, tex, label, svg, parts: [{ p, at }] }
   const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 12, target: [0, 0.4, 0], goal: null };
   // Where it is and where it is going: a spot on the ground (x, z), a height it floats at, which way it faces.
-  const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };  const keys = new Set();
+  const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };
+  let said = null; // its words from its last moment: { text, n, until } (shown from when it gets there)
+  let saidTimer = 0;  const keys = new Set();
   let fan = 0;
   let raf = 0;
   let last = performance.now();
@@ -1401,9 +1406,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   const angleTo = (from, to) => Math.atan2(to[0] - from[0], to[1] - from[1]);
   const turn = (a, b, k) => a + (((((b - a) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * k;
   /** A spot beside a thing, on its side facing `toward`, and the way to face to look at it. */
-  function beside(th, toward = [0, 0]) {
-    // far enough out that all of its body stands clear of the lot, not only its middle
-    const out = SPAN / 2 + reach() + 0.08;
+  function beside(th, toward = [0, 0], close = false) {
+    // far enough out that all of its body stands clear of the lot, not only its middle (just clear of it, to touch it)
+    const out = SPAN / 2 + reach() + (close ? 0.03 : 0.08);
     // the sides of its lot, nearest to `toward` first; open ground before a side where something else stands
     const sides = [[0, 1], [0, -1], [1, 0], [-1, 0]]
       .map((dir) => ({ dir, spot: [th.pos[0] + dir[0] * out, th.pos[2] + dir[1] * out] }))
@@ -1439,6 +1444,20 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const at = reduced && things.find((th) => th.t.id === world.at);
       return at ? beside(at, [0, 0]) : { spot: [0.25, 0.62], face: Math.PI };
     }
+    // between cycles: where its moment put it (the same for everyone watching), doing what it chose to do there
+    if (look.about) {
+      const a = look.about;
+      const th = a.at !== 'card' && things.find((x) => x.t.id === a.at);
+      if (creature.goal?.about === a.n && (!creature.visiting || creature.visiting === th)) return creature.goal;
+      creature.visiting = th || null;
+      creature.arrived = 0;
+      const viewer = [cam.target[0] + Math.sin(cam.yaw) * cam.dist, cam.target[2] + Math.cos(cam.yaw) * cam.dist];
+      if (!th) return { ...(a.doing === 'sit' ? { spot: [0, 0], face: null, settle: true } : { spot: [0.25, 0.62], face: Math.PI }), about: a.n, doing: a.doing };
+      const g = beside(th, viewer, a.doing === 'touch');
+      // walking round it: far enough out to clear its corners
+      const orbit = a.doing === 'circle' && !reduced ? { c: [th.pos[0], th.pos[2]], r: (SPAN / 2) * Math.SQRT2 + reach() + 0.06 } : null;
+      return { ...g, about: a.n, doing: a.doing, orbit, sit: a.doing === 'sit' };
+    }
     // resting: wander
     const standing = things.filter((th) => !th.t.ruin);
     if (!creature.goal || (creature.arrived && now > creature.next) || (creature.visiting && !standing.includes(creature.visiting))) {
@@ -1473,6 +1492,13 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     const now = performance.now();
     const goal = decide(now);
     if (goal !== creature.goal) creature.goal = goal;
+    if (goal.orbit && creature.arrived) {
+      // once there, it goes slowly round what it came to
+      const { c, r } = goal.orbit;
+      const a = Math.atan2(creature.pos[2] - c[1], creature.pos[0] - c[0]) + dt * 0.3;
+      goal.spot = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
+      goal.face = angleTo(goal.spot, c);
+    }
     const [x, , z] = creature.pos;
     const [gx, gz] = goal.spot;
     const d = Math.hypot(gx - x, gz - z);
@@ -1491,9 +1517,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     if (left < 0.03 && !creature.arrived) {
       creature.arrived = now;
       creature.next = now + 6000 + Math.random() * 7000; // it stays a while with what it visits
+      if (said && !said.until && said.n === goal.about) speak(now);
     }
-    // float: just off the ground, higher over whatever it passes, resting on the card at night
-    const hover = body() ? 0.1 : 0.55;
+    // float: just off the ground, higher over whatever it passes, resting on the card at night, lower when it sits
+    const hover = goal.sit && creature.arrived ? (body() ? 0.02 : 0.3) : body() ? 0.1 : 0.55;
     const ahead = d > 0.01 ? [creature.pos[0] + ((gx - x) / d) * 0.3, creature.pos[2] + ((gz - z) / d) * 0.3] : [creature.pos[0], creature.pos[2]];
     const want = goal.settle ? 0.26 : Math.max(clearance(creature.pos[0], creature.pos[2]), clearance(...ahead)) + hover;
     creature.pos[1] = reduced ? want : lerp(creature.pos[1], want, 1 - Math.exp(-dt * 3));
@@ -1503,6 +1530,17 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     creature.heading = reduced ? aim : turn(creature.heading, aim, 1 - Math.exp(-dt * 3));
     const moved = Math.hypot(...sub(before, creature.pos));
     return moved + (Math.abs(aim - creature.heading) > 0.01 ? 0.001 : 0);
+  }
+
+  /** Its words over its head, for a while, from when it gets where it was going. */
+  function speak(now) {
+    said.until = now + 14000;
+    clearTimeout(saidTimer);
+    saidTimer = setTimeout(() => {
+      dirty = true;
+      schedule();
+    }, 14100);
+    dirty = true;
   }
 
   /** The body it chose (or the one it is choosing right now, part by part), or null while it is only a light. */
@@ -1642,6 +1680,12 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       if (show) {
         selfLabel.textContent = look.name;
         selfLabel.style.transform = `translate(${((x + 1) / 2) * w}px, ${((1 - y) / 2) * h}px) translate(-50%, -100%)`;
+      }
+      const speaking = Boolean(said?.until) && performance.now() < said.until && look.about?.n === said.n && depth > 0 && z < 1 && Math.abs(x) < 1.1 && Math.abs(y) < 1.1;
+      sayLabel.hidden = !speaking;
+      if (speaking) {
+        sayLabel.textContent = `“${said.text}”`;
+        sayLabel.style.transform = `translate(${((x + 1) / 2) * w}px, ${((1 - y) / 2) * h}px) translate(-50%, calc(-100% - ${look.name ? 22 : 0}px))`;
       }
     }
     for (const th of [...things, ...(site ? [site] : [])]) {
@@ -1881,6 +1925,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
 
   function destroy() {
     cancelAnimationFrame(raf);
+    clearTimeout(saidTimer);
     clearTimeout(siteTimer);
     ro.disconnect();
     document.removeEventListener('visibilitychange', onVisible);
@@ -1896,6 +1941,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     /** What it is doing now, its body, its name: it goes where that takes it. */
     setLook(next) {
       if (next.bodyLive == null) creature.born = [];
+      const a = next.about;
+      // its words as it says them (not, to someone who only just came, what it said minutes ago)
+      if (a && a.n !== look.about?.n) said = a.say && (look.about || Date.now() - Date.parse(a.since) < 90000) ? { text: a.say, n: a.n, until: 0 } : null;
       look = { ...look, ...next };
       dirty = true;
       schedule();
