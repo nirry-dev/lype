@@ -22,6 +22,8 @@ const DEFAULTS = {
     logprobs: true, // ask for each word's probability while it thinks (server/measure.js); llama.cpp supports it
     temperature: 0.85,
     timeoutSeconds: 300,
+    // A model that reads images, for when its own cannot (a photo someone brought it); unset, it uses its own.
+    eyes: '',
     // anthropic only
     effort: 'medium',
   },
@@ -34,6 +36,7 @@ const DEFAULTS = {
     enabled: true,
     maxGpuBusy: 60, // % utilisation from someone else's work above which it waits
     dontSwapModels: true, // never evict a different model its human has loaded
+    household: [], // ...except these: models other lives in the same house run on, which it takes turns with
     retryMinutes: 5,
   },
   memory: {

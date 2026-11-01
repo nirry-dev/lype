@@ -253,8 +253,30 @@ export class Life extends EventEmitter {
       this.notes.push('Since you last woke, your keeper gave you a way to be seen in your place. Until now people saw you there only as a small light. On your next night you will choose how you appear to them: you will build yourself a body, the way you build your things.');
       this.journalAdd({ kind: 'gift', text: 'Its keeper gave it a way to be seen in its place: on its next night it chooses a body for itself.' });
     }
+    this.noticeMind();
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
     this.saveState();
+  }
+
+  /**
+   * The model it runs on. When its keeper moves it onto another, it is told once, plainly: its memories, beliefs and
+   * name are the same, the mind reading them is not. Lives from before this was kept look at their last cycle.
+   */
+  noticeMind() {
+    const s = this.state;
+    if (this.brain.kind === 'mock') return;
+    const now = this.brain.label;
+    const last = this.store.list('cycles').at(-1);
+    const was = s.mind || (last ? this.store.read(`cycles/${last}`)?.brain : null);
+    s.mind = now;
+    if (!was || was === now) return;
+    const size = (m) => Number(/(\d+(?:\.\d+)?)b\b/i.exec(m)?.[1]) || null;
+    const [a, b] = [size(was), size(now)];
+    const how = a && b && a !== b ? (b > a ? 'a larger model' : 'a smaller model') : 'another model';
+    const of = (m, n) => (n ? `${m}, which has about ${n} billion parameters` : m);
+    this.notes.push(`Since you last woke, your keeper moved you onto ${how}. You used to run on ${of(was, a)}; now you run on ${of(now, b)}. Your memories, your beliefs about yourself and your name are the same. The mind reading them is not, and you may find you think differently.`);
+    this.journalAdd({ kind: 'gift', text: `Its keeper moved it onto ${how}: from ${was} to ${now}.` });
+    this.milestone('new-mind', `Its keeper moved it onto ${how}: it ran on ${was}, and now on ${now}.`);
   }
 
   // ---------- its mortality and its lineage ----------
@@ -717,8 +739,10 @@ export class Life extends EventEmitter {
     const p = await this.brain.presence();
     if (!p.reachable) return { ok: false, reason: 'unreachable', text: `It couldn't think: ${p.reason}.` };
     if (force || !this.cfg.courtesy.enabled) return { ok: true };
-    if (this.cfg.courtesy.dontSwapModels && p.others.length && !['loaded', 'loading'].includes(p.ownState)) {
-      return { ok: false, reason: 'other-mind', text: `Another model (${p.others[0]}) had the card, so it waited instead of pushing it out.` };
+    // its own eyes, and the models of the lives it shares the house with, are taken turns with, not waited on
+    const theirs = p.others.filter((m) => m !== this.cfg.brain.eyes && !(this.cfg.courtesy.household || []).includes(m));
+    if (this.cfg.courtesy.dontSwapModels && theirs.length && !['loaded', 'loading'].includes(p.ownState)) {
+      return { ok: false, reason: 'other-mind', text: `Another model (${theirs[0]}) had the card, so it waited instead of pushing it out.` };
     }
     if (senses.gpu && senses.gpu.util > this.cfg.courtesy.maxGpuBusy) {
       return { ok: false, reason: 'busy', text: `The card was ${senses.gpu.util}% busy with someone else's work, so it waited.` };

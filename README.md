@@ -101,9 +101,10 @@ A static copy is always a little behind. The [relay](relay/README.md) (a small C
 | `brain.baseUrl`, `brain.model` | where it thinks, and with which model id |
 | `brain.apiKeyFile` / `apiKeyEnv` | API key for the model server (read at runtime, never logged) |
 | `brain.logprobs` | asks the model server for each word's probability while it thinks (default `true`), for "what its words show"; a server that refuses the request is asked once and then never again |
+| `brain.eyes` | a model that reads images, used only for photos people bring it when its own model cannot (unset: its own) |
 | `brain.noThinking` | sends `chat_template_kwargs.enable_thinking=false` (Qwen-style templates) so turns stay short |
 | `rhythm.cycleMinutes`, `jitter`, `nightEvery` | how often it wakes, and how many cycles make a day |
-| `courtesy.*` | GPU-busy threshold, whether it may evict another loaded model, retry delay |
+| `courtesy.*` | GPU-busy threshold, whether it may evict another loaded model, retry delay; `household` lists models other lives in the same house run on, which it takes turns with instead of waiting for |
 | `memory.shelfSize`, `halfLifeCycles` | how much it can hold, and how fast things fade |
 | `moderation.mode` | `model` (rules, then the model screens; doubtful letters wait for the keeper), `keeper` (every letter waits for the keeper), or `off` |
 | `errands.enabled`, `maxPhotoMb` | whether it can send people on errands (its model must take images to see what they bring), and the largest photo accepted |

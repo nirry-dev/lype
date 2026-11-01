@@ -72,7 +72,7 @@ function createOpenAiBrain(cfg) {
   async function complete({ system, user, image, maxTokens = 600, temperature, schema, onToken, probe = false }) {
     const asked = probe && probes;
     const body = {
-      model: cfg.model,
+      model: image && cfg.eyes ? cfg.eyes : cfg.model,
       stream: true,
       ...(asked ? { logprobs: true, top_logprobs: 3 } : {}),
       max_tokens: maxTokens,
