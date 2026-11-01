@@ -146,7 +146,10 @@ export function connectRelay(cfg, { local, log = console.log }) {
     }
   }
 
-  /** Its public events, as its own page gets them; streamed words go out a few times a second rather than one by one. */
+  /**
+   * Its public events, as its own page gets them; streamed words go out a few times a second rather than one by one
+   * (what it thinks aloud at full power, which can go on for hours, twice a second).
+   */
   function send(event, data) {
     if (!ready) return;
     if (event === 'stream') {
@@ -154,7 +157,7 @@ export function connectRelay(cfg, { local, log = console.log }) {
       else {
         flush();
         stream = { ...data };
-        setTimeout(flush, 150);
+        setTimeout(flush, data.kind === 'muse' ? 500 : 150);
       }
       return;
     }

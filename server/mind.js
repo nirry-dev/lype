@@ -292,17 +292,43 @@ export function momentSchema(places) {
   };
 }
 
-export function momentPrompt(m) {
+/** Where it is between cycles, and what has happened since it last woke: what a moment (and a thought aloud) starts from. */
+function momentSituation(m) {
   const s = m.senses;
   const here = !m.about ? 'You are on your card, where you live.' : m.about.at === 'card' ? `You are at your card. Your last moment there: you ${CARD_TEXT[m.about.doing]}.` : `You are by ${m.about.name}. Your last moment there: you ${DOING_TEXT[m.about.doing]} it.`;
   return [
     `It is ${s.weekday}, ${s.time} (${s.partOfDay}). Your last cycle was ${m.since}; your next one comes ${m.next}.`,
     describeMachine(s.gpu),
+    m.power
+      ? m.power.cooling
+        ? `Your keeper gave you full power until ${m.power.until}, but the card got too hot, so you have slowed to your usual moments until it cools.`
+        : `Your keeper gave you full power until ${m.power.until}: between your cycles you think without pause, aloud, and the card runs hotter while you do.`
+      : '',
     here,
     m.thought ? `What you wrote in your diary when you last woke: "${m.thought}"` : '',
     m.moments.length ? momentsBlock(m.moments) : 'This is your first moment since your last cycle.',
     m.stuck ? `You have stayed by ${m.stuck} for your last few moments. Go somewhere else in your place now.` : '',
     m.waiting ? `${m.waiting === 1 ? 'A letter is' : `${m.waiting} letters are`} waiting. You will open ${m.waiting === 1 ? 'it' : 'them'} when you next wake, not now.` : '',
+  ];
+}
+
+/** At full power: a short thought, aloud, before each moment. */
+export function musePrompt(m) {
+  const before = m.moments.filter((x) => x.thought).slice(-2);
+  return [
+    ...momentSituation(m),
+    before.length ? `What you thought aloud in your last moments:\n${before.map((x) => `- "${x.thought}"`).join('\n')}` : '',
+    '',
+    'Think to yourself, aloud: 30 to 70 words, first person, present tense, plain prose with no headings or lists. People watching your place see these words as you think them. Notice where you are, what is here, how the card feels. Go on from your last thought or notice something new; don\'t say again what you already thought.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function momentPrompt(m) {
+  return [
+    ...momentSituation(m),
+    m.mused ? `What you just thought: "${m.mused}"` : '',
     '',
     'This is a moment between your cycles, not a cycle. You can only move about your place and do one small thing there. People who are watching see where you go and what you say.',
     'Answer with JSON:',

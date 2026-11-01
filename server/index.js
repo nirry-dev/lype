@@ -273,6 +273,12 @@ async function api(req, res, url) {
       const result = life.setPalMode(String((await readBody(req)).mode || ''));
       return json(res, result.ok ? 200 : 400, result.ok ? result : { error: result.reason });
     }
+    if (action === 'power') {
+      // Full power for a few hours ({ "on": true, "hours": 3 }), or back to its usual moments ({ "on": false }).
+      const body = await readBody(req);
+      const result = life.setPower(body.on === true, { hours: body.hours, why: 'its keeper turned it off' });
+      return json(res, result.ok ? 200 : 409, result.ok ? result : { error: result.reason });
+    }
     if (action === 'pause') return life.pause(), json(res, 200, life.status());
     if (action === 'resume') return life.resume(), json(res, 200, life.status());
     return json(res, 404, { error: 'unknown action' });

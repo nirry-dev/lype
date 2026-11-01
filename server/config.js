@@ -38,6 +38,14 @@ const DEFAULTS = {
     // cycles before this one takes it back for its own moments (`courtesy.household` names those lives' models).
     momentTurnMinutes: 6,
   },
+  power: {
+    // Full power (server/moments.js): between cycles its moments come one after another and it thinks aloud in each,
+    // on the whole card. Its keeper turns it on (the admin API, or the tray) for `autoOffHours`, after which it ends by
+    // itself; "full": true starts it at full power. Over `maxTempC` it slows to its usual moments until the card cools.
+    full: false,
+    autoOffHours: 3,
+    maxTempC: 83,
+  },
   courtesy: {
     enabled: true,
     maxGpuBusy: 60, // % utilisation from someone else's work above which it waits

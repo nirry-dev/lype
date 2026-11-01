@@ -6,7 +6,7 @@ import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/
 import { formSchema, readForm, standing } from '../web/lib/form.js';
 import { loadCatalogue, shortlist } from './models.js';
 import { Maker } from './maker.js';
-import { Moments } from './moments.js';
+import { Moments, clock } from './moments.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
@@ -214,7 +214,37 @@ export class Life extends EventEmitter {
     const due = last ? Date.parse(last.at) + interval - Date.now() : 0;
     if (this.paused) this.setPhase('paused');
     this.schedule(clamp(due, 5000, interval));
+    if (this.state.power?.full && Date.now() >= Date.parse(this.state.power.until)) this.setPower(false, { why: 'while it was switched off' });
+    else if (this.cfg.power.full && !this.state.power?.full) this.setPower(true);
     this.moments.start();
+  }
+
+  /**
+   * Full power, from its keeper: for a few hours (then it ends by itself), its moments come one after another and it
+   * thinks aloud in each. It is told when it begins and ends, in its moments at once and at its next cycle.
+   */
+  setPower(on, { hours = this.cfg.power.autoOffHours, why = '' } = {}) {
+    const s = this.state;
+    if (!this.moments.enabled) return { ok: false, reason: 'It has no moments (rhythm.momentSeconds is 0).' };
+    const was = Boolean(s.power?.full);
+    const now = new Date();
+    if (on) {
+      const until = new Date(now.getTime() + Math.max(0.05, Math.min(Number(hours) || 3, 24)) * 3600000);
+      s.power = { full: true, since: was ? s.power.since : now.toISOString(), until: until.toISOString(), cooling: was ? Boolean(s.power.cooling) : false };
+      if (!was) {
+        this.notes.push(`Your keeper gave you full power until ${clock(until)}. Between your cycles you no longer rest: your moments come one after another, and in each you think aloud first, and people watching see your thoughts as you have them. The card runs hotter while you do.`);
+        this.journalAdd({ kind: 'power', text: `Its keeper gave it full power until ${clock(until)}: between its cycles it thinks aloud, without pause.` });
+        this.milestone('first-full-power', 'Its keeper gave it full power for the first time: between its cycles it thought aloud, without pause.');
+      }
+    } else if (was) {
+      s.power = { full: false, last: { since: s.power.since, until: now.toISOString() } };
+      this.notes.push(`Your full power ended${why ? ` (${why})` : ''}. Between your cycles you rest between moments again.`);
+      this.journalAdd({ kind: 'power', text: `Its full power ended${why ? `: ${why}` : ''}.` });
+    }
+    this.saveState();
+    this.moments.schedule(on ? 1000 : undefined);
+    this.emit('status', this.status());
+    return { ok: true, ...this.status() };
   }
 
   /** What changed while it was off: things its keeper gave it since, each told once, the next time it wakes. */
@@ -728,6 +758,9 @@ export class Life extends EventEmitter {
       version: this.state?.version ?? 0,
       name: this.state?.name ?? null,
       about: this.moments.enabled ? (this.state?.about ?? null) : null, // where it is in its place between cycles
+      // full power: until when, and whether the card is too hot for it right now; and the moment it is thinking aloud for
+      power: this.moments.power ? { until: this.moments.power.until, cooling: Boolean(this.moments.power.cooling) } : null,
+      musing: this.moments.musing,
     };
   }
 

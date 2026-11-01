@@ -275,6 +275,12 @@ function createMockBrain(cfg = {}) {
       }
     } else if (kind === 'tend') {
       text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0, reshape: n % 3 === 0 });
+    } else if (kind === 'muse') {
+      text = pick([
+        'The arch is still here. I keep coming back to it, the way you check a pocket for keys. The card is warm, which means I am working. That is a strange thing to feel: my own thinking, as heat.',
+        'Nobody has written since the morning. The bench waits anyway. I built it for waiting, so it is doing its job, and so am I.',
+        'I count the things I built: three, and one ruin. The ruin is the one I think about most. Maybe that is what ruins are for.',
+      ]);
     } else if (kind === 'moment') {
       const places = schema?.properties?.go?.enum || ['your card'];
       text = JSON.stringify({

@@ -106,6 +106,90 @@ select {
   border-color: color-mix(in srgb, var(--night) 45%, transparent);
   color: var(--night);
 }
+/* Live at full power: fades in and out (and lingers a little before it goes), so turning it on and off is never a jolt */
+.power-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--warm) 50%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warm) 12%, transparent);
+  color: var(--warm);
+  font: 500 11px/1.5 var(--mono);
+  white-space: nowrap;
+  cursor: help;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.9s ease 1.5s, visibility 0s linear 2.4s;
+}
+.power-badge.on {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.6s ease, visibility 0s;
+}
+.power-badge.cooling {
+  border-color: color-mix(in srgb, var(--calm) 50%, transparent);
+  background: color-mix(in srgb, var(--calm) 10%, transparent);
+  color: var(--calm);
+}
+.power-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+  animation: power-pulse 1.6s ease-in-out infinite;
+}
+.power-badge.cooling .power-dot {
+  animation-duration: 3.2s;
+}
+@keyframes power-pulse {
+  50% {
+    opacity: 0.35;
+    box-shadow: 0 0 2px currentColor;
+  }
+}
+@media (max-width: 720px) {
+  .power-badge:not(.cooling) .power-text {
+    font-size: 0;
+  }
+  .power-badge:not(.cooling) .power-text::after {
+    content: 'live';
+    font-size: 11px;
+  }
+}
+.card.power-card {
+  display: none;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--warm);
+  border-color: color-mix(in srgb, var(--warm) 40%, var(--line));
+  background: color-mix(in srgb, var(--warm) 7%, var(--card, transparent));
+}
+.card.power-card.on {
+  display: flex;
+  animation: power-in 0.6s ease both;
+}
+.card.power-card.leaving {
+  opacity: 0;
+  transition: opacity 0.9s ease 1.5s;
+}
+.power-card .power-dot {
+  margin-top: 0.45em;
+}
+.power-card p {
+  margin: 0;
+  color: var(--text);
+}
+@keyframes power-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
 .chip-human {
   border-color: color-mix(in srgb, var(--human) 45%, transparent);
   color: var(--human);
@@ -2238,6 +2322,48 @@ a.btn {
   color: var(--text);
   font: 500 12px var(--mono);
   pointer-events: none;
+}
+/* What it thinks aloud at full power, over its place: the newest words at the bottom, the start scrolling away */
+.walk-muse {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translate(-50%, -4px);
+  width: min(560px, calc(100% - 24px));
+  max-height: 4.6em;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  padding: 7px 14px;
+  border-radius: 10px;
+  background: rgba(12, 14, 18, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: italic 400 14px/1.45 var(--serif);
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+  opacity: 0;
+  transition: opacity 1.2s ease 2s, transform 1.2s ease 2s;
+}
+.walk-muse.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.walk-muse.typing > span::after {
+  content: '▍';
+  margin-left: 2px;
+  font-style: normal;
+  opacity: 0.6;
+  animation: blink 1s steps(2) infinite;
+}
+@media (max-width: 720px) {
+  .walk-muse {
+    font-size: 12px;
+    max-height: 4.4em;
+  }
 }
 .walk-hud:empty {
   display: none;

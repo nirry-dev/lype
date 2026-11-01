@@ -138,7 +138,7 @@ const visitor = (() => {
 
 // ---------- state ----------
 
-const blankLive = () => ({ think: '', draw: '', write: '', sprite: '', form: '', body: '', plaque: '', change: '', reply: '', dream: '', title: '', replyTo: null, reading: [], building: null });
+const blankLive = () => ({ muse: '', think: '', draw: '', write: '', sprite: '', form: '', body: '', plaque: '', change: '', reply: '', dream: '', title: '', replyTo: null, reading: [], building: null });
 const app = {
   state: null,
   live: blankLive(),
@@ -210,6 +210,102 @@ function scheduleLive() {
   });
 }
 
+// ---------- full power ----------
+
+/** At full power, what it is thinking aloud: the thought coming in now, or (between moments) the last one it had. */
+function museText(s = app.state) {
+  if (SNAPSHOT || !s) return '';
+  if (s.musing && app.live.muse) return app.live.muse;
+  return s.about?.thought || '';
+}
+
+/** Whether its thoughts aloud are being shown: at full power between cycles, or while one it began is still coming. */
+const musingShown = (s = app.state) => !SNAPSHOT && Boolean(s?.musing || (s?.power && s.phase === 'quiet'));
+
+const untilClock = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+// Words it thinks aloud arrive in bursts (through a relay, twice a second); they are shown at an even pace instead.
+const typists = new WeakMap();
+function typeInto(el, text) {
+  let t = typists.get(el);
+  if (!t) typists.set(el, (t = { shown: '', target: '', timer: 0 }));
+  t.target = text;
+  if (!text.startsWith(t.shown)) t.shown = ''; // a new thought
+  if (REDUCED) t.shown = text;
+  el.textContent = t.shown;
+  const step = () => {
+    const left = t.target.length - t.shown.length;
+    if (left <= 0) return void (t.timer = 0);
+    t.shown = t.target.slice(0, t.shown.length + Math.max(1, Math.ceil(left / 14)));
+    el.textContent = t.shown;
+    t.timer = setTimeout(step, 33);
+  };
+  if (!t.timer) step();
+}
+function untype(el) {
+  const t = typists.get(el);
+  if (t) clearTimeout(t.timer);
+  typists.delete(el);
+}
+
+/** In the header, on every page: that it is live at full power (and until when), fading in and out as that changes. */
+function renderPowerBadge() {
+  const badge = $('#power-badge');
+  if (!badge || !app.state) return;
+  const p = !SNAPSHOT && app.connected ? app.state.power : null;
+  badge.classList.toggle('on', Boolean(p));
+  badge.classList.toggle('cooling', Boolean(p?.cooling));
+  badge.setAttribute('aria-hidden', p ? 'false' : 'true');
+  if (!p) return;
+  const name = app.state.name || 'It';
+  $('.power-text', badge).textContent = p.cooling ? 'live · cooling' : 'live · full power';
+  badge.title = p.cooling
+    ? `${name} is running in realtime until ${untilClock(p.until)}, but the graphics card got hot, so it is taking its usual pace until the card cools.`
+    : `${name} is running in realtime, on the full power of the graphics card it lives on, until ${untilClock(p.until)}. Between its cycles it thinks aloud, without pause.`;
+}
+
+/** On the Now page: a word to visitors that it is live at full power, and what that means. */
+function renderPowerCard() {
+  const card = $('#power-card');
+  if (!card) return;
+  const p = !SNAPSHOT ? app.state.power : null;
+  if (!p) {
+    // it lingers a moment, then fades, rather than vanishing as full power ends
+    if (card.classList.contains('on') && !card.classList.contains('leaving')) {
+      card.classList.add('leaving');
+      card.leaving = setTimeout(() => card.classList.remove('on', 'leaving'), 2500);
+    }
+    return;
+  }
+  clearTimeout(card.leaving);
+  card.classList.remove('leaving');
+  card.classList.add('on');
+  const name = app.state.name || 'It';
+  fill(
+    card,
+    h('span', { class: 'power-dot', 'aria-hidden': 'true' }),
+    h(
+      'p',
+      {},
+      h('b', {}, p.cooling ? 'Live, at full power, cooling down. ' : 'Live, at full power. '),
+      p.cooling
+        ? `Until ${untilClock(p.until)} ${name} runs on the whole of the graphics card it lives on. The card got hot, so for now it is taking its usual pace; it picks up again as soon as the card cools.`
+        : `Until ${untilClock(p.until)} ${name} runs on the whole of the graphics card it lives on: between its cycles it thinks aloud without pause, and you can watch each thought as it comes.`,
+    ),
+  );
+}
+
+/** Over its place: what it is thinking aloud, at full power; the last thought lingers a moment, then fades, when it ends. */
+function updateWalkMuse() {
+  const el = app.walkMuse;
+  if (!el || !app.state) return;
+  const text = museText();
+  const on = musingShown() && Boolean(text);
+  el.classList.toggle('on', on);
+  el.classList.toggle('typing', Boolean(app.state.musing));
+  if (on) typeInto(el.firstChild, text);
+}
+
 /** Its live events: from its own server, or (through a relay) over a WebSocket that delivers the same events. */
 function liveSource() {
   if (!BASE) return new EventSource('api/stream');
@@ -262,8 +358,10 @@ function connect() {
   });
   es.addEventListener('status', (e) => {
     const st = JSON.parse(e.data);
-    const prev = { phase: app.state.phase, detail: app.state.detail };
+    const prev = { phase: app.state.phase, detail: app.state.detail, musing: app.state.musing };
     Object.assign(app.state, st);
+    // a new thought aloud (at full power): the last one stays on screen until the first words of this one arrive
+    if (st.musing && st.musing !== prev.musing) app.live.muse = '';
     if ((st.phase === 'waking' || st.phase === 'dreaming') && prev.phase !== st.phase) app.live = blankLive();
     if (['drawing', 'writing', 'building', 'tending'].includes(st.phase) && st.detail) app.live.title = st.detail;
     if (st.phase === 'replying' && (prev.phase !== 'replying' || prev.detail !== st.detail)) {
@@ -374,6 +472,7 @@ function renderStatus() {
   const up = app.connected || SNAPSHOT;
   el.dataset.mode = up ? statusMode(app.state.phase) : 'down';
   $('.status-text', el).textContent = up ? statusText(app.state) : 'reconnecting…';
+  renderPowerBadge();
   updateWalkHud();
 }
 function renderChrome() {
@@ -399,9 +498,12 @@ function renderChrome() {
     else a.removeAttribute('aria-current');
   }
   renderStatus();
+  renderPowerBadge();
   if (app.admin) {
     $('[data-admin="pause"]').hidden = s.paused;
     $('[data-admin="resume"]').hidden = !s.paused;
+    const power = $('[data-admin="power"]');
+    if (!power.disabled) power.textContent = s.power ? `End full power (until ${untilClock(s.power.until)})` : 'Full power for 3 hours';
   }
 }
 
@@ -709,6 +811,7 @@ async function renderNow(current) {
               h('a', { class: 'btn btn-primary', href: '#/replay' }, '▶ Replay its life'),
             )
           : null,
+        h('div', { class: 'card power-card', id: 'power-card', role: 'status' }),
         lifeCard(),
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('span', { class: 'label', id: 'thought-label' }), h('span', { class: 'meta', id: 'thought-meta' })), h('p', { class: 'monologue', id: 'monologue' }), h('p', { class: 'measured', id: 'measured' })),
         h('div', { class: 'card', id: 'making-card' }),
@@ -874,6 +977,7 @@ function updateNow({ streaming = false } = {}) {
     }
     fill($('#phase-line'), h('span', { class: 'phase' }, PHASE_TITLE[s.phase] || s.phase), detail ? h('span', { class: 'phase-detail' }, detail) : null);
     fill($('#meters'), ...FEELINGS.map((f) => meter(f, s.mood[f])));
+    renderPowerCard();
     renderSenses();
     renderBelow();
   }
@@ -896,6 +1000,12 @@ function updateNow({ streaming = false } = {}) {
     meta = `cycle ${s.cycle + 1} · now`;
     text = live.think || '…';
     typing = ['waking', 'reading', 'thinking'].includes(s.phase);
+  } else if (!awake && !night && musingShown() && museText()) {
+    // at full power, between cycles: the thought it is thinking aloud now (or, between moments, the last one)
+    label = 'Thinking aloud';
+    meta = s.musing ? 'full power · now' : 'full power · a moment ago';
+    text = museText();
+    typing = Boolean(s.musing);
   } else if (latest) {
     label = 'What it last thought';
     meta = `cycle ${latest.n} · ${ago(latest.endedAt)}`;
@@ -907,7 +1017,11 @@ function updateNow({ streaming = false } = {}) {
   $('#thought-label').textContent = label;
   $('#thought-meta').textContent = meta || '';
   const shown = text === latest?.monologue && !awake && !night ? latest : null;
-  fill(mono, ...(shown ? withAlmost(text, shown.measured?.almost) : [text]));
+  if (label === 'Thinking aloud') typeInto(mono, text);
+  else {
+    untype(mono);
+    fill(mono, ...(shown ? withAlmost(text, shown.measured?.almost) : [text]));
+  }
   fill($('#measured'), shown ? measuredLine(shown) : null);
   mono.classList.toggle('caret', typing);
   mono.classList.toggle('stale', !awake && !night);
@@ -1821,7 +1935,7 @@ const TILE = 64;
 
 function stopWalk() {
   app.walk?.destroy();
-  app.walk = app.walkHost = app.walkHud = null;
+  app.walk = app.walkHost = app.walkHud = app.walkMuse = null;
 }
 
 /** Over the world, what it is doing right now, as in its status line (and what it is building, while it builds). */
@@ -1834,6 +1948,7 @@ function updateWalkHud() {
   const doing = b ? `${b.id ? 'reshaping' : app.live.form ? 'building' : 'drawing'} “${b.name}”` : about ? `${about}${s.nextWakeAt ? ` · wakes ${untilText(s.nextWakeAt)}` : ''}` : statusText(s);
   const text = `${s.name || 'It'} is ${doing}`;
   app.walk?.setLook(walkLook());
+  updateWalkMuse();
   if (hud.textContent !== text) fill(hud, h('span', { class: 'walk-hud-dot', style: `--dot:${moodColor(s.mood)}` }), h('span', {}, text));
 }
 
@@ -1867,7 +1982,10 @@ async function renderPlace(current) {
     // The world is kept across live updates (the same canvas is moved into the new page), so the reader's view holds.
     app.walkHost = h('div', { class: 'walk' });
     app.walk = createWalk(app.walkHost, { asset, onSelect: (id) => selectThing(id) });
-    if (app.walk) app.walkHost.append((app.walkHud = h('div', { class: 'walk-hud', 'aria-live': 'polite' })));
+    if (app.walk) {
+      app.walkHost.append((app.walkHud = h('div', { class: 'walk-hud', 'aria-live': 'polite' })));
+      app.walkHost.append((app.walkMuse = h('div', { class: 'walk-muse', 'aria-hidden': 'true' }, h('span', {}))));
+    }
     else app.walkHost.append(h('p', { class: 'muted' }, 'This browser cannot draw the world. The map below shows the same place.'));
   } else if (!walking) stopWalk();
   const thingParam = app.params.get('thing');
@@ -3130,11 +3248,22 @@ async function initAdmin() {
   for (const b of $$('#admin-bar button')) {
     b.addEventListener('click', async () => {
       const out = $('#admin-msg');
+      // full power: on for three hours, or off (it finishes the thought it is in first); one click at a time
+      const on = b.dataset.admin === 'power' && !app.state.power;
+      b.disabled = true;
       try {
-        await api(`/api/admin/${b.dataset.admin}`, { method: 'POST', headers: { 'x-admin-token': token } });
-        out.textContent = { wake: 'Waking it…', sleep: 'Putting it to sleep…', pause: 'Paused.', resume: 'Resumed.' }[b.dataset.admin];
+        if (b.dataset.admin === 'power') {
+          await api('/api/admin/power', { method: 'POST', headers: { 'x-admin-token': token, 'content-type': 'application/json' }, body: JSON.stringify({ on, hours: 3 }) });
+          out.textContent = on ? 'Full power: it starts thinking aloud within a few seconds.' : 'Full power off: it finishes the thought it is in, then goes back to its usual pace.';
+        } else {
+          await api(`/api/admin/${b.dataset.admin}`, { method: 'POST', headers: { 'x-admin-token': token } });
+          out.textContent = { wake: 'Waking it…', sleep: 'Putting it to sleep…', pause: 'Paused.', resume: 'Resumed.' }[b.dataset.admin];
+        }
       } catch (err) {
         out.textContent = err.message;
+      } finally {
+        b.disabled = false;
+        renderChrome();
       }
     });
   }

@@ -135,3 +135,98 @@ test('a few moments in one place and it is asked to go elsewhere; long or repeat
     'the card burns at fifty five and my memory feels like wet…',
   );
 });
+
+test('full power: switched on, it thinks aloud before each moment, streamed, and is told; switched off, it is told that too', async () => {
+  const { life, asked } = makeLife();
+  things(life, 'The Soft Arch');
+  const streamed = [];
+  life.on('stream', (e) => e.kind === 'muse' && streamed.push(e.delta));
+  assert.ok(life.setPower(true).ok);
+  life.moments.stop();
+  assert.ok(life.status().power);
+  assert.ok(Date.parse(life.status().power.until) - Date.now() > 2.9 * 3600000, 'three hours by default');
+  assert.match(life.notes.at(-1), /full power until \d\d:\d\d/);
+  const m = await life.moments.one();
+  assert.deepEqual(asked.slice(-2).map((a) => a.kind), ['muse', 'moment']);
+  assert.match(asked.at(-1).user, /What you just thought: "/);
+  assert.match(asked.at(-2).user, /full power until/);
+  assert.ok(m.thought && streamed.join('').startsWith(m.thought.slice(0, 20)), 'the thought is streamed as it comes');
+  assert.equal(life.status().musing, null);
+  life.setPower(true); // again: it only moves the end, and is not told twice
+  assert.equal(life.notes.filter((n) => /gave you full power/.test(n)).length, 1);
+  life.setPower(false, { why: 'its keeper turned it off' });
+  life.moments.stop();
+  assert.equal(life.status().power, null);
+  assert.match(life.notes.at(-1), /full power ended \(its keeper turned it off\)/);
+  await life.moments.one();
+  assert.equal(asked.at(-1).kind, 'moment');
+  assert.notEqual(asked.at(-2).kind, 'muse', 'back to its usual moments');
+});
+
+test('switched off in the middle of a thought, it finishes the thought; its time running out ends it between moments', async () => {
+  const { life, asked } = makeLife();
+  things(life, 'The Soft Arch');
+  life.setPower(true);
+  life.moments.stop();
+  const complete = life.brain.complete;
+  let release;
+  life.brain.complete = async (req) => {
+    if (req.kind === 'muse') await new Promise((r) => (release = r));
+    return complete(req);
+  };
+  const going = life.moments.one();
+  await new Promise((r) => setTimeout(r, 50));
+  while (!release) await new Promise((r) => setTimeout(r, 20));
+  assert.ok(life.status().musing, 'it is thinking aloud');
+  life.setPower(false);
+  life.moments.stop();
+  release();
+  const m = await going;
+  assert.ok(m.thought, 'the thought it was in the middle of is kept, whole');
+  assert.equal(life.status().musing, null);
+
+  life.brain.complete = complete;
+  life.setPower(true);
+  life.state.power.until = new Date(Date.now() - 1000).toISOString();
+  const n = asked.length;
+  await life.moments.tick();
+  life.moments.stop();
+  assert.equal(life.status().power, null);
+  assert.match(life.notes.at(-1), /its time ran out/);
+  assert.notEqual(asked.slice(n).map((a) => a.kind)[0], 'muse');
+});
+
+test('full power: its own work on the card is not held against it, but a household life at work is; too hot, and it slows', async () => {
+  const { life, asked } = makeLife({ courtesy: true });
+  things(life, 'The Soft Arch');
+  life.cfg.courtesy.maxGpuBusy = -1; // the card always reads busy
+  life.cfg.courtesy.household = ['siblings-model'];
+  life.brain.presence = async () => ({ reachable: true, known: true, ownState: 'loaded', others: [] });
+  assert.equal(await life.moments.blocked({ gpu: { util: 90 } }), 'the card is busy', 'at its usual pace it waits');
+  life.setPower(true);
+  life.moments.stop();
+  assert.equal(await life.moments.blocked({ gpu: { util: 90 } }), null, 'at full power the busy card is its own work');
+  life.brain.presence = async () => ({ reachable: true, known: true, ownState: 'unloaded', others: ['siblings-model'] });
+  assert.equal(await life.moments.blocked({ gpu: { util: 90 } }), 'the card is busy', 'its sibling at work is waited for');
+  life.cfg.courtesy.maxGpuBusy = 101;
+  assert.equal(await life.moments.blocked({ gpu: { util: 5 } }), null, 'and its sibling resting gives the card back at once');
+
+  life.moments.heat({ gpu: { tempC: 84 } });
+  assert.equal(life.status().power.cooling, true);
+  assert.equal(life.moments.full, false);
+  life.moments.heat({ gpu: { tempC: 80 } });
+  assert.equal(life.status().power.cooling, true, 'it waits until the card is well under its ceiling');
+  life.moments.heat({ gpu: { tempC: 77 } });
+  assert.equal(life.status().power.cooling, false);
+  assert.equal(asked.length, 0);
+});
+
+test('full power that ran out while it was switched off ends when it starts again', () => {
+  const { life } = makeLife();
+  life.state.power = { full: true, since: new Date(Date.now() - 4 * 3600000).toISOString(), until: new Date(Date.now() - 3600000).toISOString(), cooling: false };
+  life.state.lastAlive = new Date().toISOString();
+  life.start();
+  life.stop();
+  assert.equal(life.status().power, null);
+  assert.match(life.notes.at(-1), /while it was switched off/);
+});
