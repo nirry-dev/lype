@@ -2158,6 +2158,21 @@ a.btn {
 .walk-canvas:focus-visible {
   box-shadow: inset 0 0 0 2px var(--curious);
 }
+/* a soft blur toward the top and bottom of the view, as if its place were a small model seen close up */
+.walk-focus {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(2.5px);
+  backdrop-filter: blur(2.5px);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 34%, transparent 74%, #000 100%);
+  mask-image: linear-gradient(180deg, #000 0%, transparent 34%, transparent 74%, #000 100%);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .walk-focus {
+    display: none;
+  }
+}
 .walk-labels {
   position: absolute;
   inset: 0;

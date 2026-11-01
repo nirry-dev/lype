@@ -91,7 +91,7 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
     .replace('href="style.css"', `href="style.css?v=${stamp}"`)
     .replace('src="app.js"', `src="app.js?v=${stamp}"`);
   write('index.html', page);
-  for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js', 'lib/form.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
+  for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js', 'lib/form.js', 'lib/town.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
 
   // The things it can borrow: all of them for a life that may still borrow more while people watch; for a life that
   // has ended, only what it borrowed.

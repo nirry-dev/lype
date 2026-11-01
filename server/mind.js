@@ -493,6 +493,7 @@ export function formPrompt(title, what, { kind = 'object', before = null, models
     '',
     `Your place is three-dimensional. Each thing stands on a lot ${LOT} steps wide and ${LOT} steps deep, and may stand up to ${TALL} steps tall. You build it out of at most ${MAX_PARTS} simple solids.`,
     kind === 'place' ? 'It is a place, somewhere you could be: give it a floor, walls or edges, a way in.' : 'It is an object: it does not have to fill its lot.',
+    `Your place is a small town: your lots stand along streets, among trees about 6 to 9 steps tall. For a sense of size: a door is about 2 steps wide and 3 tall, a small house about 6 to 8 steps tall with its roof. Most of a town is low; the full ${TALL} is for a tower.`,
     before ? `It is built of these parts now:\n${JSON.stringify({ parts: before.parts })}\nKeep what still stands, change what you changed today.` : null,
     '',
     'Answer with JSON: { "parts": [ ... ] }, each part:',

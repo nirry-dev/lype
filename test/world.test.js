@@ -10,6 +10,7 @@ import { Life } from '../server/life.js';
 import { emptyMemory } from '../server/memory.js';
 import { createStore, pad } from '../server/store.js';
 import * as views from '../server/views.js';
+import { avenue } from '../web/lib/town.js';
 import { CARD, MAX_OPEN_WISHES, addWish, answerWish, emptyWorld, findThing, namedThing, placeNear, remembered, untoldAnswers, weather } from '../server/world.js';
 
 const dirs = [];
@@ -32,6 +33,20 @@ test('things land next to what they are built beside, never on the card or each 
   const full = emptyWorld();
   for (let x = 0; x < full.w; x++) for (let y = 0; y < full.h; y++) if (x !== CARD.x || y !== CARD.y) full.things.push(thing({ id: `t${x}-${y}`, x, y }));
   assert.equal(placeNear(full, CARD, 'z'), null);
+});
+
+test('things go on the lots of its town and leave its avenues open, until there are no lots left', () => {
+  const world = emptyWorld();
+  for (let i = 0; i < 20; i++) {
+    const spot = placeNear(world, world.things.at(-1) || CARD, `s${i}`);
+    assert.ok(!avenue(spot.x, spot.y, CARD), `lot ${i} is off the avenues`);
+    world.things.push(thing({ id: `t${i}`, ...spot }));
+  }
+  // with every lot taken, the avenues are next
+  const crowded = emptyWorld();
+  for (let x = 0; x < crowded.w; x++) for (let y = 0; y < crowded.h; y++) if (!avenue(x, y, CARD)) crowded.things.push(thing({ id: `t${x}-${y}`, x, y }));
+  const last = placeNear(crowded, CARD, 'z');
+  assert.ok(last && avenue(last.x, last.y, CARD));
 });
 
 test('names find things: exactly, ignoring "the" and case, then partially', () => {

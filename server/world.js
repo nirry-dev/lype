@@ -1,6 +1,7 @@
 // Its place: a small map it builds out of what people tell it, because it cannot see the real one.
 // Things it no longer remembers the reason for wear away at night; tending them brings them back.
 // And its wishes: what it asks its keeper for when there is something it cannot do itself.
+import { avenue } from '../web/lib/town.js';
 import { similarity } from './memory.js';
 
 export const MAP = { w: 15, h: 11 };
@@ -36,21 +37,27 @@ export function findThing(world, name) {
   return world.things.find((t) => bare(t.name) === n) || world.things.find((t) => bare(t.name).includes(n) || n.includes(bare(t.name))) || null;
 }
 
-/** The nearest free tile to an anchor, ring by ring. Ties go to a stable pick, so the place doesn't grow in straight lines. */
+/**
+ * The nearest free lot to an anchor, ring by ring, leaving the avenues between the town's blocks open (web/lib/town.js);
+ * only when every lot is taken does it build on an avenue. Ties go to a stable pick, so the place doesn't grow in
+ * straight lines.
+ */
 export function placeNear(world, anchor, salt = '') {
   const taken = new Set([`${CARD.x},${CARD.y}`, ...world.things.map((t) => `${t.x},${t.y}`)]);
-  for (let r = 1; r < Math.max(world.w, world.h); r++) {
-    const ring = [];
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dy = -r; dy <= r; dy++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        const x = anchor.x + dx;
-        const y = anchor.y + dy;
-        if (x < 0 || y < 0 || x >= world.w || y >= world.h || taken.has(`${x},${y}`)) continue;
-        ring.push({ x, y });
+  for (const lots of [true, false]) {
+    for (let r = 1; r < Math.max(world.w, world.h) * 2; r++) {
+      const ring = [];
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = anchor.x + dx;
+          const y = anchor.y + dy;
+          if (x < 0 || y < 0 || x >= world.w || y >= world.h || taken.has(`${x},${y}`) || (lots && avenue(x, y, CARD))) continue;
+          ring.push({ x, y });
+        }
       }
+      if (ring.length) return ring[Math.floor(hash(`${salt}|${r}`) * ring.length)];
     }
-    if (ring.length) return ring[Math.floor(hash(`${salt}|${r}`) * ring.length)];
   }
   return null;
 }

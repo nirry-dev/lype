@@ -1,20 +1,24 @@
 // Its place as a small world you can walk around, in plain WebGL (no libraries).
 // What it built stands where it built it, stacked out of the solids it chose, with its drawing on a sign beside it.
 // Things from before it could build in three dimensions are still only drawings, on cards of paper. The graphics card
-// it lives on lies in the middle, its fans turning as fast as the real ones are worked; the land is only as wide as what
-// it has built; the sky follows its clock. It moves about its place as itself: in the body it chose (or, before it
+// it lives on lies in the middle of a square, its fans turning as fast as the real ones are worked; a small town grows
+// round what it has built, streets between its lots and avenues between its blocks, with trees and lamps it did not
+// build, and only as far as what it built reaches; the sky follows its clock. It moves about its place as itself: in the body it chose (or, before it
 // chose one, as a light), wandering from thing to thing while it rests, at its card while it thinks, at its building
 // site while it builds, and settled on the card at night. What it borrowed (ready-made models
 // from the catalogue in models/) stands among its own solids, in the colours it came in.
-import { COLORS, LOT, MADE, formHeight, inlay, isMesh, partialParts } from './lib/form.js';
+import { COLORS, LOT, MADE, expand, formHeight, inlay, isMesh, partialParts } from './lib/form.js';
+import { BLOCK, avenue } from './lib/town.js';
 
 /** Which mesh a part stands as: a borrowed model's id, or "made:<id>" for something made from its words. */
 const meshRef = (p) => (p.shape === MADE ? (p.made ? `made:${p.made}` : null) : p.model);
 import { moodRGB } from './presence.js';
 
 const PAPER = '#efe4d0';
-const ORIGIN_PITCH = 0.36;
-const SPAN = 0.9; // how much of its tile a lot fills, so neighbours keep a path between them
+const ORIGIN_PITCH = 0.52;
+const FOV = 0.6; // narrow, and from a little higher, so its place reads as a small town seen whole
+const SPAN = 0.9; // how wide a lot is, in world units
+const PITCH = 1.4; // how far apart the tiles are: a lot, and a street round it
 const BODY = 0.042; // its body's steps, in world units: a body 24 steps tall stands about as high as a small house's door
 
 // ---------- small matrix kit (column-major, as WebGL wants) ----------
@@ -142,62 +146,146 @@ function shadowTexture() {
   return c;
 }
 
+/** The town's tiles: every one within a step of its card or of something it built, and what each one is. */
+function townTiles(world) {
+  const built = new Map([[`${world.card.x},${world.card.y}`, { card: true }], ...world.things.map((t) => [`${t.x},${t.y}`, t])]);
+  const tiles = new Map();
+  for (const b of [world.card, ...world.things]) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const x = b.x + dx;
+        const y = b.y + dy;
+        const key = `${x},${y}`;
+        if (tiles.has(key)) continue;
+        const t = built.get(key);
+        const kind = t?.card ? 'square' : t ? (t.ruin ? 'ruin' : 'built') : avenue(x, y, world.card) ? 'avenue' : 'lot';
+        tiles.set(key, { x, y, kind, along: (y - world.card.y) % BLOCK === 0, across: (x - world.card.x) % BLOCK === 0 });
+      }
+    }
+  }
+  return [...tiles.values()];
+}
+
 /**
- * The ground. Land only reaches as far as what it has built: a little around the card and around each thing, darker
- * where something fell into a ruin, with stepping stones along what each thing was built beside. Beyond it, nothing.
+ * The ground: a small town round what it has built, and only as far as that reaches. Its card stands in a paved
+ * square; lots of grass, with streets between them; avenues between the blocks (web/lib/town.js); a lot whose thing
+ * fell into a ruin is bare earth. Past the town, a little meadow, thinning into the dark.
  */
 function groundTexture(world, margin) {
-  const px = 48;
+  const px = 64;
   const W = world.w + margin * 2;
   const H = world.h + margin * 2;
   const [c, g] = canvas2d(W * px, H * px);
-  g.fillStyle = '#101317';
+  g.fillStyle = '#161d19';
   g.fillRect(0, 0, c.width, c.height);
-  const mid = (p) => [(p.x + margin + 0.5) * px, (p.y + margin + 0.5) * px];
-  const held = [{ ...world.card, ruin: false, card: true }, ...world.things];
-  // soft land around everything it built
-  for (const t of held) {
-    const [x, y] = mid(t);
-    const r = px * (t.card ? 2.3 : 1.7);
-    const grad = g.createRadialGradient(x, y, px * 0.3, x, y, r);
-    grad.addColorStop(0, t.ruin ? 'rgba(66, 62, 58, 0.95)' : 'rgba(70, 86, 72, 0.95)');
-    grad.addColorStop(0.6, t.ruin ? 'rgba(48, 46, 44, 0.6)' : 'rgba(52, 64, 58, 0.6)');
-    grad.addColorStop(1, 'rgba(30, 36, 40, 0)');
+  const tiles = townTiles(world);
+  const at = (x, y) => [(x + margin) * px, (y + margin) * px];
+  for (const t of tiles) {
+    const [x, y] = at(t.x + 0.5, t.y + 0.5);
+    const r = px * 2.6;
+    const grad = g.createRadialGradient(x, y, px * 0.5, x, y, r);
+    grad.addColorStop(0, 'rgba(76, 96, 62, 0.5)');
+    grad.addColorStop(1, 'rgba(76, 96, 62, 0)');
     g.fillStyle = grad;
     g.fillRect(x - r, y - r, r * 2, r * 2);
   }
+  // the town, drawn apart so its edge can be softened into the meadow
+  const [town, tg] = canvas2d(c.width, c.height);
+  const lot = px * (SPAN / PITCH);
+  const o = (px - lot) / 2;
+  for (const t of tiles) {
+    const [x, y] = at(t.x, t.y);
+    tg.fillStyle = t.kind === 'square' ? '#aaa08b' : '#8b8374';
+    tg.fillRect(x, y, px, px);
+    if (t.kind === 'square') {
+      tg.strokeStyle = 'rgba(70, 64, 56, 0.35)';
+      tg.lineWidth = 2;
+      for (const r of [0.2, 0.32, 0.44]) {
+        tg.beginPath();
+        tg.arc(x + px / 2, y + px / 2, px * r, 0, Math.PI * 2);
+        tg.stroke();
+      }
+    } else if (t.kind === 'avenue') {
+      tg.fillStyle = '#6e6961';
+      if (t.along) tg.fillRect(x, y + px * 0.32, px, px * 0.36);
+      if (t.across) tg.fillRect(x + px * 0.32, y, px * 0.36, px);
+    } else {
+      tg.fillStyle = t.kind === 'built' ? '#6c8755' : t.kind === 'ruin' ? '#5b5248' : '#5b7849';
+      tg.fillRect(x + o, y + o, lot, lot);
+      tg.strokeStyle = 'rgba(56, 52, 46, 0.6)';
+      tg.lineWidth = 2;
+      tg.strokeRect(x + o - 1, y + o - 1, lot + 2, lot + 2);
+    }
+  }
+  const [mask, mg] = canvas2d(c.width, c.height);
+  mg.filter = 'blur(7px)';
+  mg.fillStyle = '#fff';
+  for (const t of tiles) mg.fillRect(...at(t.x, t.y), px, px);
+  tg.globalCompositeOperation = 'destination-in';
+  tg.drawImage(mask, 0, 0);
+  g.drawImage(town, 0, 0);
   // speckle, so it reads as ground rather than paint
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  for (let i = 0; i < W * H * 6; i++) {
-    g.fillStyle = `rgba(${rnd() > 0.5 ? '210,220,200' : '0,0,0'}, ${0.03 + rnd() * 0.04})`;
+  for (let i = 0; i < W * H * 10; i++) {
+    g.fillStyle = `rgba(${rnd() > 0.5 ? '230,226,210' : '0,0,0'}, ${0.03 + rnd() * 0.05})`;
     g.fillRect(rnd() * c.width, rnd() * c.height, 2, 2);
   }
-  // each lot, faintly squared off
-  g.strokeStyle = 'rgba(220, 230, 215, 0.08)';
-  g.lineWidth = 2;
-  for (const t of world.things) {
-    const [x, y] = mid(t);
-    g.strokeRect(x - (px * SPAN) / 2, y - (px * SPAN) / 2, px * SPAN, px * SPAN);
-  }
-  // stepping stones between each thing and what it was built beside
-  const byId = new Map(world.things.map((t) => [t.id, t]));
-  g.fillStyle = 'rgba(214, 204, 182, 0.32)';
-  for (const t of world.things) {
-    const [ax, ay] = mid(t);
-    const [bx, by] = mid(byId.get(t.near) || world.card);
-    const len = Math.hypot(bx - ax, by - ay);
-    const steps = Math.max(1, Math.floor(len / (px * 0.28)));
-    for (let i = 1; i < steps; i++) {
-      const k = i / steps;
-      const sx = lerp(ax, bx, k) + (hash(`${t.id}${i}`) - 0.5) * 6;
-      const sy = lerp(ay, by, k) + (hash(`${i}${t.id}`) - 0.5) * 6;
-      g.beginPath();
-      g.ellipse(sx, sy, px * 0.09, px * 0.07, hash(`${t.id}r${i}`) * 3, 0, Math.PI * 2);
-      g.fill();
+  return c;
+}
+
+/**
+ * What the town has that it did not build, so its streets are not bare: trees on the empty lots and along the avenues,
+ * and lamps, lit at night, where the streets between what it built cross. The same every visit.
+ */
+function townScenery(world) {
+  const tiles = townTiles(world);
+  const kind = new Map(tiles.map((t) => [`${t.x},${t.y}`, t.kind]));
+  const out = [];
+  const add = (key, x, y, dx, dz, parts) =>
+    out.push({ x, y, pos: [(x - world.card.x) * PITCH + dx, 0, (y - world.card.y) * PITCH + dz], placed: placedParts({ id: key, condition: 1 }, { parts: parts.flatMap(expand) }) });
+  const tree = (key) => {
+    const w = 3 + hash(`${key}w`) * 2.5;
+    const h = 5.5 + hash(`${key}h`) * 3.5;
+    return { shape: hash(`${key}k`) < 0.35 ? 'pine' : 'tree', x: 5 - w / 2, z: 5 - w / 2, y: 0, w, d: w, h, color: hash(`${key}c`) < 0.5 ? 'leaf' : 'moss', glow: false };
+  };
+  const lamp = { shape: 'lamp', x: 4.4, z: 4.4, y: 0, w: 1.2, d: 1.2, h: 6.5, color: 'gold', glow: true };
+  for (const t of tiles) {
+    const key = `town${t.x},${t.y}`;
+    if (t.kind === 'lot') {
+      const n = [0, 1, 1, 2, 2, 3][Math.floor(hash(key) * 6)];
+      const spots = [];
+      for (let i = 0; i < n * 4 && spots.length < n; i++) {
+        const spot = [(hash(`${key}x${i}`) - 0.5) * SPAN * 0.7, (hash(`${key}z${i}`) - 0.5) * SPAN * 0.7];
+        if (spots.every((q) => Math.hypot(q[0] - spot[0], q[1] - spot[1]) > 0.3)) spots.push(spot);
+      }
+      spots.forEach(([dx, dz], i) => add(`${key}|${i}`, t.x, t.y, dx, dz, [tree(`${key}|${i}`)]));
+    } else if (t.kind === 'avenue' && t.along !== t.across) {
+      // a tree to one side of the road, and a tree or a lamp to the other
+      const side = PITCH * 0.36;
+      const off = (hash(`${key}o`) - 0.5) * 0.3;
+      const [ax, az] = t.along ? [off, side] : [side, off];
+      add(`${key}|a`, t.x, t.y, ax, az, [tree(`${key}|a`)]);
+      add(`${key}|b`, t.x, t.y, -ax, -az, [hash(`${key}l`) < 0.4 ? lamp : tree(`${key}|b`)]);
     }
   }
-  return c;
+  // lamps where the streets between its lots cross, beside what it built (the avenues have their own)
+  const corners = new Set();
+  for (const t of tiles) {
+    if (t.kind !== 'built') continue;
+    for (const [cx, cy] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
+      const x = t.x + cx;
+      const y = t.y + cy;
+      const key = `${x},${y}`;
+      if (corners.has(key)) continue;
+      corners.add(key);
+      const round = [[x - 0.5, y - 0.5], [x + 0.5, y - 0.5], [x - 0.5, y + 0.5], [x + 0.5, y + 0.5]].map(([a, b]) => kind.get(`${a},${b}`));
+      if (round.includes('avenue') || round.includes('square')) continue;
+      const near = round.filter((k) => k === 'built').length;
+      if (near >= 2 || hash(`lamp${key}`) < 0.35) add(`lamp${key}`, x, y, 0, 0, [lamp]);
+    }
+  }
+  return out;
 }
 
 /** A drawing as it stands in the world: on a card of paper, greyed if it is a ruin. */
@@ -728,7 +816,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   mini.className = 'walk-mini';
   mini.title = 'Its whole place, from above. Click to go there.';
   mini.setAttribute('aria-hidden', 'true');
-  host.append(canvas, labels, mini);
+  const focus = document.createElement('div');
+  focus.className = 'walk-focus';
+  host.append(canvas, focus, labels, mini);
   selfLabel.className = 'walk-label self';
   labels.append(selfLabel);
 
@@ -762,8 +852,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   /** The sun's (or moon's) view of the whole place, never so low that shadows run off forever. */
   function lightView(dir) {
     const l = norm([dir[0], Math.max(dir[1], 0.3), dir[2]]);
-    const c = [world.w / 2 - world.card.x, 0, world.h / 2 - world.card.y];
-    const r = Math.hypot(world.w, world.h) / 2 + 2;
+    const c = [(world.w / 2 - world.card.x) * PITCH, 0, (world.h / 2 - world.card.y) * PITCH];
+    const r = (Math.hypot(world.w, world.h) / 2) * PITCH + 2;
     return mat.mul(mat.ortho(r, 1, 120), mat.lookAt([c[0] + l[0] * 60, l[1] * 60, c[2] + l[2] * 60], c));
   }
   function drawShadows(lightVP) {
@@ -893,9 +983,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   let world = null;
   let look = { mood: { lonely: 0.5, warm: 0.5 }, hour: 12, asleep: false, gpu: null };
   let things = []; // { t, pos, tex, label, top }
+  let town = []; // trees and lamps it did not build: { x, y, pos, placed }
   let selected = null;
   let site = null; // { x, y, id, name, pos, tex, label, svg, parts: [{ p, at }] }
-  const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 9, target: [0, 0.4, 0], goal: null };
+  const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 12, target: [0, 0.4, 0], goal: null };
   // Where it is and where it is going: a spot on the ground (x, z), a height it floats at, which way it faces.
   const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };  const keys = new Set();
   let fan = 0;
@@ -913,8 +1004,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     return { dir: [Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e)], size: 0.35 + hash(`s${i}`) * 0.6, tw: hash(`t${i}`) * 6 };
   });
 
-  const toWorld = (p) => [p.x - world.card.x, 0, p.y - world.card.y];
-  const bounds = () => ({ x0: -world.card.x - 1.5, x1: world.w - world.card.x + 0.5, z0: -world.card.y - 1.5, z1: world.h - world.card.y + 0.5 });
+  const toWorld = (p) => [(p.x - world.card.x) * PITCH, 0, (p.y - world.card.y) * PITCH];
+  const bounds = () => ({ x0: (-world.card.x - 1.5) * PITCH, x1: (world.w - world.card.x + 0.5) * PITCH, z0: (-world.card.y - 1.5) * PITCH, z1: (world.h - world.card.y + 0.5) * PITCH });
 
   function resize() {
     const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -1035,7 +1126,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       cam.target[1] + cam.dist * Math.sin(cam.pitch),
       cam.target[2] + cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw),
     ];
-    proj = mat.perspective(0.82, canvas.width / canvas.height, 0.1, 160);
+    proj = mat.perspective(FOV, canvas.width / canvas.height, 0.1, 200);
     view = mat.lookAt(eye, cam.target);
     // Where the horizon falls on screen, so the sky behind the canvas meets the fogged ground there without a seam.
     const ahead = [cam.target[0] - Math.sin(cam.yaw) * 150, 0, cam.target[2] - Math.cos(cam.yaw) * 150];
@@ -1107,11 +1198,11 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     gl.uniform1f(prog.uLight, light);
     const gw = world.w + MARGIN * 2;
     const gh = world.h + MARGIN * 2;
-    const gx = gw / 2 - world.card.x - MARGIN;
-    const gz = gh / 2 - world.card.y - MARGIN;
+    const gx = (gw / 2 - world.card.x - MARGIN - 0.5) * PITCH;
+    const gz = (gh / 2 - world.card.y - MARGIN - 0.5) * PITCH;
     draw(mat.model([0, -0.02, 0], 0, 0, [500, 1, 500]), meshes.flat, tex.white, [0.063, 0.075, 0.09, 1]);
     gl.uniform1f(prog.uReceive, 1); // the ground takes the shadows of what stands on it
-    draw(mat.model([gx, 0, gz], 0, 0, [gw, 1, gh]), meshes.flat, tex.ground, [1, 1, 1, 1]);
+    draw(mat.model([gx, 0, gz], 0, 0, [gw * PITCH, 1, gh * PITCH]), meshes.flat, tex.ground, [1, 1, 1, 1]);
     gl.uniform1f(prog.uReceive, 0);
 
     // pools of light on the ground: its light, you
@@ -1150,6 +1241,16 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
         gl.uniform1f(prog.uLight, 1);
         halo([th.pos[0], 0.02, th.pos[2]], 1.7, [0.55, 0.85, 0.8], 0.4);
         gl.uniform1f(prog.uLight, light);
+      }
+    }
+
+    // the town round it: trees, and lamps lit at night
+    for (const sc of town) {
+      if (site && sc.x === site.x && sc.y === site.y) continue;
+      for (const q of sc.placed) {
+        const at = [sc.pos[0] + q.at[0], q.at[1], sc.pos[2] + q.at[2]];
+        solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, glow: q.glow ? night * 0.9 : 0 });
+        if (q.glow && night > 0.25) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: q.size[0], color: q.color });
       }
     }
 
@@ -1495,15 +1596,15 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     }
     // its light
     const mood = moodRGB(look.mood);
-    const lx = (creature.pos[0] + world.card.x + 0.5) * cell;
-    const ly = (creature.pos[2] + world.card.y + 0.5) * cell;
+    const lx = (creature.pos[0] / PITCH + world.card.x + 0.5) * cell;
+    const ly = (creature.pos[2] / PITCH + world.card.y + 0.5) * cell;
     g.fillStyle = `rgba(${mood.join(',')}, 0.95)`;
     g.beginPath();
     g.arc(lx, ly, 2.6, 0, Math.PI * 2);
     g.fill();
     // you, and which way you are looking
-    const yx = (cam.target[0] + world.card.x + 0.5) * cell;
-    const yy = (cam.target[2] + world.card.y + 0.5) * cell;
+    const yx = (cam.target[0] / PITCH + world.card.x + 0.5) * cell;
+    const yy = (cam.target[2] / PITCH + world.card.y + 0.5) * cell;
     const a = Math.atan2(-Math.cos(cam.yaw), -Math.sin(cam.yaw));
     g.fillStyle = 'rgba(255,255,255,0.18)';
     g.beginPath();
@@ -1521,8 +1622,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     if (!world) return;
     const r = mini.getBoundingClientRect();
     const cell = r.width / (world.w + 2);
-    const x = (e.clientX - r.left) / cell - 1 - 0.5 - world.card.x;
-    const z = (e.clientY - r.top) / cell - 1 - 0.5 - world.card.y;
+    const x = ((e.clientX - r.left) / cell - 1 - 0.5 - world.card.x) * PITCH;
+    const z = ((e.clientY - r.top) / cell - 1 - 0.5 - world.card.y) * PITCH;
     const b = bounds();
     cam.goal = [clamp(x, b.x0, b.x1), 0.4, clamp(z, b.z0, b.z1)];
     schedule();
@@ -1579,7 +1680,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     pointers.set(e.pointerId, [e.clientX, e.clientY]);
     if (pointers.size === 2) {
       const d = pinchDist();
-      if (drag.pinch) cam.dist = clamp((cam.dist * drag.pinch) / d, 2.5, 22);
+      if (drag.pinch) cam.dist = clamp((cam.dist * drag.pinch) / d, 3, 32);
       drag.pinch = d;
       drag.moved += 10;
     } else {
@@ -1612,7 +1713,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     'wheel',
     (e) => {
       e.preventDefault();
-      cam.dist = clamp(cam.dist * Math.exp(e.deltaY * 0.0012), 2.5, 22);
+      cam.dist = clamp(cam.dist * Math.exp(e.deltaY * 0.0012), 3, 32);
       dirty = true;
       schedule();
     },
@@ -1693,6 +1794,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     if (changed) {
       if (tex.ground) gl.deleteTexture(tex.ground);
       tex.ground = texture(groundTexture(world, MARGIN));
+      town = townScenery(world);
       const keep = new Map(things.map((th) => [th.t.id, th]));
       const fresh = [];
       for (const t of world.things) {
@@ -1728,7 +1830,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       creature.pos = [start[0], 0.6, start[1]];
       const xs = world.things.map((t) => Math.abs(t.x - world.card.x));
       const zs = world.things.map((t) => Math.abs(t.y - world.card.y));
-      cam.dist = clamp(3.5 + Math.max(0, ...xs, ...zs) * 1.3, 4.5, 13);
+      cam.dist = clamp(6 + Math.max(0, ...xs, ...zs) * PITCH * 2.2, 8, 22);
     }
     dirty = true;
     schedule();
