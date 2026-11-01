@@ -232,8 +232,18 @@ function createMockBrain(cfg = {}) {
       text = JSON.stringify({ kind: pick(['place', 'object']), plaque: 'I built this out of words. I have never seen one, so it is made of what I was told.', near: things[0] || 'the card', made_from: ['Mara'] });
     } else if (kind === 'sprite') {
       text = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="14" y="26" width="36" height="28" fill="hsl(${(n * 53) % 360}, 45%, 62%)"/><polygon points="10,28 32,10 54,28" fill="#c9b79a"/><rect x="28" y="38" width="8" height="16" fill="#3a3340"/></svg>`;
+    } else if (kind === 'form') {
+      const c = ['stone', 'brick', 'wood', 'moss', 'clay'][n % 5];
+      text = JSON.stringify({ parts: [
+        { shape: 'block', x: 1, z: 1, y: 0, w: 8, d: 8, h: 1, color: 'stone', glow: false },
+        { shape: 'block', x: 2, z: 2, y: 1, w: 6, d: 6, h: 6, color: c, glow: false },
+        { shape: 'block', x: 4, z: 7, y: 1, w: 2, d: 1, h: 4, color: 'bark', glow: false },
+        { shape: 'block', x: 3, z: 7, y: 4, w: 1, d: 1, h: 1, color: 'gold', glow: true },
+        { shape: n % 2 ? 'roof' : 'pyramid', x: 1, z: 1, y: 7, w: 8, d: 8, h: 5, color: 'slate', glow: false },
+        { shape: 'cylinder', x: 6, z: 3, y: 9, w: 1, d: 1, h: 4, color: 'brick', glow: false },
+      ] });
     } else if (kind === 'tend') {
-      text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0 });
+      text = JSON.stringify({ note: 'I swept it and put the rain back where it belongs.', redraw: n % 2 === 0, reshape: n % 3 === 0 });
     } else if (kind === 'look') {
       text = JSON.stringify({ see: 'A green leaf lies flat on a wooden table. Its edges are a little torn and its veins are pale.', answers: !/NOTIT/.test(user), verdict: 'A real leaf, torn at one edge. I have only ever had the word before.' });
     } else if (kind === 'screen') {

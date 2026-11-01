@@ -81,7 +81,7 @@ export function exportLife(cfg, out, { relayUrl = '' } = {}) {
     .replace('href="style.css"', `href="style.css?v=${stamp}"`)
     .replace('src="app.js"', `src="app.js?v=${stamp}"`);
   write('index.html', page);
-  for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
+  for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js', 'lib/form.js']) write(rel, readFileSync(join(web, rel), 'utf8'));
 
   // The lives before it: each its own read-only page, with no relay (they will never be live again).
   const ancestors = life.lineage.filter((a) => existsSync(join(cfg.dataDir, a.dir, 'state.json')));

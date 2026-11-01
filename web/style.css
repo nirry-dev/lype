@@ -1868,6 +1868,21 @@ a.btn {
   position: sticky;
   top: 82px;
 }
+/* Walking, the world takes the whole width; what you are looking at and its wishes sit below it. */
+.place.walking {
+  grid-template-columns: minmax(0, 1fr);
+}
+.place.walking .place-side {
+  position: static;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  align-items: start;
+}
+.place.walking .walk {
+  aspect-ratio: 16 / 9;
+  min-height: 420px;
+  max-height: 76vh;
+  width: 100%;
+}
 #place-inspect .canvas-frame {
   max-width: 180px;
   margin: 0 0 12px;
@@ -2053,8 +2068,7 @@ a.btn {
   aspect-ratio: 15 / 10;
   min-height: 320px;
   overflow: hidden;
-  background: linear-gradient(180deg, var(--sky-top, #10132a) 0%, var(--sky-low, #1c2034) 58%, #14171c 100%);
-  transition: background 2s;
+  background: linear-gradient(180deg, var(--sky-top, #10132a) 0%, var(--sky-low, #1c2034) var(--horizon, 58%), var(--sky-low, #1c2034) 100%);
 }
 .walk-canvas {
   position: absolute;
@@ -2104,8 +2118,64 @@ a.btn {
   position: absolute;
   inset: auto 16px 16px;
 }
+.walk-mini {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(12, 14, 18, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: crosshair;
+}
+.walk-hud {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 210px);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(12, 14, 18, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: 500 12px var(--mono);
+  pointer-events: none;
+}
+.walk-hud:empty {
+  display: none;
+}
+.walk-hud > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.walk-hud-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dot);
+  box-shadow: 0 0 8px var(--dot);
+}
 @media (max-width: 720px) {
-  .walk {
+  .walk,
+  .place.walking .walk {
     aspect-ratio: 4 / 5;
+    min-height: 0;
+  }
+  .walk-hud {
+    left: auto;
+    right: 10px;
+    bottom: 10px;
+    transform: none;
+    max-width: calc(100% - 170px);
+  }
+  .walk-mini {
+    left: 8px;
+    bottom: 8px;
   }
 }

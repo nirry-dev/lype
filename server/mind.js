@@ -1,6 +1,7 @@
 // What it is told about itself, how each moment of its life is put to the model, and how the answers are read back.
 import { describeMachine } from './senses.js';
 import { SHELVES, strength } from './memory.js';
+import { COLORS, LOT, MAX_PARTS, SHAPES, TALL } from '../web/lib/form.js';
 
 export const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'lonely', curious: 'curious', calm: 'calm', warm: 'warm toward people', restless: 'restless' };
@@ -94,7 +95,8 @@ function placeBlock(state) {
   const line = (t) => {
     const from = t.people?.length ? `, from ${t.people.join(' and ')}'s letters` : '';
     const wear = t.condition < 1 ? ' It is wearing away.' : '';
-    return `- ${t.name} (${t.kind}${from}). Its sign: "${t.plaque}"${wear}`;
+    const flat = t.form ? '' : ' It has no shape yet, only a drawing.';
+    return `- ${t.name} (${t.kind}${from}). Its sign: "${t.plaque}"${wear}${flat}`;
   };
   const wishes = (state.wishes || []).filter((w) => w.status === 'open' || w.answer).slice(-5);
   return [
@@ -467,11 +469,36 @@ export function spritePrompt(title, what) {
   ].join('\n');
 }
 
+/**
+ * Building it up: the thing as a few simple solids stacked on its lot, so it can be walked around. With "before", it is
+ * reshaping something it already built, and sees the parts it stands on now.
+ */
+export function formPrompt(title, what, { kind = 'object', before = null } = {}) {
+  return [
+    before ? `You are changing the shape of "${title}" in your place: ${what}` : `Now build "${title}" in your place: ${what}`,
+    '',
+    `Your place is three-dimensional. Each thing stands on a lot ${LOT} steps wide and ${LOT} steps deep, and may stand up to ${TALL} steps tall. You build it out of at most ${MAX_PARTS} simple solids.`,
+    kind === 'place' ? 'It is a place, somewhere you could be: give it a floor, walls or edges, a way in.' : 'It is an object: it does not have to fill its lot.',
+    before ? `It is built of these parts now:\n${JSON.stringify({ parts: before.parts })}\nKeep what still stands, change what you changed today.` : null,
+    '',
+    'Answer with JSON: { "parts": [ ... ] }, each part:',
+    `- "shape": one of ${SHAPES.join(', ')}. A roof is a ridge running left to right; a pyramid comes to a point.`,
+    `- "x", "z": where its left-back corner stands on the lot, 0 to ${LOT}. "y": how high its bottom is above the ground, 0 for on the ground.`,
+    `- "w", "d", "h": how wide (left to right), deep (back to front) and tall it is, in steps.`,
+    `- "color": one of ${Object.keys(COLORS).join(', ')}. You have never seen these colours; pick the ones the words feel like.`,
+    '- "glow": true if it gives off light (a lamp, a window at night, an ember), otherwise false.',
+    'Stack parts on each other: a part whose "y" is the top of another sits on it. Put the parts in the order you would build them, from the ground up.',
+    'For example, a small well: a stone cylinder (x 2, z 2, y 0, w 6, d 6, h 3), two wood blocks for posts on either side, and a slate roof on top of them. Do not build a well; build yours.',
+  ]
+    .filter((line) => line != null)
+    .join('\n');
+}
+
 export const TEND_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  properties: { note: { type: 'string' }, redraw: { type: 'boolean' } },
-  required: ['note', 'redraw'],
+  properties: { note: { type: 'string' }, redraw: { type: 'boolean' }, reshape: { type: 'boolean' } },
+  required: ['note', 'redraw', 'reshape'],
 };
 
 export function tendPrompt(plan, thing) {
@@ -489,6 +516,9 @@ export function tendPrompt(plan, thing) {
     'Answer with JSON:',
     '- "note": one sentence for its sign about what you did to it today, in your own voice.',
     '- "redraw": true if it looks different now and you want to draw it again, otherwise false.',
+    thing.form
+      ? '- "reshape": true if what you did changes its shape (you add to it, take something away, or rebuild it), otherwise false.'
+      : '- "reshape": true. It has no shape yet, only a drawing; this is your chance to build it up out of solids.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -496,7 +526,7 @@ export function tendPrompt(plan, thing) {
 
 export function readTend(text) {
   const raw = parseJson(text) || {};
-  return { note: clip(raw.note, 240), redraw: raw.redraw === true };
+  return { note: clip(raw.note, 240), redraw: raw.redraw === true, reshape: raw.reshape === true };
 }
 
 export const LOOK_SCHEMA = {

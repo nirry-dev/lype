@@ -136,7 +136,7 @@ const visitor = (() => {
 
 // ---------- state ----------
 
-const blankLive = () => ({ think: '', draw: '', write: '', sprite: '', plaque: '', change: '', reply: '', dream: '', title: '', replyTo: null, reading: [], building: null });
+const blankLive = () => ({ think: '', draw: '', write: '', sprite: '', form: '', plaque: '', change: '', reply: '', dream: '', title: '', replyTo: null, reading: [], building: null });
 const app = {
   state: null,
   live: blankLive(),
@@ -362,6 +362,7 @@ function renderStatus() {
   const up = app.connected || SNAPSHOT;
   el.dataset.mode = up ? statusMode(app.state.phase) : 'down';
   $('.status-text', el).textContent = up ? statusText(app.state) : 'reconnecting…';
+  updateWalkHud();
 }
 function renderChrome() {
   const s = app.state;
@@ -1758,7 +1759,18 @@ const TILE = 64;
 
 function stopWalk() {
   app.walk?.destroy();
-  app.walk = app.walkHost = null;
+  app.walk = app.walkHost = app.walkHud = null;
+}
+
+/** Over the world, what it is doing right now, as in its status line (and what it is building, while it builds). */
+function updateWalkHud() {
+  const hud = app.walkHud;
+  if (!hud || !app.state) return;
+  const s = app.state;
+  const b = !SNAPSHOT && s.busy && app.live.building;
+  const doing = b ? `${b.id ? 'reshaping' : app.live.form ? 'building' : 'drawing'} “${b.name}”` : statusText(s);
+  const text = `${s.name || 'It'} is ${doing}`;
+  if (hud.textContent !== text) fill(hud, h('span', { class: 'walk-hud-dot', style: `--dot:${moodColor(s.mood)}` }), h('span', {}, text));
 }
 
 /** What the walkable world needs to know about it right now: its mood, the hour on its clock, whether it sleeps. */
@@ -1766,44 +1778,46 @@ function walkLook() {
   const s = app.state;
   const m = /(\d{1,2}):(\d{2})/.exec(s.senses?.time || '');
   const now = new Date();
-  return { mood: s.mood, hour: m ? Number(m[1]) + Number(m[2]) / 60 : now.getHours() + now.getMinutes() / 60, asleep: ['dreaming', 'rewriting', 'naming'].includes(s.phase) };
+  return { mood: s.mood, hour: m ? Number(m[1]) + Number(m[2]) / 60 : now.getHours() + now.getMinutes() / 60, asleep: ['dreaming', 'rewriting', 'naming'].includes(s.phase), gpu: s.senses?.gpu || null };
 }
 
 async function renderPlace(current) {
   app.world ??= await api('/api/world');
   if (!current()) return;
   const w = app.world;
-  const walking = app.params.has('walk');
+  // Walking around it is the way in; the flat map is one click away (and all a browser without WebGL gets).
+  const walking = !app.params.has('map');
   if (walking && !app.walkHost) {
     // The world is kept across live updates (the same canvas is moved into the new page), so the reader's view holds.
     app.walkHost = h('div', { class: 'walk' });
     app.walk = createWalk(app.walkHost, { asset, onSelect: (id) => selectThing(id) });
-    if (!app.walk) app.walkHost.append(h('p', { class: 'muted' }, 'This browser cannot draw the world. The map shows the same place.'));
+    if (app.walk) app.walkHost.append((app.walkHud = h('div', { class: 'walk-hud', 'aria-live': 'polite' })));
+    else app.walkHost.append(h('p', { class: 'muted' }, 'This browser cannot draw the world. The map below shows the same place.'));
   } else if (!walking) stopWalk();
   const thingParam = app.params.get('thing');
   const modeLink = (on, label, href) => h('a', { class: `btn${on ? ' on' : ''}`, href, 'aria-current': on ? 'true' : null }, label);
   const modes = h(
     'div',
     { class: 'place-modes', role: 'group', 'aria-label': 'How to see its place' },
-    modeLink(!walking, 'Map', `#/place${thingParam ? `?thing=${thingParam}` : ''}`),
-    modeLink(walking, 'Walk around', `#/place?walk${thingParam ? `&thing=${thingParam}` : ''}`),
+    modeLink(walking, 'Walk around', `#/place${thingParam ? `?thing=${thingParam}` : ''}`),
+    modeLink(!walking, 'Map', `#/place?map${thingParam ? `&thing=${thingParam}` : ''}`),
   );
   fill(
     $('#view'),
     intro(
       'Its place',
-      'It cannot see the world, so it builds one out of what people tell it. Everything here it made itself, mostly out of letters, and drew with its own shapes. A thing stands while something it remembers still holds it up. When it forgets why it built something, that thing wears away at night into a ruin, unless it goes back and tends it.',
+      'It cannot see the world, so it builds one out of what people tell it. Everything here it made itself, mostly out of letters: it chose every block, roof and lamp each thing is built from, and drew the sign beside it. A thing stands while something it remembers still holds it up. When it forgets why it built something, that thing wears away at night into a ruin, unless it goes back and tends it.',
     ),
     h(
       'div',
-      { class: 'place' },
+      { class: `place${walking ? ' walking' : ''}` },
       h(
         'section',
         { class: `card place-stage${walking ? ' walking' : ''}` },
         modes,
-        walking ? app.walkHost : placeMap(w),
+        walking ? [app.walkHost, app.walk ? null : placeMap(w)] : placeMap(w),
         walking
-          ? h('div', { class: 'place-legend' }, h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'click or Tab: read a sign'))
+          ? h('div', { class: 'place-legend' }, h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'click or Tab: read a sign'), h('span', {}, 'map: go there'))
           : h('div', { class: 'place-legend' }, h('span', {}, 'faint: wearing away'), h('span', {}, 'cracked: a ruin'), h('span', {}, 'lines: what each thing was built beside'), h('span', {}, 'glow: where it was last')),
       ),
       h('aside', { class: 'place-side' }, h('div', { class: 'card' }, cardHead('Looking at'), h('div', { id: 'place-inspect' })), wishesCard(w)),
@@ -1960,6 +1974,7 @@ function selectThing(id) {
     thingFrame(t.sprite ? asset(t.sprite) : null, t.name),
     h('p', { class: 'voice plaque' }, t.plaque),
     h('p', { class: 'meta' }, by ? `${status}. Built by ${by.name}, the mind that lived here before, in its cycle ${by.cycle}; handed down when it died.` : `${status}. Built in cycle ${t.built}, as version ${t.version}.`),
+    h('p', { class: 'meta' }, t.form ? `Built of ${t.form.parts.length} solid${t.form.parts.length === 1 ? '' : 's'} it chose and stacked itself.` : 'Only a drawing so far: it has not given this a shape yet.'),
     t.from.length ? h('p', { class: 'meta' }, 'Made from ', t.from.map((f, i) => [i ? ' and ' : '', h('b', { class: 'human' }, f.from), '’s letter']), '.') : h('p', { class: 'meta' }, 'Made from nothing but itself.'),
     t.history.length > 1
       ? h(
@@ -1977,8 +1992,9 @@ function updatePlaceLive() {
   if (app.view !== 'place') return;
   if (app.walk) {
     const on = !SNAPSHOT && app.state.busy && app.live.building;
-    app.walk.building(on ? app.live.building : null, on ? cleanSvg(app.live.sprite, { partial: true, idPrefix: 'pw-' }).svg : null);
+    app.walk.building(on ? app.live.building : null, on ? cleanSvg(app.live.sprite, { partial: true, idPrefix: 'pw-' }).svg : null, on ? app.live.form : '');
   }
+  updateWalkHud();
   const layer = $('#place-live');
   if (!layer) return;
   const s = app.state;

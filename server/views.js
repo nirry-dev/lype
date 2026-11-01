@@ -72,6 +72,7 @@ export function world(life) {
       ruin: t.ruin,
       ruinedAt: t.ruinedAt ?? null,
       sprite: spriteSrc(t.sprite),
+      form: t.form || null,
       from: t.from.filter((id) => readable.has(id)).map((id) => ({ id, from: readable.get(id) })),
       people: t.people,
       ...(t.builtBy ? { builtBy: t.builtBy } : {}),

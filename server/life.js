@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
+import { FORM_SCHEMA, readForm } from '../web/lib/form.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
@@ -238,6 +239,13 @@ export class Life extends EventEmitter {
       this.notes.push(`Since you last woke, your keeper made you mortal. From now on you live only as long as someone writes to you: if ${after} nights pass in a row without a single letter, from a person or from another mind, your life ends, and a new mind is born here in your place. Every letter starts the count again.`);
       this.journalAdd({ kind: 'gift', text: `Its keeper made it mortal: from now on it lives only as long as someone writes to it. ${after} nights in a row without a letter, and its life ends.` });
       this.milestone('mortal', 'Its keeper made it mortal: it lives as long as someone writes to it.');
+    }
+    if (s.abilities.includes('world') && !s.abilities.includes('shapes')) {
+      s.abilities = [...s.abilities, 'shapes'];
+      const flat = s.world.things.filter((t) => !t.form).length;
+      this.notes.push(`Since you last woke, your keeper gave your place a third dimension. What you build now has a shape, stacked out of simple solids, and people can walk around it.${flat ? ' What you built before is still only a drawing; it takes a shape when you go back and tend it.' : ''}`);
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave its place a third dimension: what it builds now has a shape people can walk around.' });
+      this.milestone('given-shapes', 'Its keeper gave its place a third dimension: what it builds now has a shape.');
     }
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
     this.saveState();
@@ -577,7 +585,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands'],
+      abilities: ['world', 'wishes', 'errands', 'shapes'],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
@@ -845,7 +853,7 @@ export class Life extends EventEmitter {
     const cfg = this.cfg;
     const n = s.cycle + 1;
     const startedAt = new Date().toISOString();
-    this.live = { cycle: n, phase: this.phase, think: '', draw: '', write: '', sprite: '', plaque: '', change: '', title: '', reading: [], building: null };
+    this.live = { cycle: n, phase: this.phase, think: '', draw: '', write: '', sprite: '', form: '', plaque: '', change: '', title: '', reading: [], building: null };
 
     // It picks letters up in its own time: oldest first, at most one per person per cycle. People come first;
     // letters from other creatures fill what room is left, a few per cycle at most (none while its keeper pauses them).
@@ -1156,6 +1164,7 @@ export class Life extends EventEmitter {
       onToken: (t) => this.stream('sprite', t),
     });
     const { svg, shapes } = cleanSvg(drawn.text, { maxElements: 120 });
+    const form = await this.shape(system, plan.title, `${plan.content} ${plaque}`, { kind: b.kind });
     return {
       kind: 'building',
       title: plan.title,
@@ -1168,7 +1177,22 @@ export class Life extends EventEmitter {
       madeFrom: b.madeFrom,
       svg: shapes ? svg : null,
       shapes,
+      form,
     };
+  }
+
+  /** It builds the thing up out of solids, streamed part by part so the site can be watched rising. Null if nothing stands. */
+  async shape(system, title, what, { kind, before = null } = {}) {
+    const raw = await this.brain.complete({
+      kind: 'form',
+      system,
+      user: mind.formPrompt(title, what, { kind, before }),
+      maxTokens: 1800,
+      temperature: 0.7,
+      schema: FORM_SCHEMA,
+      onToken: (t) => this.stream('form', t),
+    });
+    return readForm(raw.text);
   }
 
   /** It goes back to something it built: what it does to it, and a new drawing if it looks different now. */
@@ -1194,7 +1218,13 @@ export class Life extends EventEmitter {
       });
       ({ svg, shapes } = cleanSvg(drawn.text, { maxElements: 120 }));
     }
-    return { kind: 'tending', title: thing.name, thing: thing.id, intent: plan.content, change, restored: Boolean(thing.ruin), svg: shapes ? svg : null, shapes };
+    let form = null;
+    if (t.reshape || !thing.form) {
+      this.live.building = { x: thing.x, y: thing.y, name: thing.name, id: thing.id };
+      this.emit('world', { building: this.live.building });
+      form = await this.shape(system, thing.name, `${thing.plaque} Now: ${change}`, { kind: thing.kind, before: thing.form || null });
+    }
+    return { kind: 'tending', title: thing.name, thing: thing.id, intent: plan.content, change, restored: Boolean(thing.ruin), svg: shapes ? svg : null, shapes, form };
   }
 
   /** Commit a new thing to its place, tied to the letters it was made from (and tell those letters). */
@@ -1218,6 +1248,7 @@ export class Life extends EventEmitter {
       from: sources.map((l) => l.id),
       people: [...new Set(sources.map((l) => l.from))],
       sprite: work.svg ? n : null,
+      form: work.form || null,
       condition: 1,
       ruin: false,
       tended: null,
@@ -1246,6 +1277,10 @@ export class Life extends EventEmitter {
     if (work.svg) {
       this.store.writeText(`works/${pad(n)}.svg`, work.svg);
       thing.sprite = n;
+    }
+    if (work.form) {
+      if (!thing.form) this.milestone('first-shape', `It gave "${thing.name}" a shape for the first time.`);
+      thing.form = work.form;
     }
     s.world.at = thing.id;
     s.stats.tended++;
