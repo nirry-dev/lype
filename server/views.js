@@ -4,7 +4,6 @@ import { publicSeal } from '../web/lib/seal.js';
 import { pad } from './store.js';
 import { borrowed, loadCatalogue } from './models.js';
 import { CARD } from './world.js';
-import { standing } from '../web/lib/form.js';
 
 const spriteSrc = (n) => (n ? `works/${pad(n)}.svg` : null);
 
@@ -54,7 +53,8 @@ export function world(life) {
   const s = life.state;
   life.catalogue ??= loadCatalogue();
   const readable = new Map(life.letters.filter((l) => letterStatus(l) === 'allowed').map((l) => [l.id, l.from]));
-  const things = s.world.things.map((t) => [t, standing(t.form)]); // as they stand, so a model left out is not credited
+  // Shapes from before its parts were solid are shown as it built them: the rule is for what it builds from now on.
+  const things = s.world.things.map((t) => [t, t.form]);
   return {
     name: s.name,
     w: s.world.w,

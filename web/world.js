@@ -601,7 +601,6 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 9, target: [0, 0.4, 0], goal: null };
   // Where it is and where it is going: a spot on the ground (x, z), a height it floats at, which way it faces.
   const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };
-
   const keys = new Set();
   let fan = 0;
   let raf = 0;
@@ -862,6 +861,13 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     if (form) {
       gl.uniform1f(prog.uLight, light);
       creature.height = drawBody(form, t, night, mood);
+      // where something it built still stands between it and you, it shows through, faint, so it is never lost:
+      // drawn again only where it is behind what is already there, with its own back faces left out
+      gl.depthFunc(gl.GREATER);
+      gl.enable(gl.CULL_FACE);
+      drawBody(form, t, night, mood, { ghost: true });
+      gl.disable(gl.CULL_FACE);
+      gl.depthFunc(gl.LESS);
       gl.uniform1f(prog.uLight, 1);
       spark([creature.pos[0], creature.pos[1] + creature.height * 0.55, creature.pos[2]], creature.height * 1.6 + 0.3, mood, look.asleep ? 0.12 : 0.22);
     } else {
@@ -960,12 +966,21 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   const turn = (a, b, k) => a + (((((b - a) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * k;
   /** A spot beside a thing, on its side facing `toward`, and the way to face to look at it. */
   function beside(th, toward = [0, 0]) {
+    // far enough out that all of its body stands clear of the lot, not only its middle
+    const out = SPAN / 2 + reach() + 0.08;
     // the sides of its lot, nearest to `toward` first; open ground before a side where something else stands
     const sides = [[0, 1], [0, -1], [1, 0], [-1, 0]]
-      .map((dir) => ({ dir, spot: [th.pos[0] + dir[0] * 0.66, th.pos[2] + dir[1] * 0.66] }))
+      .map((dir) => ({ dir, spot: [th.pos[0] + dir[0] * out, th.pos[2] + dir[1] * out] }))
       .sort((a, b) => Math.hypot(a.spot[0] - toward[0], a.spot[1] - toward[1]) - Math.hypot(b.spot[0] - toward[0], b.spot[1] - toward[1]));
     const { spot } = sides.find((s) => !clearance(...s.spot)) || sides[0];
     return { spot, face: angleTo(spot, [th.pos[0], th.pos[2]]) };
+  }
+
+  /** How far its body reaches out from its middle (0 while it is only a light). */
+  function reach() {
+    const form = body();
+    if (!form) return 0;
+    return Math.max(...form.parts.map((p) => Math.max(Math.abs(p.x - LOT / 2), Math.abs(p.x + p.w - LOT / 2), Math.abs(p.z - LOT / 2), Math.abs(p.z + p.d - LOT / 2)))) * BODY;
   }
 
   /**
@@ -998,8 +1013,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       creature.visiting = pick.th;
       creature.arrived = 0;
       if (pick.th) {
-        const from = [creature.pos[0], creature.pos[2]];
-        return beside(pick.th, Math.random() < 0.5 ? from : [pick.th.pos[0] + (Math.random() - 0.5) * 4, pick.th.pos[2] + (Math.random() - 0.5) * 4]);
+        // on the side of it that faces whoever is watching (where the camera is, even before its first frame),
+        // so what it built doesn't hide it
+        return beside(pick.th, [cam.target[0] + Math.sin(cam.yaw) * cam.dist, cam.target[2] + Math.cos(cam.yaw) * cam.dist]);
       }
       const a = Math.random() * Math.PI * 2;
       return { spot: [Math.cos(a) * 0.9, Math.sin(a) * 0.9], face: angleTo([Math.cos(a), Math.sin(a)], [0, 0]) };
@@ -1009,9 +1025,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
 
   /** How high it has to float here to pass over what stands below it. */
   function clearance(x, z) {
+    const r = reach(); // all of its body, not only its middle
     let need = 0;
-    if (Math.abs(x) < 0.55 && Math.abs(z) < 0.45) need = 0.24; // the card
-    for (const th of things) if (Math.abs(x - th.pos[0]) < 0.47 && Math.abs(z - th.pos[2]) < 0.47) need = Math.max(need, th.top + 0.04);
+    if (Math.abs(x) < 0.55 + r && Math.abs(z) < 0.45 + r) need = 0.24; // the card
+    for (const th of things) if (Math.abs(x - th.pos[0]) < 0.47 + r && Math.abs(z - th.pos[2]) < 0.47 + r) need = Math.max(need, th.top + 0.04);
     return need;
   }
 
@@ -1064,7 +1081,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   }
 
   /** Its body where it is: each part around its middle, turned the way it faces, bobbing a little as it floats. */
-  function drawBody(form, t, night, mood) {
+  function drawBody(form, t, night, mood, { ghost = false } = {}) {
     const bob = reduced ? 0 : Math.sin(t * 1.3) * 0.03;
     const [cx, cy, cz] = creature.pos;
     const cos = Math.cos(creature.heading);
@@ -1083,7 +1100,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const at = [cx + cos * ox + sin * oz, cy + p.y * BODY + bob - (1 - rise) * 0.2, cz - sin * ox + cos * oz];
       const color = p.shape === MODEL ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
       const glow = p.glow ? 0.6 + night * 0.4 : form.live ? (1 - rise) * 0.8 : 0;
-      solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw: creature.heading, glow, alpha: 0.35 + 0.65 * rise, model: p.model });
+      if (ghost) solid(p.shape, at, size, mood, { yaw: creature.heading, glow: 0.8, alpha: 0.32 * rise, model: p.model });
+      else solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw: creature.heading, glow, alpha: 0.35 + 0.65 * rise, model: p.model });
     });
     return formHeight(form) * LOT * BODY;
   }

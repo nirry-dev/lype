@@ -211,8 +211,8 @@ export function settle(parts) {
 }
 
 /**
- * A shape as it stands now that its parts are solid. Shapes kept from before they were (`solid` unset) are stood up again
- * for showing; what was kept is left as it was built.
+ * A shape as it would stand now that its parts are solid. Shapes kept from before they were (`solid` unset) are shown
+ * as they were built; when it reshapes one, it is shown this, so what it builds on stands. What was kept is unchanged.
  */
 export const standing = (form) => (!form?.parts?.length || form.solid ? form : { ...form, parts: settle(form.parts), solid: true });
 

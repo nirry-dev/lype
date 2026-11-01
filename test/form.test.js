@@ -107,7 +107,7 @@ test('its parts are solid: what runs into another moves to the nearest place it 
 
   const before = { parts: [part({ w: 8, d: 8, h: 2 }), part({ x: 2, z: 2, y: 0, w: 2, d: 2, h: 1, color: 'gold' })] };
   const now = standing(before);
-  assert.equal(now.parts[1].y, 2, 'a shape kept from before is shown standing');
+  assert.equal(now.parts[1].y, 2, 'a shape kept from before stands up when it is reshaped');
   assert.equal(before.parts[1].y, 0, 'and is left as it was built');
   assert.equal(standing(now), now);
 });
