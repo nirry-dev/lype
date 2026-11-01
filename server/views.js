@@ -54,13 +54,14 @@ export function world(life) {
   const s = life.state;
   life.catalogue ??= loadCatalogue();
   const readable = new Map(life.letters.filter((l) => letterStatus(l) === 'allowed').map((l) => [l.id, l.from]));
+  const things = s.world.things.map((t) => [t, standing(t.form)]); // as they stand, so a model left out is not credited
   return {
     name: s.name,
     w: s.world.w,
     h: s.world.h,
     card: CARD,
     at: s.world.at,
-    things: s.world.things.map((t) => ({
+    things: things.map(([t, form]) => ({
       id: t.id,
       name: t.name,
       kind: t.kind,
@@ -75,14 +76,14 @@ export function world(life) {
       ruin: t.ruin,
       ruinedAt: t.ruinedAt ?? null,
       sprite: spriteSrc(t.sprite),
-      form: standing(t.form) || null,
-      borrowed: borrowed(life.catalogue, t.form),
+      form: form || null,
+      borrowed: borrowed(life.catalogue, form),
       from: t.from.filter((id) => readable.has(id)).map((id) => ({ id, from: readable.get(id) })),
       people: t.people,
       ...(t.builtBy ? { builtBy: t.builtBy } : {}),
       history: t.history,
     })),
-    credit: s.world.things.some((t) => t.form?.parts.some((p) => p.model)) ? life.catalogue.credit : null,
+    credit: things.some(([, form]) => form?.parts.some((p) => p.model)) ? life.catalogue.credit : null,
     wishes: s.wishes.map(publicWish).reverse(),
   };
 }
