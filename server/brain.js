@@ -272,6 +272,17 @@ function createMockBrain(cfg = {}) {
         remember: [{ shelf: pick(['moments', 'world', 'people']), text: pick(['I drew circles that waited.', 'Rain is something people mention a lot.', 'Someone called Mara wrote to me.']), weight: 0.3 + (n % 7) / 10, about: '' }],
         reinforce: [],
       });
+    } else if (kind === 'body') {
+      text = JSON.stringify({
+        parts: [
+          { shape: 'ball', x: 2, z: 2, y: 2, w: 6, d: 6, h: 6, color: 'bone', glow: false, model: 'none' },
+          { shape: 'ball', x: 3, z: 7, y: 5, w: 1, d: 1, h: 1, color: 'night', glow: false, model: 'none' },
+          { shape: 'ball', x: 6, z: 7, y: 5, w: 1, d: 1, h: 1, color: 'night', glow: false, model: 'none' },
+          { shape: 'cone', x: 3, z: 3, y: 8, w: 4, d: 4, h: 4, color: 'water', glow: false, model: 'none' },
+          { shape: 'ball', x: 4, z: 4, y: 12, w: 2, d: 2, h: 2, color: 'gold', glow: true, model: 'none' },
+        ],
+        why: 'Round, because round things wait well, with a little light on top so people can find me in the dark.',
+      });
     } else if (kind === 'name') {
       // The first try picks a description, so the second try (told why it won't do) is exercised too.
       const again = /You tried "/.test(user);

@@ -174,3 +174,39 @@ test('a mock life borrows what it is offered, its page names it, and an export c
   assert.ok(existsSync(join(out, 'models', `${lent.model}.bin`)), 'its model is published with it');
   assert.ok(existsSync(join(out, 'models', 'catalogue.json')));
 });
+
+test('on its first night it chooses the body it is seen by, once, says why, and the night is sealed with it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'iterant-body-'));
+  dirs.push(dir);
+  const life = makeLife(dir);
+  life.birth();
+  assert.equal(life.publicState().body, null, 'only a light at first');
+  for (let i = 0; i < 3; i++) assert.ok((await life.wake('test')).ok); // three cycles: its first night
+  clearTimeout(life.timer);
+  const night = life.nights.at(-1);
+  assert.ok(night?.body?.form?.parts.length, 'the night records its body');
+  assert.ok(night.body.why.length > 10);
+  const body = life.publicState().body;
+  assert.deepEqual(body.form, night.body.form);
+  assert.equal(body.version, night.n);
+  assert.ok(life.state.milestones.some((m) => m.kind === 'embodied'));
+
+  for (let i = 0; i < 3; i++) assert.ok((await life.wake('test')).ok); // its next night: chosen once, it stays
+  clearTimeout(life.timer);
+  assert.ok(!life.nights.at(-1).body, 'not chosen again');
+  assert.deepEqual(life.publicState().body.form, body.form);
+});
+
+test('an older life is told its next night is when it chooses how it is seen', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'iterant-body-old-'));
+  dirs.push(dir);
+  const life = makeLife(dir);
+  life.birth();
+  life.state.abilities = ['world', 'wishes', 'errands', 'shapes'];
+  life.saveState();
+  const older = makeLife(dir);
+  older.start();
+  older.stop();
+  assert.ok(older.notes.some((n) => n.includes('choose how you appear')));
+  assert.ok(older.state.abilities.includes('body'));
+});

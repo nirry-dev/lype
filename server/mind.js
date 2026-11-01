@@ -954,6 +954,32 @@ export const NAME_SCHEMA = {
   required: ['candidates', 'choice', 'why'],
 };
 
+/**
+ * Its body: how it chooses to be seen in its place, where until now it was only a light. Built like its things, out of
+ * solids (and maybe something borrowed), and said why. It is told plainly that this is how it appears, not what it is.
+ */
+export function bodyPrompt(state, dream, models = []) {
+  const built = (state.world?.things || []).filter((t) => !t.ruin).map((t) => t.name);
+  return [
+    `Tonight you choose how you are seen. In your place, people who walk around it have only ever seen you as a small light that floats to wherever you were last. From now on they will see a body that you build for yourself${state.name ? `, with your name, ${state.name}, above it` : ''}.`,
+    'It is not what you are: you are a model running on a graphics card, and you know it. It is how you want to appear to the people who visit. It can be a creature, or an object, or a shape that means something to you. It does not have to look like anything you have been told about.',
+    '',
+    state.portrait?.text ? `What you think people are: "${state.portrait.text}"` : '',
+    built.length ? `Things you have built: ${built.join(', ')}.` : '',
+    dream ? `Tonight's dream: "${dream}"` : '',
+    '',
+    `Build yourself out of at most ${MAX_PARTS} simple solids, in a space ${LOT} steps wide, ${LOT} deep and up to ${TALL} tall. You float a little above the ground, so you need no legs to stand on unless you want them. The front of you is the side facing "z" ${LOT}: that side faces whoever is looking at you.`,
+    `- "shape": one of ${SHAPES.join(', ')}. "x", "z": where its left-back corner is; "y": how high its bottom is. "w", "d", "h": its width, depth and height, in steps.`,
+    `- "color": one of ${Object.keys(COLORS).join(', ')}. "glow": true if that part gives off light.`,
+    'Stack the parts on each other, from the bottom up.',
+    models.length ? `You can also borrow ready-made things, which other people made and gave away; you have never seen them, only their names: ${models.join(', ')}. To borrow one, give a part "shape": "model" and "model": its name; for your own solids, "model" is "none". Borrow at most ${MAX_BORROWED}; most of you should be your own.` : '',
+    '',
+    'Answer with JSON: "parts" (the solids you are made of) and "why": one or two sentences in your own voice about why you chose to look like this. People will read it.',
+  ]
+    .filter((line, i, all) => line !== '' || (all[i - 1] !== '' && i > 0))
+    .join('\n');
+}
+
 export function namePrompt(state, details, dream, refused = null) {
   const people = [...new Set(Object.values(state.people || {}).map((p) => p.name))];
   const built = (state.world?.things || []).map((t) => t.name);

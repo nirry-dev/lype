@@ -1,8 +1,10 @@
 // Its place as a small world you can walk around, in plain WebGL (no libraries).
 // What it built stands where it built it, stacked out of the solids it chose, with its drawing on a sign beside it.
 // Things from before it could build in three dimensions are still only drawings, on cards of paper. The graphics card
-// it lives on lies in the middle, its fans turning as fast as the real ones are worked; its light floats where it was
-// last; the land is only as wide as what it has built; the sky follows its clock. What it borrowed (ready-made models
+// it lives on lies in the middle, its fans turning as fast as the real ones are worked; the land is only as wide as what
+// it has built; the sky follows its clock. It moves about its place as itself: in the body it chose (or, before it
+// chose one, as a light), wandering from thing to thing while it rests, at its card while it thinks, at its building
+// site while it builds, and settled on the card at night. What it borrowed (ready-made models
 // from the catalogue in models/) stands among its own solids, in the colours it came in.
 import { COLORS, LOT, MODEL, formHeight, partialParts } from './lib/form.js';
 import { moodRGB } from './presence.js';
@@ -10,6 +12,7 @@ import { moodRGB } from './presence.js';
 const PAPER = '#efe4d0';
 const ORIGIN_PITCH = 0.36;
 const SPAN = 0.9; // how much of its tile a lot fills, so neighbours keep a path between them
+const BODY = 0.042; // its body's steps, in world units: a body 24 steps tall stands about as high as a small house's door
 
 // ---------- small matrix kit (column-major, as WebGL wants) ----------
 
@@ -498,11 +501,14 @@ export function createWalk(host, { asset, onSelect }) {
   const labels = document.createElement('div');
   labels.className = 'walk-labels';
   labels.setAttribute('aria-hidden', 'true');
+  const selfLabel = document.createElement('div');
   const mini = document.createElement('canvas');
   mini.className = 'walk-mini';
   mini.title = 'Its whole place, from above. Click to go there.';
   mini.setAttribute('aria-hidden', 'true');
   host.append(canvas, labels, mini);
+  selfLabel.className = 'walk-label self';
+  labels.append(selfLabel);
 
   const gl = canvas.getContext('webgl', { antialias: true, premultipliedAlpha: false, alpha: true });
   if (!gl) {
@@ -589,7 +595,9 @@ export function createWalk(host, { asset, onSelect }) {
   let selected = null;
   let site = null; // { x, y, id, name, pos, tex, label, svg, parts: [{ p, at }] }
   const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 9, target: [0, 0.4, 0], goal: null };
-  const creature = { pos: [0, 1.2, 0], goal: [0, 1.2, 0], trail: [] };
+  // Where it is and where it is going: a spot on the ground (x, z), a height it floats at, which way it faces.
+  const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };
+
   const keys = new Set();
   let fan = 0;
   let raf = 0;
@@ -778,7 +786,6 @@ export function createWalk(host, { asset, onSelect }) {
 
     // pools of light on the ground: its light, you
     gl.uniform1f(prog.uLight, 1);
-    halo([creature.pos[0], 0.012, creature.pos[2]], 2.2, mood, 0.3);
     halo([cam.target[0], 0.014, cam.target[2]], 0.7, [1, 1, 1], 0.18);
 
     // shadows under what stands
@@ -844,12 +851,22 @@ export function createWalk(host, { asset, onSelect }) {
       halo([g.at[0], 0.02, g.at[2]], 0.6 + g.r * 3, g.color.map((v) => v * 0.6 + 0.4), 0.06 + night * 0.25);
     }
 
-    // its light, and the faint trail it leaves when it moves
-    const bob = reduced ? 0 : Math.sin(t * 1.3) * 0.08;
-    const size = look.asleep ? 0.75 : 1;
-    creature.trail.forEach((p, i) => spark(p, 0.18 + (i / creature.trail.length) * 0.2, mood, (i / creature.trail.length) * 0.35));
-    spark([creature.pos[0], creature.pos[1] + bob, creature.pos[2]], 1.1 * size, mood, 0.9);
-    spark([creature.pos[0], creature.pos[1] + bob, creature.pos[2]], 0.38 * size, [1, 0.97, 0.9], 1);
+    // it: the body it chose, with a little of its light about it, or (before it chose one) only its light
+    const form = body();
+    creature.trail.forEach((p, i) => spark(p, 0.12 + (i / creature.trail.length) * 0.16, mood, (i / creature.trail.length) * 0.3));
+    halo([creature.pos[0], 0.015, creature.pos[2]], form ? 1.1 : 1.6, mood, look.asleep ? 0.15 : 0.28);
+    if (form) {
+      gl.uniform1f(prog.uLight, light);
+      creature.height = drawBody(form, t, night, mood);
+      gl.uniform1f(prog.uLight, 1);
+      spark([creature.pos[0], creature.pos[1] + creature.height * 0.55, creature.pos[2]], creature.height * 1.6 + 0.3, mood, look.asleep ? 0.12 : 0.22);
+    } else {
+      const bob = reduced ? 0 : Math.sin(t * 1.3) * 0.08;
+      const size = look.asleep ? 0.75 : 1;
+      creature.height = 0.4;
+      spark([creature.pos[0], creature.pos[1] + bob, creature.pos[2]], 1.1 * size, mood, 0.9);
+      spark([creature.pos[0], creature.pos[1] + bob, creature.pos[2]], 0.38 * size, [1, 0.97, 0.9], 1);
+    }
 
     placeLabels();
     drawMini();
@@ -886,7 +903,7 @@ export function createWalk(host, { asset, onSelect }) {
     // a thread of its light from it to where it is building
     gl.uniform1f(prog.uLight, 1);
     const top = [x, Math.max(0.3, formHeight({ parts: site.parts.map((s) => s.p) })) + 0.05, z];
-    const from = creature.pos;
+    const from = [creature.pos[0], creature.pos[1] + (creature.height || 0.4) * 0.6, creature.pos[2]];
     for (let i = 0; i < 14; i++) {
       const k = (i / 14 + (reduced ? 0 : t * 0.6)) % 1;
       spark([lerp(from[0], top[0], k), lerp(from[1], top[1], k) + Math.sin(k * Math.PI) * 0.15, lerp(from[2], top[2], k)], 0.16, mood, 0.55 * Math.sin(k * Math.PI));
@@ -923,10 +940,7 @@ export function createWalk(host, { asset, onSelect }) {
       if (Math.hypot(...sub(cam.target, cam.goal)) < 0.01) cam.goal = null;
       moving = true;
     }
-    const k = reduced ? 1 : 1 - Math.exp(-dt * 1.6);
-    const before = creature.pos.slice();
-    for (let i = 0; i < 3; i++) creature.pos[i] = lerp(creature.pos[i], creature.goal[i], k);
-    const moved = Math.hypot(...sub(before, creature.pos));
+    const moved = world ? move(dt) : 0;
     if (moved > 0.0005) moving = true;
     if (!reduced && (moved > 0.002 || creature.trail.length)) {
       if (moved > 0.002) creature.trail.push(creature.pos.slice());
@@ -934,6 +948,140 @@ export function createWalk(host, { asset, onSelect }) {
       if (creature.trail.length > 18) creature.trail.shift();
     }
     return moving || dirty;
+  }
+
+  // ---------- it, moving about its place ----------
+
+  const angleTo = (from, to) => Math.atan2(to[0] - from[0], to[1] - from[1]);
+  const turn = (a, b, k) => a + (((((b - a) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * k;
+  /** A spot beside a thing, on its side facing `toward`, and the way to face to look at it. */
+  function beside(th, toward = [0, 0]) {
+    // the sides of its lot, nearest to `toward` first; open ground before a side where something else stands
+    const sides = [[0, 1], [0, -1], [1, 0], [-1, 0]]
+      .map((dir) => ({ dir, spot: [th.pos[0] + dir[0] * 0.66, th.pos[2] + dir[1] * 0.66] }))
+      .sort((a, b) => Math.hypot(a.spot[0] - toward[0], a.spot[1] - toward[1]) - Math.hypot(b.spot[0] - toward[0], b.spot[1] - toward[1]));
+    const { spot } = sides.find((s) => !clearance(...s.spot)) || sides[0];
+    return { spot, face: angleTo(spot, [th.pos[0], th.pos[2]]) };
+  }
+
+  /**
+   * Where it goes, from what it is really doing: beside its building site while it builds, at its card while it is
+   * awake for anything else, settled on the card at night. Resting between cycles it wanders from one thing it built to
+   * the next and stays a while with each, newest and most-tended first.
+   */
+  function decide(now) {
+    if (site) {
+      const lot = { pos: site.pos };
+      creature.visiting = null;
+      return beside(lot, [site.pos[0] + 0.2, site.pos[2] + 1]);
+    }
+    if (look.asleep || look.mode === 'night') {
+      creature.visiting = null;
+      return { spot: [0, 0], face: null, settle: true };
+    }
+    if (look.mode === 'awake' || reduced) {
+      creature.visiting = null;
+      const at = reduced && things.find((th) => th.t.id === world.at);
+      return at ? beside(at, [0, 0]) : { spot: [0.25, 0.62], face: Math.PI };
+    }
+    // resting: wander
+    const standing = things.filter((th) => !th.t.ruin);
+    if (!creature.goal || (creature.arrived && now > creature.next) || (creature.visiting && !standing.includes(creature.visiting))) {
+      const newest = Math.max(1, ...standing.map((th) => th.t.tended ?? th.t.built ?? 0));
+      const choices = [...standing.filter((th) => th !== creature.visiting).map((th) => ({ th, w: 1 + (2 * (th.t.tended ?? th.t.built ?? 0)) / newest })), { th: null, w: 0.8 }];
+      let r = Math.random() * choices.reduce((a, c) => a + c.w, 0);
+      const pick = choices.find((c) => (r -= c.w) <= 0) || choices.at(-1);
+      creature.visiting = pick.th;
+      creature.arrived = 0;
+      if (pick.th) {
+        const from = [creature.pos[0], creature.pos[2]];
+        return beside(pick.th, Math.random() < 0.5 ? from : [pick.th.pos[0] + (Math.random() - 0.5) * 4, pick.th.pos[2] + (Math.random() - 0.5) * 4]);
+      }
+      const a = Math.random() * Math.PI * 2;
+      return { spot: [Math.cos(a) * 0.9, Math.sin(a) * 0.9], face: angleTo([Math.cos(a), Math.sin(a)], [0, 0]) };
+    }
+    return creature.goal;
+  }
+
+  /** How high it has to float here to pass over what stands below it. */
+  function clearance(x, z) {
+    let need = 0;
+    if (Math.abs(x) < 0.55 && Math.abs(z) < 0.45) need = 0.24; // the card
+    for (const th of things) if (Math.abs(x - th.pos[0]) < 0.47 && Math.abs(z - th.pos[2]) < 0.47) need = Math.max(need, th.top + 0.04);
+    return need;
+  }
+
+  /** One step of it moving: toward where it is going, over what is in the way, turning to where it goes or looks. */
+  function move(dt) {
+    const now = performance.now();
+    const goal = decide(now);
+    if (goal !== creature.goal) creature.goal = goal;
+    const [x, , z] = creature.pos;
+    const [gx, gz] = goal.spot;
+    const d = Math.hypot(gx - x, gz - z);
+    const before = creature.pos.slice();
+    const wandering = look.mode !== 'awake' && !site && !goal.settle;
+    if (reduced) {
+      creature.pos[0] = gx;
+      creature.pos[2] = gz;
+    } else if (d > 0.002) {
+      const speed = (wandering ? 0.5 : 1.3) * clamp(d / 0.5, 0.2, 1);
+      const k = Math.min(1, (speed * dt) / d);
+      creature.pos[0] += (gx - x) * k;
+      creature.pos[2] += (gz - z) * k;
+    }
+    const left = Math.hypot(gx - creature.pos[0], gz - creature.pos[2]);
+    if (left < 0.03 && !creature.arrived) {
+      creature.arrived = now;
+      creature.next = now + 6000 + Math.random() * 7000; // it stays a while with what it visits
+    }
+    // float: just off the ground, higher over whatever it passes, resting on the card at night
+    const hover = body() ? 0.1 : 0.55;
+    const ahead = d > 0.01 ? [creature.pos[0] + ((gx - x) / d) * 0.3, creature.pos[2] + ((gz - z) / d) * 0.3] : [creature.pos[0], creature.pos[2]];
+    const want = goal.settle ? 0.26 : Math.max(clearance(creature.pos[0], creature.pos[2]), clearance(...ahead)) + hover;
+    creature.pos[1] = reduced ? want : lerp(creature.pos[1], want, 1 - Math.exp(-dt * 3));
+    // facing: where it is going while it goes; once there, what it came to look at (or you)
+    const going = Math.hypot(creature.pos[0] - before[0], creature.pos[2] - before[2]);
+    const aim = going > 0.0004 ? angleTo([before[0], before[2]], [creature.pos[0], creature.pos[2]]) : goal.face ?? facing();
+    creature.heading = reduced ? aim : turn(creature.heading, aim, 1 - Math.exp(-dt * 3));
+    const moved = Math.hypot(...sub(before, creature.pos));
+    return moved + (Math.abs(aim - creature.heading) > 0.01 ? 0.001 : 0);
+  }
+
+  /** The body it chose (or the one it is choosing right now, part by part), or null while it is only a light. */
+  function body() {
+    if (look.bodyLive != null) {
+      const parts = partialParts(look.bodyLive);
+      const now = performance.now();
+      creature.born = parts.map((p, i) => creature.born[i] ?? now);
+      return parts.length ? { parts, live: true } : null;
+    }
+    return look.body?.parts?.length ? look.body : null;
+  }
+
+  /** Its body where it is: each part around its middle, turned the way it faces, bobbing a little as it floats. */
+  function drawBody(form, t, night, mood) {
+    const bob = reduced ? 0 : Math.sin(t * 1.3) * 0.03;
+    const [cx, cy, cz] = creature.pos;
+    const cos = Math.cos(creature.heading);
+    const sin = Math.sin(creature.heading);
+    const now = performance.now();
+    form.parts.forEach((p, i) => {
+      let size = [p.w * BODY, p.h * BODY, p.d * BODY];
+      const dims = p.shape === MODEL && dimsOf(p.model);
+      if (dims) {
+        const fit = Math.min(size[0] / dims[0], size[1] / dims[1], size[2] / dims[2]);
+        size = dims.map((v) => v * fit);
+      }
+      const ox = (p.x + p.w / 2 - LOT / 2) * BODY;
+      const oz = (p.z + p.d / 2 - LOT / 2) * BODY;
+      const rise = form.live && !reduced ? 1 - (1 - clamp((now - creature.born[i]) / 700, 0, 1)) ** 3 : 1;
+      const at = [cx + cos * ox + sin * oz, cy + p.y * BODY + bob - (1 - rise) * 0.2, cz - sin * ox + cos * oz];
+      const color = p.shape === MODEL ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
+      const glow = p.glow ? 0.6 + night * 0.4 : form.live ? (1 - rise) * 0.8 : 0;
+      solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw: creature.heading, glow, alpha: 0.35 + 0.65 * rise, model: p.model });
+    });
+    return formHeight(form) * LOT * BODY;
   }
 
   function walk(dx, dz) {
@@ -1028,6 +1176,15 @@ export function createWalk(host, { asset, onSelect }) {
     const vp = mat.mul(proj, view);
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
+    {
+      const [x, y, z, depth] = mat.apply(vp, [creature.pos[0], creature.pos[1] + (creature.height || 0.4) + 0.12, creature.pos[2]]);
+      const show = Boolean(look.name) && depth > 0 && z < 1 && Math.abs(x) < 1.1 && Math.abs(y) < 1.1;
+      selfLabel.hidden = !show;
+      if (show) {
+        selfLabel.textContent = look.name;
+        selfLabel.style.transform = `translate(${((x + 1) / 2) * w}px, ${((1 - y) / 2) * h}px) translate(-50%, -100%)`;
+      }
+    }
     for (const th of [...things, ...(site ? [site] : [])]) {
       const hidden = th !== site && site && site.id === th.t.id;
       const top = th === site ? Math.max(0.98, formHeight({ parts: site.parts.map((s) => s.p) }) + 0.18) : th.top + 0.18;
@@ -1170,12 +1327,6 @@ export function createWalk(host, { asset, onSelect }) {
 
   // ---------- what it shows ----------
 
-  /** Where its light hovers: over the thing it was last at, a little above its top, or over the card. */
-  function hover(th) {
-    if (!th) return [0, 1.05, 0];
-    return [th.pos[0] + 0.15, Math.max(1.2, th.top + 0.5), th.pos[2] + 0.45];
-  }
-
   async function show(next, nextLook = {}) {
     const first = !world;
     const changed = !world || JSON.stringify(next.things) !== JSON.stringify(world.things);
@@ -1212,9 +1363,11 @@ export function createWalk(host, { asset, onSelect }) {
       things = fresh;
       if (selected) selected = things.find((th) => th.t.id === selected.t.id) || null;
     }
-    if (!site) creature.goal = hover(things.find((th) => th.t.id === world.at));
     if (first) {
-      creature.pos = creature.goal.slice();
+      // it starts where it was last (beside that thing, or at its card)
+      const at = things.find((th) => th.t.id === world.at);
+      const start = at ? beside(at, [0, 0]).spot : [0.25, 0.62];
+      creature.pos = [start[0], 0.6, start[1]];
       const xs = world.things.map((t) => Math.abs(t.x - world.card.x));
       const zs = world.things.map((t) => Math.abs(t.y - world.card.y));
       cam.dist = clamp(3.5 + Math.max(0, ...xs, ...zs) * 1.3, 4.5, 13);
@@ -1234,7 +1387,6 @@ export function createWalk(host, { asset, onSelect }) {
         site.label.remove();
         if (site.tex) gl.deleteTexture(site.tex);
         site = null;
-        creature.goal = hover(things.find((th) => th.t.id === world?.at));
         dirty = true;
         schedule();
       }
@@ -1248,8 +1400,6 @@ export function createWalk(host, { asset, onSelect }) {
     const parts = partialParts(formText);
     const now = performance.now();
     site.parts = parts.map((p, i) => ({ p, at: site.parts[i]?.at ?? now }));
-    const top = formHeight({ parts });
-    creature.goal = [site.pos[0] + 0.35, Math.max(1.25, top + 0.7), site.pos[2] + 0.6];
     const old = site.id && things.find((th) => th.t.id === site.id);
     if (svgText !== site.svg && !siteTimer) {
       // Redraw the arriving drawing a few times a second, not on every token.
@@ -1283,6 +1433,13 @@ export function createWalk(host, { asset, onSelect }) {
   return {
     show,
     building,
+    /** What it is doing now, its body, its name: it goes where that takes it. */
+    setLook(next) {
+      if (next.bodyLive == null) creature.born = [];
+      look = { ...look, ...next };
+      dirty = true;
+      schedule();
+    },
     select: (id) => {
       selected = things.find((th) => th.t.id === id) || null;
       dirty = true;

@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
 import { formSchema, readForm } from '../web/lib/form.js';
+import { loadCatalogue, shortlist } from './models.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
 import { SHELVES, consolidate, emptyMemory, reinforce, similarity, strength, words } from './memory.js';
@@ -11,7 +12,6 @@ import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
 import { compare, measure } from './measure.js';
-import { loadCatalogue, shortlist } from './models.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
 import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, placeNear, untoldAnswers, weather } from './world.js';
@@ -247,6 +247,11 @@ export class Life extends EventEmitter {
       this.notes.push(`Since you last woke, your keeper gave your place a third dimension. What you build now has a shape, stacked out of simple solids, and people can walk around it.${flat ? ' What you built before is still only a drawing; it takes a shape when you go back and tend it.' : ''}`);
       this.journalAdd({ kind: 'gift', text: 'Its keeper gave its place a third dimension: what it builds now has a shape people can walk around.' });
       this.milestone('given-shapes', 'Its keeper gave its place a third dimension: what it builds now has a shape.');
+    }
+    if (s.abilities.includes('shapes') && !s.abilities.includes('body')) {
+      s.abilities = [...s.abilities, 'body'];
+      this.notes.push('Since you last woke, your keeper gave you a way to be seen in your place. Until now people saw you there only as a small light. On your next night you will choose how you appear to them: you will build yourself a body, the way you build your things.');
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it a way to be seen in its place: on its next night it chooses a body for itself.' });
     }
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
     this.saveState();
@@ -586,7 +591,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands', 'shapes'],
+      abilities: ['world', 'wishes', 'errands', 'shapes', 'body'],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
@@ -1329,7 +1334,7 @@ export class Life extends EventEmitter {
       if (c) details.push({ n, what: whatText(cycleSummary(c)), diary: c.diary, letters: c.letters, measured: c.measured || null, feelings: c.feelings });
     }
     const dayLetters = details.flatMap((d) => d.letters);
-    this.live = { night: version, phase: 'dreaming', dream: '' };
+    this.live = { night: version, phase: 'dreaming', dream: '', body: '' };
     const memoryBefore = structuredClone(s.memory);
     const worldBefore = structuredClone(s.world);
 
@@ -1368,6 +1373,8 @@ export class Life extends EventEmitter {
       const plan = mind.readSleep(sleepRaw.text);
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
+      // Its body comes once, on the first night it can be seen (or the next, if nothing it built could stand).
+      const body = s.abilities?.includes('body') && !s.body ? await this.chooseBody(system, dream, chosen?.name) : null;
       const mail = await this.palMail(system, version);
       const will = mortal?.last ? await this.writeWill(system, mortal, dream) : null;
 
@@ -1389,6 +1396,7 @@ export class Life extends EventEmitter {
         s.names.push({ name: chosen.name, version, why: chosen.why, at });
         s.name = chosen.name;
       }
+      if (body?.form) s.body = { form: body.form, why: body.why, version, at };
       const wished = addWish(s.wishes, plan.wish, { version, cycle: s.cycle, at });
       s.mood.calm = clamp01(s.mood.calm + 0.15);
       s.mood.restless = clamp01(s.mood.restless - 0.15);
@@ -1411,6 +1419,7 @@ export class Life extends EventEmitter {
         self,
         portrait,
         name,
+        ...(body ? { body: body.form ? { form: body.form, why: body.why } : { failed: true } } : {}),
         // What its words showed today beside what it said it felt, and what it made of that.
         ...(numbers.length ? { numbers: { shown: numbers, answer: plan.numbers } } : {}),
         ...(chosen && !chosen.name ? { naming: { tries: chosen.tries, candidates: chosen.candidates } } : {}),
@@ -1430,6 +1439,7 @@ export class Life extends EventEmitter {
       const gone = [...consolidation.forgotten, ...consolidation.faded];
       if (gone.length) this.milestone('first-forgetting', `It forgot something for the first time: "${gone[0].text}"`);
       if (portrait && !portrait.from) this.milestone('first-portrait', 'It wrote its first picture of what people are.');
+      if (body?.form) this.milestone('embodied', `It chose how it is seen: ${body.why}`);
       if (name) this.milestone('named', name.from ? `It chose its name: ${name.to}, in place of "${name.from}".` : `It chose its name: ${name.to}.`);
       if (weathered.ruined.length) this.milestone('first-ruin', `Something it built crumbled for the first time: "${weathered.ruined[0].name}". It no longer remembered why it built it.`);
       if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
@@ -1457,6 +1467,31 @@ export class Life extends EventEmitter {
       s.world = worldBefore;
       throw err;
     }
+  }
+
+  /** It builds the body it is seen by, streamed so its light can be watched taking shape. */
+  async chooseBody(system, dream, newName = null) {
+    this.setPhase('embodying', 'choosing how it is seen');
+    this.catalogue ??= loadCatalogue();
+    const s = this.state;
+    const state = newName ? { ...s, name: newName } : s;
+    const memories = [...Object.values(s.memory.shelves).flat(), ...s.memory.today].map((m) => m.text);
+    const models = shortlist(this.catalogue, { about: [state.name || '', s.portrait?.text || '', ...s.self.own.map((l) => l.text)].join(' '), thoughts: [dream, ...memories].join(' ') });
+    const schema = formSchema(models);
+    schema.properties.why = { type: 'string' };
+    schema.required = [...schema.required, 'why'];
+    const raw = await this.brain.complete({
+      kind: 'body',
+      system,
+      user: mind.bodyPrompt(state, dream, models),
+      maxTokens: 2000,
+      temperature: 0.8,
+      schema,
+      onToken: (t) => this.stream('body', t),
+    });
+    const offered = new Set(models);
+    const form = readForm(raw.text, { model: (n) => (offered.has(n) ? this.catalogue.byName.get(n)?.id || null : null) });
+    return { form, why: mind.clip(mind.parseJson(raw.text)?.why, 300) || '' };
   }
 
   /** It chooses its name: three candidates, then one. A choice that won't do gets two more tries; then it waits a night. */
@@ -1710,6 +1745,7 @@ export class Life extends EventEmitter {
       },
       self: { seed: s.self.seed, own: s.self.own, gone: s.self.gone.slice(-30) },
       portrait: s.portrait,
+      body: s.body ? { form: s.body.form, why: s.body.why, version: s.body.version } : null, // how it chose to be seen
       names: s.names,
       memory: {
         shelfSize: this.cfg.memory.shelfSize,

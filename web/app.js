@@ -78,7 +78,7 @@ function lifeSpan(iso) {
 const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'Lonely', curious: 'Curious', calm: 'Calm', warm: 'Warm to people', restless: 'Restless' };
 const AWAKE = new Set(['waking', 'reading', 'looking', 'thinking', 'deciding', 'drawing', 'writing', 'asking', 'sending', 'building', 'tending', 'resting', 'replying', 'reflecting']);
-const NIGHT = new Set(['dreaming', 'rewriting']);
+const NIGHT = new Set(['dreaming', 'rewriting', 'naming', 'embodying']);
 const PHASE_TITLE = {
   quiet: 'Resting between cycles',
   waking: 'Waking up',
@@ -98,6 +98,7 @@ const PHASE_TITLE = {
   dreaming: 'Asleep, dreaming',
   rewriting: 'Asleep, rewriting itself',
   naming: 'Asleep, choosing its name',
+  embodying: 'Asleep, choosing how it is seen',
   waiting: 'Waiting for the card',
   dying: 'Its last night: writing to its child',
   unreachable: "Can't think right now",
@@ -136,7 +137,7 @@ const visitor = (() => {
 
 // ---------- state ----------
 
-const blankLive = () => ({ think: '', draw: '', write: '', sprite: '', form: '', plaque: '', change: '', reply: '', dream: '', title: '', replyTo: null, reading: [], building: null });
+const blankLive = () => ({ think: '', draw: '', write: '', sprite: '', form: '', body: '', plaque: '', change: '', reply: '', dream: '', title: '', replyTo: null, reading: [], building: null });
 const app = {
   state: null,
   live: blankLive(),
@@ -1816,6 +1817,7 @@ function updateWalkHud() {
   const b = !SNAPSHOT && s.busy && app.live.building;
   const doing = b ? `${b.id ? 'reshaping' : app.live.form ? 'building' : 'drawing'} “${b.name}”` : statusText(s);
   const text = `${s.name || 'It'} is ${doing}`;
+  app.walk?.setLook(walkLook());
   if (hud.textContent !== text) fill(hud, h('span', { class: 'walk-hud-dot', style: `--dot:${moodColor(s.mood)}` }), h('span', {}, text));
 }
 
@@ -1824,7 +1826,17 @@ function walkLook() {
   const s = app.state;
   const m = /(\d{1,2}):(\d{2})/.exec(s.senses?.time || '');
   const now = new Date();
-  return { mood: s.mood, hour: m ? Number(m[1]) + Number(m[2]) / 60 : now.getHours() + now.getMinutes() / 60, asleep: ['dreaming', 'rewriting', 'naming'].includes(s.phase), gpu: s.senses?.gpu || null };
+  return {
+    mood: s.mood,
+    hour: m ? Number(m[1]) + Number(m[2]) / 60 : now.getHours() + now.getMinutes() / 60,
+    asleep: NIGHT.has(s.phase),
+    gpu: s.senses?.gpu || null,
+    // where it goes and what it looks like: what it is doing, the body it chose (or the one it is choosing), its name
+    mode: SNAPSHOT ? 'rest' : statusMode(s.phase),
+    name: s.name || '',
+    body: s.body?.form || null,
+    bodyLive: !SNAPSHOT && s.phase === 'embodying' ? app.live.body || '' : null,
+  };
 }
 
 async function renderPlace(current) {
@@ -2003,6 +2015,9 @@ function selectThing(id) {
           : 'Nothing yet, only the card it lives on. The first thing it builds will appear beside it.',
       ),
       at ? h('p', { class: 'meta', style: 'margin:0' }, `It was last at ${at.name}.`) : null,
+      app.state.body
+        ? h('p', { class: 'meta', style: 'margin:8px 0 0' }, `It appears here in the body it chose for itself on night ${app.state.body.version}: `, h('q', {}, app.state.body.why))
+        : h('p', { class: 'meta', style: 'margin:8px 0 0' }, 'It appears here as a light. On a night soon it will choose a body to be seen by.'),
     );
     return;
   }
