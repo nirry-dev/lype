@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { FORM_SCHEMA, LOT, MAX_PARTS, TALL, formHeight, formSchema, partialParts, readForm, standing } from '../web/lib/form.js';
+import { FORM_SCHEMA, LOT, MAX_BORROWED, MAX_PARTS, TALL, formHeight, formSchema, partialParts, readForm, standing } from '../web/lib/form.js';
 import { createBrain } from '../server/brain.js';
 import { loadConfig } from '../server/config.js';
 import { Life } from '../server/life.js';
@@ -112,6 +112,46 @@ test('its parts are solid: what runs into another moves to the nearest place it 
   assert.equal(standing(now), now);
 });
 
+test('it builds with more than boxes: ready-made pieces, patterns, turned parts and shapes from its own points', () => {
+  const f = readForm({
+    parts: [
+      part({ shape: 'tree', x: 0, z: 0, w: 4, d: 4, h: 8, color: 'leaf' }),
+      part({ shape: 'column', x: 0, z: 6, w: 1, d: 1, h: 4, pattern: 'row', repeat: 4, dx: 2, dz: 0 }),
+      part({ shape: 'block', x: 6, z: 0, w: 3, d: 1, h: 2, turn: 45 }),
+      part({ shape: 'outline', x: 5, z: 3, w: 4, d: 2, h: 1, points: [0, 0, 10, 0, 5, 10] }),
+      part({ shape: 'lathe', x: 8, z: 8, w: 2, d: 2, h: 3, points: [3, 0, 5, 4, 2, 10] }),
+      part({ shape: 'outline', x: 0, z: 0, w: 2, d: 2, h: 1, y: 20, points: [1, 2] }), // too few points: a block
+      part({ shape: 'window', x: 3, z: 0, w: 2, d: 1, h: 3, y: 10 }),
+    ],
+  });
+  const shapes = f.parts.map((p) => p.shape);
+  assert.deepEqual(shapes.slice(0, 2), ['cylinder', 'ball'], 'a tree is a trunk and a crown');
+  assert.equal(f.parts[0].color, 'bark');
+  assert.equal(shapes.filter((x) => x === 'cylinder').length, 1 + 4, 'four columns in a row, each a shaft');
+  const cols = f.parts.filter((p) => p.shape === 'cylinder' && p.z > 5).map((p) => p.x);
+  assert.deepEqual(cols, [0.2, 2.2, 4.2, 6.2], 'two steps apart');
+  assert.ok(f.parts.some((p) => p.turn === 45), 'turned as it said');
+  assert.deepEqual(f.parts.find((p) => p.shape === 'outline').points, [0, 0, 10, 0, 5, 10]);
+  assert.ok(f.parts.find((p) => p.shape === 'lathe').points.length === 6);
+  const pane = f.parts.find((p) => p.color === 'glass');
+  assert.ok(pane && pane.glow && pane.d === 1, 'a window is a wall with a pane set into it');
+  for (const p of f.parts) assert.ok(!('pattern' in p) && !('repeat' in p), 'patterns are laid out, not kept');
+
+  const ring = readForm({ parts: [part({ shape: 'lamp', x: 0, z: 4, w: 2, d: 2, h: 4, pattern: 'ring', repeat: 4 })] });
+  assert.equal(ring.parts.filter((p) => p.glow).length, 4, 'four lamps round the middle');
+  const mirrored = readForm({ parts: [part({ x: 0, z: 0, w: 2, d: 2, h: 2, pattern: 'mirror' })] });
+  assert.deepEqual(mirrored.parts.map((p) => p.x), [0, 8]);
+  const off = readForm({ parts: [part({ x: 6, w: 2, d: 2, h: 1, pattern: 'row', repeat: 5, dx: 2 })] });
+  assert.equal(off.parts.length, 2, 'copies that would leave the lot are left out');
+
+  // a turned part takes the room its turned footprint needs
+  const tw = readForm({ parts: [part({ x: 3, z: 3, w: 4, d: 4, h: 2 }), part({ x: 3, z: 3, w: 4, d: 1, h: 2, turn: 45, color: 'wood' })] });
+  assert.ok(tw.parts[1].y >= 2 || tw.parts[1].x !== 3 || tw.parts[1].z !== 3, 'it does not pass through what stands there');
+  assert.equal(tw.parts[1].turn, 45);
+  assert.ok(FORM_SCHEMA.properties.parts.items.properties.shape.enum.includes('tree'));
+  assert.ok(!FORM_SCHEMA.properties.parts.items.required.includes('turn'), 'what it does not use, it need not write');
+});
+
 test('while its answer is still arriving, the parts it has finished can already be shown', () => {
   const text = '{"parts":[{"shape":"cylinder","x":2,"z":2,"y":0,"w":6,"d":6,"h":3,"color":"stone","glow":false},{"shape":"roof","x":1,"z":1,"y":9,"w":8,"d":8,"h":';
   const got = partialParts(text);
@@ -162,7 +202,7 @@ test('an older life is told once that its place has a third dimension', () => {
   assert.ok(!later.notes.some((n) => n.includes('third dimension')), 'only once');
 });
 
-test('it is offered ready-made things whose names touch what it builds and thinks, and borrows only those, four at most', async () => {
+test('it is offered ready-made things whose names touch what it builds and thinks, and borrows only those, six at most', async () => {
   const { loadCatalogue, shortlist, borrowed } = await import('../server/models.js');
   const cat = loadCatalogue();
   assert.ok(cat.models.length > 500, 'the catalogue is built');
@@ -181,13 +221,13 @@ test('it is offered ready-made things whose names touch what it builds and think
         part(),
         { ...part({ shape: 'model', x: 6, w: 3, h: 6 }), model: lantern },
         { ...part({ shape: 'model' }), model: 'a spaceship it was never shown' },
-        ...Array.from({ length: 6 }, (_, i) => ({ ...part({ shape: 'model', z: i }), model: lantern })),
+        ...Array.from({ length: 10 }, (_, i) => ({ ...part({ shape: 'model', x: i, z: 9, w: 1, d: 1, h: 2 }), model: lantern })),
       ],
     },
     { model },
   );
   const lent = f.parts.filter((p) => p.shape === 'model');
-  assert.equal(lent.length, 4, 'four borrowed things at most');
+  assert.equal(lent.length, MAX_BORROWED, 'six borrowed things at most');
   assert.ok(lent.every((p) => cat.byId.has(p.model)), 'kept by id');
   assert.deepEqual(borrowed(cat, f), [lantern]);
   assert.ok(formSchema(names).properties.parts.items.properties.model.enum.includes('none'));

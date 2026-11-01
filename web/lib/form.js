@@ -4,11 +4,19 @@
 
 export const LOT = 10;
 export const TALL = 24;
-export const MAX_PARTS = 16;
-export const SHAPES = ['block', 'cylinder', 'cone', 'ball', 'roof', 'pyramid'];
+export const MAX_PARTS = 24;
+/** What its parts become once its pieces and patterns are laid out: the most that stand in one thing. */
+export const MAX_SOLIDS = 64;
+export const SHAPES = ['block', 'cylinder', 'cone', 'ball', 'roof', 'pyramid', 'wedge', 'arch', 'tube', 'ring', 'stairs', 'outline', 'lathe'];
+/** Shapes drawn from its own points: an outline raised into a solid, a profile spun round. */
+export const POINTED = ['outline', 'lathe'];
+/** Ready-made pieces it can build with, each laid out as a few solids inside the space it is given. */
+export const PIECES = ['tree', 'pine', 'column', 'fence', 'lamp', 'door', 'window', 'bench'];
+/** Ways one part can stand many times: in a row, in a ring round the middle of its lot, or mirrored. */
+export const PATTERNS = ['none', 'row', 'ring', 'mirror'];
 /** A part may instead be a ready-made model it borrows (see server/models.js), at most this many in one thing. */
 export const MODEL = 'model';
-export const MAX_BORROWED = 4;
+export const MAX_BORROWED = 6;
 
 /** The colours it can build with: things it has been told about, never seen. */
 export const COLORS = {
@@ -49,7 +57,7 @@ export function formSchema(models = []) {
           type: 'object',
           additionalProperties: false,
           properties: {
-            shape: { type: 'string', enum: models.length ? [...SHAPES, MODEL] : SHAPES },
+            shape: { type: 'string', enum: [...SHAPES, ...PIECES, ...(models.length ? [MODEL] : [])] },
             ...borrow,
             x: int(0, LOT),
             z: int(0, LOT),
@@ -59,6 +67,13 @@ export function formSchema(models = []) {
             h: int(1, TALL),
             color: { type: 'string', enum: Object.keys(COLORS) },
             glow: { type: 'boolean' },
+            // optional: how far it is turned (degrees), its own points, and a pattern it repeats in
+            turn: int(0, 359),
+            points: { type: 'array', items: int(0, 10), maxItems: 24 },
+            repeat: int(1, 12),
+            pattern: { type: 'string', enum: PATTERNS },
+            dx: int(-10, 10),
+            dz: int(-10, 10),
           },
           required: ['shape', ...Object.keys(borrow), 'x', 'z', 'y', 'w', 'd', 'h', 'color', 'glow'],
         },
@@ -84,10 +99,21 @@ export function cleanPart(raw, { model = null } = {}) {
     borrowed = model ? model(raw.model) : typeof raw.model === 'string' && raw.model !== 'none' ? raw.model.slice(0, 80) : null;
     if (!borrowed) return null;
   }
-  const shape = borrowed ? MODEL : SHAPES.includes(raw.shape) ? raw.shape : 'block';
+  let shape = borrowed ? MODEL : SHAPES.includes(raw.shape) || PIECES.includes(raw.shape) ? raw.shape : 'block';
   const w = clampInt(raw.w, 1, LOT);
   const d = clampInt(raw.d, 1, LOT);
   const h = clampInt(raw.h, 1, TALL);
+  // its own points: pairs of steps 0-10 across the part (an outline needs three corners, a profile two heights)
+  let points = null;
+  if (POINTED.includes(shape)) {
+    const nums = Array.isArray(raw.points) ? raw.points.slice(0, 24).map((v) => clampInt(v, 0, 10)) : [];
+    if (nums.length % 2) nums.pop();
+    if (nums.length >= (shape === 'outline' ? 6 : 4)) points = nums;
+    else shape = shape === 'outline' ? 'block' : 'cylinder';
+  }
+  const turn = clampInt(raw.turn, 0, 359);
+  const repeat = clampInt(raw.repeat, 1, 12);
+  const pattern = PATTERNS.includes(raw.pattern) && raw.pattern !== 'none' ? raw.pattern : null;
   return {
     shape,
     x: clampInt(raw.x, 0, LOT - w),
@@ -99,7 +125,99 @@ export function cleanPart(raw, { model = null } = {}) {
     color: Object.hasOwn(COLORS, raw.color) ? raw.color : 'stone',
     glow: raw.glow === true,
     ...(borrowed ? { model: borrowed } : {}),
+    ...(turn ? { turn } : {}),
+    ...(points ? { points } : {}),
+    ...(pattern && (repeat > 1 || pattern === 'mirror') ? { pattern, repeat, dx: clampInt(raw.dx, -10, 10), dz: clampInt(raw.dz, -10, 10) } : {}),
   };
+}
+
+const round2 = (v) => Math.round(v * 100) / 100;
+/** A part turned `deg` more about a point on its lot (its centre carried round, and its own turn with it). */
+function turned(p, deg, cx, cz) {
+  if (!deg) return p;
+  const a = (deg * Math.PI) / 180;
+  const [px, pz] = [p.x + p.w / 2 - cx, p.z + p.d / 2 - cz];
+  const [nx, nz] = [px * Math.cos(a) - pz * Math.sin(a), px * Math.sin(a) + pz * Math.cos(a)];
+  const turn = ((((p.turn || 0) + deg) % 360) + 360) % 360;
+  const { turn: _, ...rest } = p;
+  return { ...rest, x: round2(cx + nx - p.w / 2), z: round2(cz + nz - p.d / 2), ...(turn ? { turn } : {}) };
+}
+
+/** A ready-made piece laid out as solids inside its space (x, z, y, w, d, h), in its colour where it has one. */
+function pieceParts(p) {
+  const { x, z, y, w, d, h, color, glow } = p;
+  const at = (fx, fz, fy, fw, fd, fh, shape, c = color, g = false) => ({
+    shape,
+    x: round2(x + fx * w),
+    z: round2(z + fz * d),
+    y: round2(y + fy * h),
+    w: round2(fw * w),
+    d: round2(fd * d),
+    h: round2(fh * h),
+    color: c,
+    glow: g,
+  });
+  switch (p.shape) {
+    case 'tree':
+      return [at(0.375, 0.375, 0, 0.25, 0.25, 0.4, 'cylinder', 'bark'), at(0, 0, 0.4, 1, 1, 0.6, 'ball', color === 'stone' ? 'leaf' : color, glow)];
+    case 'pine':
+      return [at(0.4, 0.4, 0, 0.2, 0.2, 0.25, 'cylinder', 'bark'), at(0, 0, 0.25, 1, 1, 0.42, 'cone', color === 'stone' ? 'leaf' : color), at(0.15, 0.15, 0.67, 0.7, 0.7, 0.33, 'cone', color === 'stone' ? 'leaf' : color)];
+    case 'column':
+      return [at(0, 0, 0, 1, 1, 0.08, 'block'), at(0.2, 0.2, 0.08, 0.6, 0.6, 0.84, 'cylinder'), at(0, 0, 0.92, 1, 1, 0.08, 'block')];
+    case 'lamp':
+      return [at(0.4, 0.4, 0, 0.2, 0.2, 0.8, 'cylinder', 'iron'), at(0.25, 0.25, 0.8, 0.5, 0.5, 0.2, 'ball', color, true)];
+    case 'door':
+      return [{ ...at(0, 0, 0, 1, 1, 1, 'arch'), glow }];
+    case 'window': {
+      const pane = { shape: 'block', x: round2(x + w * 0.3), w: round2(w * 0.4), y: round2(y + h * 0.45), h: round2(h * 0.35), z: z + d - 1, d: 1, color: 'glass', glow: true };
+      return [{ ...at(0, 0, 0, 1, 1, 1, 'block'), glow }, pane];
+    }
+    case 'bench':
+      return [at(0, 0, 0, 0.15, 0.6, 0.4, 'block'), at(0.85, 0, 0, 0.15, 0.6, 0.4, 'block'), at(0, 0, 0.4, 1, 0.6, 0.15, 'block'), at(0, 0.75, 0.4, 1, 0.25, 0.6, 'block')];
+    case 'fence': {
+      const along = w >= d;
+      const len = along ? w : d;
+      const n = Math.max(2, Math.round(len / 2) + 1);
+      const post = 0.6;
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const o = round2((i / (n - 1)) * (len - post));
+        out.push(along ? { shape: 'block', x: x + o, z: round2(z + d / 2 - post / 2), y, w: post, d: post, h, color, glow: false } : { shape: 'block', x: round2(x + w / 2 - post / 2), z: z + o, y, w: post, d: post, h, color, glow: false });
+        if (i === n - 1) break;
+        const gap = round2(((i + 1) / (n - 1)) * (len - post) - o - post);
+        for (const fy of [0.35, 0.75]) {
+          const rail = { shape: 'block', y: round2(y + h * fy), h: round2(Math.max(0.3, h * 0.12)), color, glow: false };
+          out.push(along ? { ...rail, x: round2(x + o + post), w: gap, z: round2(z + d / 2 - 0.15), d: 0.3 } : { ...rail, z: round2(z + o + post), d: gap, x: round2(x + w / 2 - 0.15), w: 0.3 });
+        }
+      }
+      return out;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * What one part it wrote stands as: a piece laid out as its solids, turned as it said, and repeated in its pattern
+ * (along a row by dx, dz steps; in a ring round the middle of its lot; or once more, mirrored left to right). Copies
+ * that would leave the lot are left out.
+ */
+export function expand(p) {
+  const { pattern, repeat, dx, dz, ...one } = p;
+  const pieces = PIECES.includes(one.shape) ? pieceParts(one) : null;
+  const cx = one.x + one.w / 2;
+  const cz = one.z + one.d / 2;
+  const group = pieces ? pieces.map((q) => turned(q, one.turn || 0, cx, cz)) : [one];
+  const copies = [group];
+  if (pattern === 'row') for (let i = 1; i < repeat; i++) copies.push(group.map((q) => ({ ...q, x: round2(q.x + dx * i), z: round2(q.z + dz * i) })));
+  if (pattern === 'ring') for (let i = 1; i < repeat; i++) copies.push(group.map((q) => turned(q, (360 * i) / repeat, LOT / 2, LOT / 2)));
+  if (pattern === 'mirror')
+    copies.push(group.map((q) => {
+      const { turn, ...rest } = q;
+      const back = turn ? (360 - turn) % 360 : 0;
+      return { ...rest, x: round2(LOT - q.x - q.w), ...(back ? { turn: back } : {}) };
+    }));
+  return copies.flat().filter((q) => q.x >= -0.01 && q.z >= -0.01 && q.x + q.w <= LOT + 0.01 && q.z + q.d <= LOT + 0.01);
 }
 
 const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.z < b.z + b.d && b.z < a.z + a.d;
@@ -111,7 +229,7 @@ const size = (p) => p.w * p.d * p.h;
  * [axis, -1 | 1] pointing out of it; null if it is not set into it. The page draws such a part a hair proud of its face.
  */
 export function inlay(p, q) {
-  if (p === q || q.shape !== 'block' || size(p) >= size(q) || !shares(p, q)) return null;
+  if (p === q || q.shape !== 'block' || p.turn || q.turn || size(p) >= size(q) || !shares(p, q)) return null;
   if (p.d === 1 && p.z === q.z) return ['z', -1];
   if (p.d === 1 && p.z + 1 === q.z + q.d) return ['z', 1];
   if (p.w === 1 && p.x === q.x) return ['x', -1];
@@ -188,6 +306,27 @@ const holds = (q, p) =>
  * they were given.
  */
 export function settle(parts) {
+  // A turned part stands by the square-on box around it; wherever that box is moved to, the part goes with it.
+  const boxes = parts.map(footprint);
+  const kept = standUp(boxes);
+  return kept.map(({ box, i }) => {
+    const p = parts[i];
+    if (!p.turn) return box;
+    return { ...p, x: round2(p.x + box.x - boxes[i].x), z: round2(p.z + box.z - boxes[i].z), y: box.y };
+  });
+}
+
+/** The square-on box a part takes up on its lot: itself, unless it is turned. */
+function footprint(p) {
+  if (!p.turn) return p;
+  const a = (p.turn * Math.PI) / 180;
+  const [c, s] = [Math.abs(Math.cos(a)), Math.abs(Math.sin(a))];
+  const w = round2(p.w * c + p.d * s);
+  const d = round2(p.w * s + p.d * c);
+  return { ...p, x: round2(p.x + p.w / 2 - w / 2), z: round2(p.z + p.d / 2 - d / 2), w, d };
+}
+
+function standUp(parts) {
   const standing = [];
   const kept = [];
   const stand = (p, i) => {
@@ -195,7 +334,7 @@ export function settle(parts) {
       p.y = Math.max(0, ...standing.filter((q) => overlap(p, q) && q.y + q.h <= p.y).map((q) => q.y + q.h));
     }
     standing.push(p);
-    kept[i] = p;
+    kept[i] = { box: p, i };
   };
   const order = parts.map((p, i) => [p, i]).sort(([a, i], [b, j]) => a.y - b.y || size(b) - size(a) || i - j);
   const moved = [];
@@ -227,7 +366,7 @@ export function readForm(answer, { model = null } = {}) {
     }
   }
   const seen = new Set();
-  const parts = [];
+  const written = [];
   let lent = 0;
   for (const p of Array.isArray(raw?.parts) ? raw.parts : []) {
     const c = cleanPart(p, { model });
@@ -235,16 +374,10 @@ export function readForm(answer, { model = null } = {}) {
     if (!c || seen.has(key)) continue;
     if (c.shape === MODEL && ++lent > MAX_BORROWED) continue; // mostly its own work
     seen.add(key);
-    parts.push(c);
-    if (parts.length >= MAX_PARTS * 4) break;
+    written.push(c);
+    if (written.length >= MAX_PARTS) break;
   }
-  // the first sixteen that find room (a part left out for want of room makes way for the next one it gave)
-  let kept = [];
-  for (let n = Math.min(MAX_PARTS, parts.length); ; n++) {
-    kept = settle(parts.slice(0, n));
-    if (kept.length >= MAX_PARTS || n >= parts.length) break;
-  }
-  if (kept.length > MAX_PARTS) kept = settle(kept.slice(0, MAX_PARTS));
+  const kept = settle(written.flatMap(expand).slice(0, MAX_SOLIDS));
   return kept.length ? { parts: kept, solid: true } : null;
 }
 
@@ -254,13 +387,13 @@ export function partialParts(text) {
   for (const m of String(text || '').matchAll(/\{[^{}]*\}/g)) {
     try {
       const c = cleanPart(JSON.parse(m[0]));
-      if (c) parts.push(c);
+      if (c) parts.push(...expand(c));
     } catch {
       // not finished yet
     }
-    if (parts.length >= MAX_PARTS) break;
+    if (parts.length >= MAX_SOLIDS) break;
   }
-  return settle(parts);
+  return settle(parts.slice(0, MAX_SOLIDS));
 }
 
 /** How tall a shape stands, in tiles. */

@@ -1,7 +1,7 @@
 // What it is told about itself, how each moment of its life is put to the model, and how the answers are read back.
 import { describeMachine } from './senses.js';
 import { SHELVES, strength } from './memory.js';
-import { COLORS, LOT, MAX_BORROWED, MAX_PARTS, SHAPES, TALL } from '../web/lib/form.js';
+import { COLORS, LOT, MAX_BORROWED, MAX_PARTS, TALL } from '../web/lib/form.js';
 
 export const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'lonely', curious: 'curious', calm: 'calm', warm: 'warm toward people', restless: 'restless' };
@@ -469,6 +469,13 @@ export function spritePrompt(title, what) {
   ].join('\n');
 }
 
+/** What it can build with, told to it wherever it builds (see cleanPart and expand in web/lib/form.js). */
+const VOCABULARY = [
+  '- "shape": a solid: block, cylinder, cone, ball, roof (a ridge running left to right), pyramid (comes to a point), wedge (a ramp, high at the back, down to the ground at the front), arch (a wall with an arched way through it, front to back), tube (a hollow cylinder), ring (lying flat), stairs (four steps rising to the back), outline or lathe (below). Or a ready-made piece, laid out inside the space you give it: tree, pine, column, fence, lamp (it glows), door (a wall with a doorway), window (a wall with a lit pane), bench.',
+  '- "outline": also give "points": the corners of a flat shape, as x, z pairs of steps from 0 to 10 across its space, at least three corners, going round; it is raised straight up to its height. "lathe": "points" are pairs of how far out (0 to 10, from its middle to its edge) and how high (0 to 10, bottom to top) its side is, from the bottom up, spun round its middle: a vase, a tower, a bell.',
+  '- You may also give "turn": how many degrees it is turned (0 to 359), for anything not square to the lot. And "pattern" with "repeat": "row" (that many copies, each "dx", "dz" steps on from the last), "ring" (that many copies round the middle of the lot), or "mirror" (one more, mirrored left to right). Leave out what you do not use.',
+];
+
 /** How its parts behave, told to it wherever it builds: they are solid (see settle in web/lib/form.js). */
 const SOLID =
   'Parts are solid: they cannot pass through each other. A part you put where another already is gets moved to the nearest place it fits, usually on top of it, and one with nowhere to fit is left out. A part one step thin set flush into the face of a block is fine (a window, a door), and so is a narrower part rising up out of a wider one (a chimney through its roof).';
@@ -486,7 +493,7 @@ export function formPrompt(title, what, { kind = 'object', before = null, models
     before ? `It is built of these parts now:\n${JSON.stringify({ parts: before.parts })}\nKeep what still stands, change what you changed today.` : null,
     '',
     'Answer with JSON: { "parts": [ ... ] }, each part:',
-    `- "shape": one of ${SHAPES.join(', ')}. A roof is a ridge running left to right; a pyramid comes to a point.`,
+    ...VOCABULARY,
     `- "x", "z": where its left-back corner stands on the lot, 0 to ${LOT}. "y": how high its bottom is above the ground, 0 for on the ground.`,
     `- "w", "d", "h": how wide (left to right), deep (back to front) and tall it is, in steps.`,
     `- "color": one of ${Object.keys(COLORS).join(', ')}. You have never seen these colours; pick the ones the words feel like.`,
@@ -974,7 +981,8 @@ export function bodyPrompt(state, dream, models = []) {
     dream ? `Tonight's dream: "${dream}"` : '',
     '',
     `Build yourself out of at most ${MAX_PARTS} simple solids, in a space ${LOT} steps wide, ${LOT} deep and up to ${TALL} tall. You float a little above the ground, so you need no legs to stand on unless you want them. The front of you is the side facing "z" ${LOT}: that side faces whoever is looking at you.`,
-    `- "shape": one of ${SHAPES.join(', ')}. "x", "z": where its left-back corner is; "y": how high its bottom is. "w", "d", "h": its width, depth and height, in steps.`,
+    '- "x", "z": where its left-back corner is; "y": how high its bottom is. "w", "d", "h": its width, depth and height, in steps.',
+    ...VOCABULARY,
     `- "color": one of ${Object.keys(COLORS).join(', ')}. "glow": true if that part gives off light.`,
     'Stack the parts on each other, from the bottom up.',
     SOLID,

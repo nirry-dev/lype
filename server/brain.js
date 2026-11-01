@@ -236,11 +236,16 @@ function createMockBrain(cfg = {}) {
       const c = ['stone', 'brick', 'wood', 'moss', 'clay'][n % 5];
       text = JSON.stringify({ parts: [
         { shape: 'block', x: 1, z: 1, y: 0, w: 8, d: 8, h: 1, color: 'stone', glow: false },
-        { shape: 'block', x: 2, z: 2, y: 1, w: 6, d: 6, h: 6, color: c, glow: false },
+        { shape: 'window', x: 2, z: 2, y: 1, w: 6, d: 6, h: 6, color: c, glow: false },
         { shape: 'block', x: 4, z: 7, y: 1, w: 2, d: 1, h: 4, color: 'bark', glow: false },
         { shape: 'block', x: 3, z: 7, y: 4, w: 1, d: 1, h: 1, color: 'gold', glow: true },
         { shape: n % 2 ? 'roof' : 'pyramid', x: 1, z: 1, y: 7, w: 8, d: 8, h: 5, color: 'slate', glow: false },
         { shape: 'cylinder', x: 6, z: 3, y: 9, w: 1, d: 1, h: 4, color: 'brick', glow: false },
+        // the newer things it can build with: a tree, a lantern in each corner of its lot, a turned bench, a vase
+        { shape: 'tree', x: 0, z: 0, w: 2, d: 2, h: 7, color: 'leaf', glow: false },
+        { shape: 'lamp', x: 0, z: 9, w: 1, d: 1, h: 3, color: 'gold', glow: true, pattern: 'mirror' },
+        { shape: 'bench', x: 7, z: 0, w: 3, d: 1, h: 2, color: 'wood', glow: false, turn: 20 },
+        { shape: 'lathe', x: 9, z: 4, w: 1, d: 1, h: 2, color: 'clay', glow: false, points: [3, 0, 5, 4, 2, 8, 3, 10] },
       ] });
       // offered something to borrow, a mock life borrows the first thing it was offered and sets it by the door
       const offered = schema?.properties?.parts?.items?.properties?.model?.enum?.[1];

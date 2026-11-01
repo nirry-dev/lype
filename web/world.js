@@ -456,6 +456,177 @@ function pyramidMesh() {
   return v;
 }
 
+/** A ramp: full height at its back, down to the ground at its front. */
+function wedgeMesh() {
+  const v = [];
+  quad(v, [-0.5, 0, 0.5], [0.5, 0, 0.5], [0.5, 1, -0.5], [-0.5, 1, -0.5], norm([0, 1, 1]));
+  quad(v, [0.5, 0, -0.5], [-0.5, 0, -0.5], [-0.5, 1, -0.5], [0.5, 1, -0.5], [0, 0, -1]);
+  tri(v, [-0.5, 0, -0.5], [-0.5, 0, 0.5], [-0.5, 1, -0.5], [-1, 0, 0]);
+  tri(v, [0.5, 0, 0.5], [0.5, 0, -0.5], [0.5, 1, -0.5], [1, 0, 0]);
+  quad(v, [-0.5, 0, -0.5], [0.5, 0, -0.5], [0.5, 0, 0.5], [-0.5, 0, 0.5], [0, -1, 0]);
+  return v;
+}
+
+/** Triangles filling a simple polygon (ear by ear); a polygon that crosses itself is filled as its outline's hull. */
+function triangulate(pts) {
+  const area = pts.reduce((a, p, i) => a + p[0] * pts[(i + 1) % pts.length][1] - pts[(i + 1) % pts.length][0] * p[1], 0) / 2;
+  const idx = pts.map((_, i) => i);
+  if (area < 0) idx.reverse();
+  const crossAt = (a, b, c) => (pts[b][0] - pts[a][0]) * (pts[c][1] - pts[b][1]) - (pts[b][1] - pts[a][1]) * (pts[c][0] - pts[b][0]);
+  const side = (p, u, w) => (p[0] - pts[w][0]) * (pts[u][1] - pts[w][1]) - (pts[u][0] - pts[w][0]) * (p[1] - pts[w][1]);
+  const inside = (p, a, b, c) => {
+    const [d1, d2, d3] = [side(p, a, b), side(p, b, c), side(p, c, a)];
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+  };
+  const out = [];
+  for (let guard = 0; idx.length > 3 && guard < 400; guard++) {
+    let cut = false;
+    for (let i = 0; i < idx.length; i++) {
+      const [a, b, c] = [idx[(i + idx.length - 1) % idx.length], idx[i], idx[(i + 1) % idx.length]];
+      if (crossAt(a, b, c) <= 1e-9) continue;
+      if (idx.some((j) => j !== a && j !== b && j !== c && inside(pts[j], a, b, c))) continue;
+      out.push([a, b, c]);
+      idx.splice(i, 1);
+      cut = true;
+      break;
+    }
+    if (!cut) return null;
+  }
+  if (idx.length === 3) out.push(idx.slice());
+  return out;
+}
+
+/**
+ * A flat shape given thickness: `poly` (u, v points, any winding) stood along its third axis from `w0` to `w1`;
+ * `to(u, v, w)` says where each lands in the unit box.
+ */
+function prism(poly, to, w0 = -0.5, w1 = 0.5) {
+  const v = [];
+  const area = poly.reduce((a, p, i) => a + p[0] * poly[(i + 1) % poly.length][1] - poly[(i + 1) % poly.length][0] * p[1], 0);
+  const ccw = area > 0;
+  let tris = triangulate(poly);
+  if (!tris) {
+    // crossing itself: its hull instead
+    const hull = [...poly].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const side = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const half = (list) => list.reduce((h, p) => {
+      while (h.length >= 2 && side(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop();
+      return [...h, p];
+    }, []);
+    const lower = half(hull);
+    const upper = half([...hull].reverse());
+    return prism([...lower.slice(0, -1), ...upper.slice(0, -1)], to, w0, w1);
+  }
+  const n = (nu, nv, nw) => norm(sub(to(nu, nv, nw), to(0, 0, 0)));
+  for (const [a, b, c] of tris) {
+    const [pa, pb, pc] = [poly[a], poly[b], poly[c]];
+    tri(v, to(pa[0], pa[1], w1), to(pb[0], pb[1], w1), to(pc[0], pc[1], w1), n(0, 0, 1));
+    tri(v, to(pc[0], pc[1], w0), to(pb[0], pb[1], w0), to(pa[0], pa[1], w0), n(0, 0, -1));
+  }
+  for (let i = 0; i < poly.length; i++) {
+    const [a, b] = [poly[i], poly[(i + 1) % poly.length]];
+    const [du, dv] = [b[0] - a[0], b[1] - a[1]];
+    const out = ccw ? [dv, -du] : [-dv, du];
+    quad(v, to(a[0], a[1], w0), to(b[0], b[1], w0), to(b[0], b[1], w1), to(a[0], a[1], w1), n(out[0], out[1], 0));
+  }
+  // the mapping may mirror the shape: then every triangle faces the wrong way round, so turn them back
+  const flip = dot(cross(sub(to(1, 0, 0), to(0, 0, 0)), sub(to(0, 1, 0), to(0, 0, 0))), sub(to(0, 0, 1), to(0, 0, 0))) < 0;
+  if (flip) for (let i = 0; i < v.length; i += 24) for (let k = 0; k < 8; k++) [v[i + 8 + k], v[i + 16 + k]] = [v[i + 16 + k], v[i + 8 + k]];
+  return v;
+}
+
+/** A wall with an arched way through it, front to back. */
+function archMesh() {
+  const poly = [[-0.5, 0], [-0.25, 0], [-0.25, 0.55]];
+  for (let i = 1; i < 12; i++) {
+    const a = Math.PI - (i / 12) * Math.PI;
+    poly.push([Math.cos(a) * 0.25, 0.55 + Math.sin(a) * 0.25]);
+  }
+  poly.push([0.25, 0.55], [0.25, 0], [0.5, 0], [0.5, 1], [-0.5, 1]);
+  return prism(poly, (u, v, w) => [u, v, w]);
+}
+
+/** Four steps, rising toward the back. */
+function stairsMesh() {
+  const poly = [[0.5, 0], [0.5, 0.25], [0.25, 0.25], [0.25, 0.5], [0, 0.5], [0, 0.75], [-0.25, 0.75], [-0.25, 1], [-0.5, 1], [-0.5, 0]];
+  return prism(poly, (u, v, w) => [w, v, u]);
+}
+
+/** A hollow cylinder. */
+function tubeMesh() {
+  const v = [];
+  const IN = 0.6;
+  for (let i = 0; i < SIDES; i++) {
+    const [ax, az] = ring(i);
+    const [bx, bz] = ring(i + 1);
+    const [na, nb] = [norm([ax, 0, az]), norm([bx, 0, bz])];
+    for (const [p, nn] of [[[ax, 0, az], na], [[bx, 0, bz], nb], [[bx, 1, bz], nb], [[ax, 0, az], na], [[bx, 1, bz], nb], [[ax, 1, az], na]]) vert(v, p, nn);
+    const [ia, ib] = [[ax * IN, az * IN], [bx * IN, bz * IN]];
+    for (const [p, nn] of [[[ib[0], 0, ib[1]], nb.map((c) => -c)], [[ia[0], 0, ia[1]], na.map((c) => -c)], [[ia[0], 1, ia[1]], na.map((c) => -c)], [[ib[0], 0, ib[1]], nb.map((c) => -c)], [[ia[0], 1, ia[1]], na.map((c) => -c)], [[ib[0], 1, ib[1]], nb.map((c) => -c)]]) vert(v, p, nn);
+    quad(v, [ia[0], 1, ia[1]], [ax, 1, az], [bx, 1, bz], [ib[0], 1, ib[1]], UP);
+    quad(v, [ib[0], 0, ib[1]], [bx, 0, bz], [ax, 0, az], [ia[0], 0, ia[1]], [0, -1, 0]);
+  }
+  return v;
+}
+
+/** A ring lying flat (a torus as tall as its space). */
+function ringMesh() {
+  const v = [];
+  const R = 0.35;
+  const r = 0.15;
+  const at = (i, j) => {
+    const a = (i / SIDES) * Math.PI * 2;
+    const t = (j / 12) * Math.PI * 2;
+    const [ca, sa, ct, st] = [Math.cos(a), Math.sin(a), Math.cos(t), Math.sin(t)];
+    return [[(R + r * ct) * ca, 0.5 + 0.5 * st, (R + r * ct) * sa], norm([ct * ca * 0.5, st * r, ct * sa * 0.5])];
+  };
+  for (let i = 0; i < SIDES; i++) {
+    for (let j = 0; j < 12; j++) {
+      const [a, b, c, d] = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
+      for (const [p, n] of [a, c, b, a, d, c]) vert(v, p, n);
+    }
+  }
+  return v;
+}
+
+/** Its own outline (points across its space, 0-10), raised straight up into a solid. */
+function outlineMesh(points) {
+  const poly = [];
+  for (let i = 0; i + 1 < points.length; i += 2) poly.push([points[i] / 10 - 0.5, points[i + 1] / 10 - 0.5]);
+  return prism(poly, (u, v, w) => [u, w, v], 0, 1);
+}
+
+/** Its own profile (pairs of how far out, 0-10, and how high, 0-10) spun round its middle. */
+function latheMesh(points) {
+  const prof = [];
+  for (let i = 0; i + 1 < points.length; i += 2) prof.push([(points[i] / 10) * 0.5, points[i + 1] / 10]);
+  const v = [];
+  for (let k = 0; k + 1 < prof.length; k++) {
+    const [[r0, y0], [r1, y1]] = [prof[k], prof[k + 1]];
+    const slope = [y1 - y0, -(r1 - r0)]; // outward in (r, y)
+    const ln = Math.hypot(...slope) || 1;
+    for (let i = 0; i < SIDES; i++) {
+      const [ca, sa] = ring(i).map((c) => c * 2);
+      const [cb, sb] = ring(i + 1).map((c) => c * 2);
+      const na = norm([ca * slope[0], slope[1] / ln, sa * slope[0]]);
+      const nb = norm([cb * slope[0], slope[1] / ln, sb * slope[0]]);
+      for (const [p, n] of [[[ca * r0, y0, sa * r0], na], [[cb * r0, y0, sb * r0], nb], [[cb * r1, y1, sb * r1], nb], [[ca * r0, y0, sa * r0], na], [[cb * r1, y1, sb * r1], nb], [[ca * r1, y1, sa * r1], na]]) vert(v, p, n);
+    }
+  }
+  const cap = ([r, y], up) => {
+    if (r <= 0) return;
+    for (let i = 0; i < SIDES; i++) {
+      const [ca, sa] = ring(i).map((c) => c * 2 * r);
+      const [cb, sb] = ring(i + 1).map((c) => c * 2 * r);
+      if (up) tri(v, [0, y, 0], [ca, y, sa], [cb, y, sb], UP);
+      else tri(v, [0, y, 0], [cb, y, sb], [ca, y, sa], [0, -1, 0]);
+    }
+  };
+  cap(prof[0], false);
+  cap(prof.at(-1), true);
+  return v;
+}
+
 /**
  * A borrowed model, as scripts/models.js packs it: its real size, then its corners (place in a unit box, facing,
  * colour) and its triangles. Unpacked into plain triangles, with a colour for each corner.
@@ -511,7 +682,7 @@ function placedParts(t, form, dimsOf = () => null) {
     // set flush into the face of a block (a window, a door), it is drawn a hair proud of it rather than in the same plane
     const face = form.parts.map((q) => inlay(p, q)).find(Boolean);
     if (face) at['xyz'.indexOf(face[0])] += face[1] * 0.004;
-    let yaw = 0;
+    let yaw = -((p.turn || 0) * Math.PI) / 180;
     let tilt = 0;
     if (t.ruin) {
       if (p.y === 0) size[1] *= 0.35 + hash(salt) * 0.25;
@@ -623,7 +794,21 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     ball: mesh(gl, ballMesh()),
     roof: mesh(gl, roofMesh()),
     pyramid: mesh(gl, pyramidMesh()),
+    wedge: mesh(gl, wedgeMesh()),
+    arch: mesh(gl, archMesh()),
+    tube: mesh(gl, tubeMesh()),
+    ring: mesh(gl, ringMesh()),
+    stairs: mesh(gl, stairsMesh()),
   };
+  // solids from its own points, made once for each set of points
+  const pointed = new Map();
+  function meshFor(shape, points) {
+    if (shape !== 'outline' && shape !== 'lathe') return meshes[shape] || meshes.block;
+    if (!points?.length) return shape === 'lathe' ? meshes.cylinder : meshes.block;
+    const key = `${shape}:${points.join(',')}`;
+    if (!pointed.has(key)) pointed.set(key, mesh(gl, shape === 'outline' ? outlineMesh(points) : latheMesh(points)));
+    return pointed.get(key);
+  }
   const texture = (source) => {
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
@@ -764,15 +949,16 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   }
 
   /** A solid: lit by the sun or moon and the sky. A borrowed model not here yet is a faint box where it will stand. */
-  function solid(shape, at, size, color, { yaw = 0, tilt = 0, glow = 0, alpha = 1, model = null } = {}) {
+  function solid(shape, at, size, color, { yaw = 0, tilt = 0, glow = 0, alpha = 1, model = null, points = null } = {}) {
     const m = shape === MODEL ? modelFor(model) : null;
     if (shape === MODEL && !m) {
       draw(mat.model(at, yaw, tilt, size), meshes.block, tex.white, [...color, 0.18 * alpha], { shade: 1, depthWrite: false });
       return;
     }
     const placed = mat.model(at, yaw, tilt, size);
-    if (alpha >= 1) casting.push({ model: placed, mesh: m ? m.mesh : meshes[shape] });
-    draw(placed, m ? m.mesh : meshes[shape], tex.white, [...color, alpha], { shade: 1, glow, depthWrite: alpha >= 1, colors: m?.colors });
+    const shaped = m ? m.mesh : meshFor(shape, points);
+    if (alpha >= 1) casting.push({ model: placed, mesh: shaped });
+    draw(placed, shaped, tex.white, [...color, alpha], { shade: 1, glow, depthWrite: alpha >= 1, colors: m?.colors });
   }
   const halo = (at, size, color, alpha) => draw(mat.model(at, 0, 0, [size, 1, size]), meshes.flat, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
   const spark = (at, size, color, alpha) => draw(mat.model(at, facing(), 0, [size, size, 1]), meshes.centered, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
@@ -928,7 +1114,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const lift = th === selected ? 0.03 + (reduced ? 0 : 0.015 * Math.sin(t * 2.4)) : 0;
       for (const q of th.placed) {
         const at = [th.pos[0] + q.at[0], q.at[1] + lift, th.pos[2] + q.at[2]];
-        solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow ? 0.6 + night * 0.4 : 0, model: q.p.model });
+        solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow ? 0.6 + night * 0.4 : 0, model: q.p.model, points: q.p.points });
         if (q.glow) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: Math.max(q.size[0], q.size[1], q.size[2]), color: q.color });
       }
       // its drawing, pinned to the front of its widest wall, as well as on its sign
@@ -1031,7 +1217,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const k = reduced ? 1 : clamp((now - site.parts[i].at) / 700, 0, 1);
       const ease = 1 - (1 - k) ** 3;
       const at = [x + q.at[0], q.at[1] - (1 - ease) * 0.35, z + q.at[2]];
-      solid(q.p.shape, at, q.size, q.color, { glow: q.glow ? 0.6 + night * 0.4 : (1 - ease) * 0.8, alpha: 0.35 + 0.65 * ease, model: q.p.model });
+      solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, glow: q.glow ? 0.6 + night * 0.4 : (1 - ease) * 0.8, alpha: 0.35 + 0.65 * ease, model: q.p.model, points: q.p.points });
       if (q.glow) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: Math.max(...q.size), color: q.color });
       if (k < 1) {
         gl.uniform1f(prog.uLight, 1);
@@ -1229,8 +1415,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       const at = [cx + cos * ox + sin * oz, cy + p.y * BODY + bob - (1 - rise) * 0.2, cz - sin * ox + cos * oz];
       const color = p.shape === MODEL ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
       const glow = p.glow ? 0.6 + night * 0.4 : form.live ? (1 - rise) * 0.8 : 0;
-      if (ghost) solid(p.shape, at, size, mood, { yaw: creature.heading, glow: 0.8, alpha: 0.32 * rise, model: p.model });
-      else solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw: creature.heading, glow, alpha: 0.35 + 0.65 * rise, model: p.model });
+      const yaw = creature.heading - ((p.turn || 0) * Math.PI) / 180;
+      if (ghost) solid(p.shape, at, size, mood, { yaw, glow: 0.8, alpha: 0.32 * rise, model: p.model, points: p.points });
+      else solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw, glow, alpha: 0.35 + 0.65 * rise, model: p.model, points: p.points });
     });
     return formHeight(form) * LOT * BODY;
   }
