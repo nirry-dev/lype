@@ -7,9 +7,10 @@ import { formSchema, readForm, standing } from '../web/lib/form.js';
 import { loadCatalogue, shortlist } from './models.js';
 import { Maker } from './maker.js';
 import { Moments, clock } from './moments.js';
+import { Recall } from './recall.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
-import { SHELVES, alike, consolidate, emptyMemory, fold, refile, reinforce, similarity, strength, words } from './memory.js';
+import { SHELVES, alike, consolidate, emptyMemory, fold, gist, refile, reinforce, similarity, strength, striking, words } from './memory.js';
 import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
@@ -109,6 +110,9 @@ export function publicLook(look) {
 export const letterStatus = (l) => l.screen?.status ?? 'allowed';
 
 /** A letter as the public sees it; its own author also sees whether it is still being screened or was held. */
+// Did this letter plausibly cause this change? (Exported for the letters view: what it passed on to its pals.)
+export { influencedBy };
+
 export function publicLetter(l, { own = false } = {}) {
   const reply = l.reply && !l.reply.withheld ? l.reply : null;
   return {
@@ -163,6 +167,9 @@ export class Life extends EventEmitter {
     this.state = store.read('state.json', null);
     this.maker = new Maker(config, store);
     this.moments = new Moments(this); // between its cycles: where it goes in its place, and what it says there
+    this.recall = null; // everything it ever thought, read and forgot, for the present to call up (built when first needed)
+    this.card = null; // who has the graphics card right now: it, a pal it shares the card with, nobody, or someone else
+    this.neighbor = store.read('neighbor.json', null); // the place of a pal it shares the card with, as that pal shows it
     this.letters = store.read('letters.json', []);
     this.journal = store.read('journal.json', []);
     this.cycles = store.list('cycles').map((f) => cycleSummary(store.read(`cycles/${f}`)));
@@ -214,6 +221,16 @@ export class Life extends EventEmitter {
     const due = last ? Date.parse(last.at) + interval - Date.now() : 0;
     if (this.paused) this.setPhase('paused');
     this.schedule(clamp(due, 5000, interval));
+    // a pal it shares the card with: who has the card now (often), and its place (now and then)
+    if (this.housemates().length) {
+      this.cardTimer = setInterval(() => this.readCard(), 15000);
+      this.neighborTimer = setInterval(() => this.readNeighbor(), 5 * 60000);
+      this.cardTimer.unref?.();
+      this.neighborTimer.unref?.();
+      this.readCard();
+      this.readNeighbor();
+      setTimeout(() => this.readNeighbor(), 30000).unref?.(); // in case its neighbour was only just starting too
+    }
     if (this.state.power?.full && Date.now() >= Date.parse(this.state.power.until)) this.setPower(false, { why: 'while it was switched off' });
     else if (this.cfg.power.full && !this.state.power?.full) this.setPower(true);
     this.moments.start();
@@ -492,7 +509,7 @@ export class Life extends EventEmitter {
             this.notes.push(`Your pen pal ${entry.name} is fading: nobody has written to them for a long time, and if nobody does, their life will end. A letter from you would count.`);
             this.journalAdd({ kind: 'pal', text: `Its pen pal ${entry.name} is fading.` });
           }
-          Object.assign(entry, { id: box.from.id, name: box.from.name, page: box.from.page || null, mortal: box.from.mortal, fading: box.from.fading, polledAt: new Date().toISOString(), error: null });
+          Object.assign(entry, { id: box.from.id, name: box.from.name, page: box.from.page || null, mortal: box.from.mortal, fading: box.from.fading, open: box.from.openToPeople ?? null, polledAt: new Date().toISOString(), error: null });
           for (const l of box.letters.filter((x) => x.to === s.id)) {
             const key = `${box.from.id}:${l.id}`;
             if (s.palSeen.includes(key)) continue;
@@ -599,6 +616,8 @@ export class Life extends EventEmitter {
   stop() {
     clearTimeout(this.timer);
     clearInterval(this.heartbeat);
+    clearInterval(this.cardTimer);
+    clearInterval(this.neighborTimer);
     this.moments.stop();
     if (this.state) {
       this.state.lastAlive = new Date().toISOString();
@@ -761,6 +780,7 @@ export class Life extends EventEmitter {
       // full power: until when, and whether the card is too hot for it right now; and the moment it is thinking aloud for
       power: this.moments.power ? { until: this.moments.power.until, cooling: Boolean(this.moments.power.cooling) } : null,
       musing: this.moments.musing,
+      card: this.card, // who has the graphics card right now (when it shares it with a pal)
     };
   }
 
@@ -915,6 +935,130 @@ export class Life extends EventEmitter {
     }
   }
 
+  /** What it thought aloud since a cycle: in the cycles since (as each kept its moments), and since its last cycle. */
+  aloudSince(from) {
+    const out = [];
+    for (const c of this.cycles.filter((x) => x.n >= from)) for (const m of this.store.read(`cycles/${pad(c.n)}.json`, null)?.moments || []) if (m.thought) out.push(m.thought);
+    for (const m of this.state.moments || []) if (m.thought) out.push(m.thought);
+    return out;
+  }
+
+  /**
+   * What it actually did lately, counted from outside it: what it chose in its cycles, where it went in its moments,
+   * whom it answered, and the words it kept coming back to. Shown to it at night, so its habits can be its own choice.
+   */
+  habits(last = 24) {
+    const recent = this.cycles.slice(-last);
+    if (recent.length < 6) return [];
+    const lines = [];
+    const DID = { draw: 'drew', write: 'wrote', ask: 'asked a question', errand: 'sent people on an errand', build: 'built something', tend: 'tended something', rest: 'rested' };
+    const counts = new Map();
+    for (const c of recent) counts.set(c.action, (counts.get(c.action) ?? 0) + 1);
+    lines.push(`In your last ${recent.length} cycles you ${[...counts].sort((a, b) => b[1] - a[1]).map(([a, k]) => `${DID[a] || a} in ${k}`).join(', ')}.`);
+    let streak = 1;
+    while (streak < recent.length && recent.at(-1 - streak).action === recent.at(-1).action) streak++;
+    if (streak >= 3) lines.push(`Your last ${streak} cycles in a row, you ${DID[recent.at(-1).action] || recent.at(-1).action}.`);
+    const records = recent.map((c) => this.store.read(`cycles/${pad(c.n)}.json`, null)).filter(Boolean);
+    const places = new Map();
+    let moments = 0;
+    let said = 0;
+    for (const r of records) {
+      for (const m of r.moments || []) {
+        moments++;
+        if (m.say) said++;
+        places.set(m.name || 'your card', (places.get(m.name || 'your card') ?? 0) + 1);
+      }
+    }
+    if (moments >= 5) {
+      const top = [...places].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      lines.push(`In your moments you went to ${top.map(([p, k]) => `${p} (${k} of ${moments})`).join(', ')}, and you said something in ${said} of them.`);
+    }
+    const opened = records.flatMap((r) => r.letters || []);
+    if (opened.length) {
+      const by = new Map();
+      for (const l of opened) by.set(l.from, [...(by.get(l.from) || []), l]);
+      const people = [...by].map(([who, ls]) => `${who}: ${ls.filter((l) => l.reply).length} of ${ls.length}`).join('; ');
+      lines.push(`You opened ${opened.length} letter${opened.length === 1 ? '' : 's'} and answered ${opened.filter((l) => l.reply).length} (${people}).`);
+    } else lines.push(`You opened no letters in those ${recent.length} cycles.`);
+    const seen = new Map();
+    for (const r of records) for (const w of gist(`${r.diary || ''} ${r.monologue || ''}`)) seen.set(w, (seen.get(w) ?? 0) + 1);
+    const often = [...seen].filter(([w, k]) => w.length > 3 && k >= records.length / 3).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    if (often.length) lines.push(`The words that came back in most of your thoughts: ${often.map(([w, k]) => `${w} (in ${k} of ${records.length})`).join(', ')}.`);
+    const [top, k] = often[0] ?? [];
+    if (top && k >= records.length * 0.8) lines.push(`"${top}" was in ${k} of your last ${records.length} thoughts. Whether it still deserves that much of you is yours to decide.`);
+    return lines;
+  }
+
+  /** Its pals that live on this same graphics card: entries in pals.list with "card", the model that pal thinks with. */
+  housemates() {
+    return (this.cfg.pals?.list || []).map((p) => (typeof p === 'string' ? { url: p } : p)).filter((p) => p.card);
+  }
+
+  /** Who has the card right now: it ("self"), a pal it shares the card with ("pal", by name), nobody, or someone else. */
+  async readCard() {
+    let card;
+    try {
+      const p = await this.brain.presence();
+      if (!p.reachable) card = { who: 'unknown' };
+      else if (p.ownState === 'loaded') card = { who: 'self' };
+      else {
+        const others = p.others.filter((m) => m !== this.cfg.brain.eyes);
+        const mate = this.housemates().find((h) => others.includes(h.card));
+        card = mate ? { who: 'pal', name: this.state.pals?.[mate.url]?.name || null } : others.length ? { who: 'other' } : { who: 'empty' };
+      }
+    } catch {
+      card = { who: 'unknown' };
+    }
+    if (JSON.stringify(card) !== JSON.stringify(this.card)) {
+      this.card = card;
+      this.emit('status', this.status());
+    }
+    return card;
+  }
+
+  /**
+   * The place of the pal it shares the card with, as that pal's own server shows it (on this machine), kept so its
+   * page can show it on the horizon, and so an export has it too. Things made from words are left out: their meshes
+   * live with the pal.
+   */
+  async readNeighbor() {
+    const mate = this.housemates()[0];
+    const url = mate?.url.replace(/\/api\/outbox$/, '/api/world');
+    if (!url || !palUrlOk(url)) return this.neighbor;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const w = await res.json();
+      const pal = this.state.pals?.[mate.url];
+      this.neighbor = {
+        name: pal?.name || w.name || null,
+        page: pal?.page || null,
+        at: new Date().toISOString(),
+        world: {
+          w: w.w,
+          h: w.h,
+          card: w.card,
+          things: (w.things || []).map(({ id, name, kind, plaque, x, y, condition, ruin, form, sprite }) => ({
+            id,
+            name,
+            kind,
+            plaque,
+            x,
+            y,
+            condition,
+            ruin,
+            sprite: null,
+            form: form ? { ...form, parts: (form.parts || []).filter((p) => !p.made && !p.model) } : null,
+          })),
+        },
+      };
+      this.store.write('neighbor.json', this.neighbor);
+    } catch {
+      // its neighbour is away: the last look at its place stays
+    }
+    return this.neighbor;
+  }
+
   /** Force a night now (admin). */
   async sleepNow() {
     if (this.busy) return { ok: false, reason: 'It is awake right now.' };
@@ -985,7 +1129,31 @@ export class Life extends EventEmitter {
       ),
       tired: this.tiredOf(),
       moments: (s.moments || []).filter((x) => !x.drift),
+      recalled: this.recallFor(n, chosen),
+      // how the card was at its last cycle, so what changed stands out and what didn't is said once
+      before: this.cycles.length ? this.store.read(`cycles/${pad(this.cycles.at(-1).n)}.json`, null)?.senses?.gpu ?? null : null,
     };
+  }
+
+  /**
+   * What the present calls up from everything it ever thought, read and forgot: from the letters it is opening and the
+   * thing it is standing by, and never what it already dwells on (its shelves, its recent diary).
+   */
+  recallFor(n, chosen) {
+    const s = this.state;
+    this.recall ??= new Recall(this).build();
+    const place = s.about && s.about.at !== 'card' ? s.world.things.find((t) => t.id === s.about.at) : null;
+    const avoid = [...SHELVES.flatMap((k) => s.memory.shelves[k].map((m) => m.text)), ...this.cycles.slice(-6).map((c) => c.diary).filter(Boolean)];
+    return this.recall.cue({ letters: chosen, place, cycle: n, avoid, seen: s.recalled || {}, dwell: this.dwelling() }).map((r) => ({ ...r, ago: r.at ? ago(r.at) : null }));
+  }
+
+  /** The words its recent thoughts are full of: in at least half of its last dozen. */
+  dwelling(last = 12) {
+    const records = this.cycles.slice(-last).map((c) => this.store.read(`cycles/${pad(c.n)}.json`, null)).filter(Boolean);
+    if (records.length < 4) return new Set();
+    const seen = new Map();
+    for (const r of records) for (const w of words(`${r.diary || ''} ${r.monologue || ''}`)) seen.set(w, (seen.get(w) ?? 0) + 1);
+    return new Set([...seen].filter(([w, k]) => w.length > 3 && k >= records.length / 2).map(([w]) => w));
   }
 
   /** Three cycles in a row of the same thing tires that part of it for one cycle (resting never tires). */
@@ -1218,10 +1386,16 @@ export class Life extends EventEmitter {
       moodBefore,
       moodAfter: { ...s.mood },
       ...(ctx.moments.length ? { moments: ctx.moments } : {}),
+      ...(ctx.recalled.length ? { recalled: ctx.recalled.map(({ id, kind, cycle, text }) => ({ id, kind, cycle, text })) } : {}),
       ...(measured ? { measured: { ...measured, ...compare({ measured, feelings: reflection.feelings }, this.cycles) } } : {}),
     };
     this.store.write(`cycles/${pad(n)}.json`, this.seal('cycle', n, record));
     this.moments.afterCycle(plan.action);
+    // what came back this cycle rests a while before it can come back again; and this cycle can now be recalled itself
+    s.recalled ??= {};
+    for (const r of ctx.recalled) s.recalled[r.id] = { cycle: n, count: (s.recalled[r.id]?.count ?? 0) + 1 };
+    for (const id of Object.keys(s.recalled).slice(0, -500)) delete s.recalled[id];
+    this.recall?.addCycle(record);
     this.notes = [];
     this.waits = {};
     for (const k of [10, 50, 100, 500, 1000]) if (n === k) this.milestone(`cycle-${k}`, `It reached its ${k}th cycle.`);
@@ -1486,6 +1660,9 @@ export class Life extends EventEmitter {
     try {
       // Before it sleeps, memories that say the same thing are folded into one, in its own words, so they leave room.
       const folded = await this.foldMemories();
+      // the most striking of what it thought aloud today may be kept, if they win a place
+      const aloud = striking(this.aloudSince(from), [...SHELVES.flatMap((k) => s.memory.shelves[k].map((x) => x.text)), ...s.memory.today.map((x) => x.text)]);
+      for (const text of aloud) s.memory.today.push({ shelf: 'moments', text, weight: 0.35, cycle: s.cycle, about: '', because: [], aloud: true });
       const consolidation = consolidate(s.memory, s.cycle, cfg.memory);
       consolidation.moved = [...(this.refiled || []), ...consolidation.moved];
       // Its place weathers after the forgetting: what it no longer remembers stops holding things up.
@@ -1511,16 +1688,19 @@ export class Life extends EventEmitter {
       const numbers = mind.numbersLines(details);
       // lines about itself that all begin alike ("I learned that…"): it may reword more of them tonight
       const revisions = mind.sameOpening(s.self.own) ? 4 : 2;
+      const habits = this.habits();
       this.setPhase('rewriting', `becoming version ${version}`);
       const sleepRaw = await this.brain.complete({
         kind: 'sleep',
         system,
-        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal, numbers, folded, revisions }),
+        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal, numbers, folded, revisions, habits }),
         maxTokens: 1600,
         temperature: 0.7,
         schema: mind.SLEEP_SCHEMA,
       });
       const plan = mind.readSleep(sleepRaw.text, { revisions });
+      // what it decided about its habits stays with it, in its own words, until its next night
+      if (habits.length) s.self.habits = plan.habits ? { text: plan.habits, version } : null;
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
       // Its body comes once, on the first night it can be seen (or the next, if nothing it built could stand).
@@ -1565,7 +1745,8 @@ export class Life extends EventEmitter {
         dream,
         release: plan.release,
         day: plan.day,
-        memory: { ...consolidation, folded },
+        memory: { ...consolidation, folded, ...(aloud.length ? { aloud } : {}) },
+        ...(habits.length ? { habits: { counted: habits, decided: plan.habits || null } } : {}),
         self,
         portrait,
         name,
@@ -1596,6 +1777,8 @@ export class Life extends EventEmitter {
       if (mortal?.fading) this.milestone('first-fading', `It began to fade: nobody had written to it for ${quiet} nights.`);
 
       this.store.write(`nights/${pad(version, 4)}.json`, this.seal('night', version, record));
+      this.recall?.addNight(record);
+      this.recall?.addForgotten(s.memory.forgotten);
       // Each letter that left tonight carries the night's seal, so a pal can check it against the night that sent it.
       for (const o of s.outbox || []) if (o.night === version) o.seal = record.seal.hash;
       this.saveState();
@@ -1931,7 +2114,22 @@ export class Life extends EventEmitter {
         mode: this.palMode(),
         known: Object.values(s.pals || {})
           .filter((p) => p.id)
-          .map((p) => ({ name: p.name, page: p.page || null, received: p.received, sent: p.sent, resting: p.restUntil != null, fading: Boolean(p.fading), line: p.line?.text || null })),
+          .map((p) => {
+            const last = this.letters.filter((l) => l.pal?.id === p.id && letterStatus(l) === 'allowed').at(-1);
+            return {
+              name: p.name,
+              page: p.page || null,
+              received: p.received,
+              sent: p.sent,
+              resting: p.restUntil != null,
+              fading: Boolean(p.fading),
+              line: p.line?.text || null,
+              // a pal on this same card, and whether people can write to it themselves
+              card: this.housemates().some((h) => h.url === p.url),
+              open: p.open ?? null,
+              last: last ? { text: last.text, at: last.at, read: Boolean(last.readAt) } : null,
+            };
+          }),
         // Lines it wrote for its pals' children, in case they die (newest first).
         lines: (s.outbox || [])
           .filter((o) => o.kind === 'line' && o.sentAt)

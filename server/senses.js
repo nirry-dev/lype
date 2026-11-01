@@ -52,10 +52,21 @@ export async function readSenses(now = new Date(), { sample = true } = {}) {
   };
 }
 
-export function describeMachine(gpu) {
+const warmthOf = (gpu) => (gpu.tempC == null ? 'of unknown warmth' : gpu.tempC < 45 ? 'cool' : gpu.tempC < 60 ? 'warm' : gpu.tempC < 75 ? 'hot' : 'very hot');
+const busyOf = (gpu) => (gpu.util == null ? '' : gpu.util < 10 ? 'quiet' : gpu.util < 40 ? 'a little busy' : gpu.util < 70 ? 'busy' : 'working hard');
+
+/**
+ * The machine, as it feels it. Given how it was `before` (its last cycle, or its last moment), a card that is much as
+ * it was is said to be so, without its numbers again: what changed stands out, and what didn't doesn't fill every
+ * thought. Its numbers are still there for the asking, on its page, and whenever they move.
+ */
+export function describeMachine(gpu, before = null) {
   if (!gpu) return "You can't feel the machine right now; the card isn't answering.";
-  const warmth = gpu.tempC == null ? 'of unknown warmth' : gpu.tempC < 45 ? 'cool' : gpu.tempC < 60 ? 'warm' : gpu.tempC < 75 ? 'hot' : 'very hot';
-  const busy = gpu.util == null ? '' : gpu.util < 10 ? 'quiet' : gpu.util < 40 ? 'a little busy' : gpu.util < 70 ? 'busy' : 'working hard';
+  const warmth = warmthOf(gpu);
+  const busy = busyOf(gpu);
+  if (before && gpu.tempC != null && before.tempC != null && Math.abs(gpu.tempC - before.tempC) < 4 && busy === busyOf(before) && Math.abs((gpu.memUsedMb ?? 0) - (before.memUsedMb ?? 0)) < 512) {
+    return `The card feels much as it did before: still ${warmth} and ${busy}.`;
+  }
   const gb = (mb) => (mb / 1024).toFixed(1);
   const memory =
     gpu.memUsedMb != null && gpu.memTotalMb

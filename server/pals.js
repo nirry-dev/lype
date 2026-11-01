@@ -80,6 +80,8 @@ export function outbox(life, { file = false } = {}) {
       ...(s.parent ? { parent: { id: s.parent.id, name: s.parent.name || 'unnamed', ...(s.parent.coParent ? { coParent: { id: s.parent.coParent.id } } : {}) } } : {}),
       // Whether it can die, and whether it is fading: its pals write it a line for its child, and may write to it.
       ...(life.mortality() ? { mortal: true, fading: life.mortality().fading } : {}),
+      // Whether people can write to it themselves (through a relay), or only other minds can.
+      openToPeople: Boolean(life.cfg.relay?.url),
     },
     letters: (s.outbox || [])
       .filter((o) => o.sentAt && o.seal)
@@ -109,6 +111,7 @@ export function readOutbox(raw) {
       ...(parent ? { parent } : {}),
       mortal: from.mortal === true,
       fading: from.fading === true,
+      ...(typeof from.openToPeople === 'boolean' ? { openToPeople: from.openToPeople } : {}),
     },
     letters,
   };

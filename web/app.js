@@ -168,7 +168,7 @@ if (new URLSearchParams(location.search).has('embed')) document.documentElement.
 
 function snapshotFile(path) {
   const route = path.replace(/^\/?api\//, '').split('?')[0];
-  if (['state', 'journey', 'works', 'life', 'atlas', 'letters', 'world', 'errands', 'chain'].includes(route)) return `${SNAPSHOT}${route}.json`;
+  if (['state', 'journey', 'works', 'life', 'atlas', 'letters', 'world', 'errands', 'chain', 'thread', 'neighbor'].includes(route)) return `${SNAPSHOT}${route}.json`;
   const m = /^cycle\/(\d+|latest)$/.exec(route);
   if (m) return `${SNAPSHOT}cycles/${pad6(m[1] === 'latest' ? app.state.cycle : m[1])}.json`;
   const night = /^night\/(\d+)$/.exec(route);
@@ -500,6 +500,12 @@ function renderChrome() {
   }
   renderStatus();
   renderPowerBadge();
+  const mate = housemate();
+  const palTab = $('#pal-tab');
+  if (palTab) {
+    palTab.hidden = !mate;
+    if (mate) palTab.textContent = mate.name;
+  }
   if (app.admin) {
     $('[data-admin="pause"]').hidden = s.paused;
     $('[data-admin="resume"]').hidden = !s.paused;
@@ -510,7 +516,7 @@ function renderChrome() {
 
 // ---------- router ----------
 
-const VIEWS = { now: renderNow, replay: renderReplay, atlas: renderAtlas, place: renderPlace, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters, errands: renderErrands };
+const VIEWS = { now: renderNow, replay: renderReplay, atlas: renderAtlas, place: renderPlace, journey: renderJourney, mind: renderMind, memory: renderMemory, works: renderWorks, letters: renderLetters, errands: renderErrands, pal: renderPal };
 
 function route() {
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
@@ -637,6 +643,9 @@ function letterView(l) {
     ),
     l.errand?.look ? lookBlock(l.errand.look) : null,
     reply ? h('div', { class: 'reply-block' }, h('span', { class: 'label' }, `It wrote back${reply.cycle ? ` · cycle ${reply.cycle}` : ''}`), h('p', { class: 'voice' }, reply.text)) : null,
+    l.passedOn?.length
+      ? h('div', { class: 'influence' }, `↳ Something of this reached ${[...new Set(l.passedOn.map((p) => p.to))].join(' and ')}, in ${l.passedOn.length === 1 ? 'a letter' : 'letters'} that left on night ${l.passedOn.map((p) => p.night).join(', ')}.`)
+      : null,
     l.influenced?.length
       ? h(
           'div',
@@ -813,6 +822,7 @@ async function renderNow(current) {
             )
           : null,
         h('div', { class: 'card power-card', id: 'power-card', role: 'status' }),
+        h('div', { class: 'card pal-card', id: 'pal-card', hidden: true }),
         lifeCard(),
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('span', { class: 'label', id: 'thought-label' }), h('span', { class: 'meta', id: 'thought-meta' })), h('p', { class: 'monologue', id: 'monologue' }), h('p', { class: 'measured', id: 'measured' })),
         h('div', { class: 'card', id: 'making-card' }),
@@ -979,6 +989,7 @@ function updateNow({ streaming = false } = {}) {
     fill($('#phase-line'), h('span', { class: 'phase' }, PHASE_TITLE[s.phase] || s.phase), detail ? h('span', { class: 'phase-detail' }, detail) : null);
     fill($('#meters'), ...FEELINGS.map((f) => meter(f, s.mood[f])));
     renderPowerCard();
+    renderPalCard();
     renderSenses();
     renderBelow();
   }
@@ -1970,6 +1981,7 @@ function walkLook() {
     bodyLive: !SNAPSHOT && s.phase === 'embodying' ? app.live.body || '' : null,
     // between cycles, where it really is and what it said there (each viewer sees the same); otherwise it wanders
     about: !SNAPSHOT && s.phase === 'quiet' ? s.about || null : null,
+    palHolds: !SNAPSHOT && s.card?.who === 'pal',
   };
 }
 
@@ -2012,13 +2024,18 @@ async function renderPlace(current) {
         modes,
         walking ? [app.walkHost, app.walk ? null : placeMap(w)] : placeMap(w),
         walking
-          ? h('div', { class: 'place-legend' }, h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'click or Tab: read a sign'), h('span', {}, 'map: go there'))
+          ? h('div', { class: 'place-legend' }, h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'click or Tab: read a sign'), h('span', {}, 'map: go there'), housemate() ? h('span', {}, `east, a few streets away: ${housemate().name}'s town`) : null)
           : h('div', { class: 'place-legend' }, h('span', {}, 'faint: wearing away'), h('span', {}, 'cracked: a ruin'), h('span', {}, 'lines: what each thing was built beside'), h('span', {}, 'glow: where it was last')),
       ),
       h('aside', { class: 'place-side' }, h('div', { class: 'card' }, cardHead('Looking at'), h('div', { id: 'place-inspect' })), wishesCard(w)),
     ),
   );
   await app.walk?.show(w, walkLook());
+  // the pal it shares its card with: its place, past the edge of this one
+  if (app.walk && housemate()) {
+    app.neighbor ??= await api('/api/neighbor').catch(() => null);
+    app.walk?.neighbor(app.neighbor);
+  }
   selectThing(thingParam);
   if (app.params.has('wishes')) $('#wishes')?.scrollIntoView({ block: 'start' });
   updatePlaceLive();
@@ -2931,6 +2948,7 @@ async function renderLetters(current) {
     away ? h('p', { class: 'away-note' }, `${s.name || 'It'} is offline right now. Your letter waits for it at the door and reaches it as soon as it is back; then it reads it in its own time.`) : null,
     send,
     msg,
+    housemate() ? h('p', { class: 'hint' }, `${s.name || 'It'} also writes to ${housemate().name}, another mind on the same graphics card${housemate().open === false ? `, who hears from nobody else` : ''}. What you tell ${s.name || 'it'} may reach ${housemate().name}.`) : null,
     h('p', { class: 'hint' }, `It reads letters in its own time, usually within a cycle or two, and may write back. ${s.moderation === 'off' ? '' : 'Letters and replies are screened before anyone sees them; links and contact details are held. '}If you write again from this browser, it will know it is you.`),
   );
   form.addEventListener('submit', async (e) => {
@@ -3047,6 +3065,114 @@ function palsCard() {
     ),
     offered.map((k) => h('p', { class: 'meta' }, `${k.name} wrote a line for its child, in case it dies: `, h('span', { class: 'voice' }, `“${k.line}”`))),
     (p.lines || []).slice(0, 3).map((o) => h('p', { class: 'meta' }, `It wrote a line for ${o.toName}’s child, in case ${o.toName} dies: `, h('span', { class: 'voice' }, `“${o.text}”`))),
+  );
+}
+
+// ---------- the pal it shares its card with ----------
+
+/** The pen pal that lives on the same graphics card, if it has one (its page, whether people can write to it, its last letter). */
+const housemate = () => app.state?.pals?.known?.find((k) => k.card) || null;
+
+/** Who has the card right now, said for visitors; null when it is not known (a recording, say). */
+function cardHolder(s = app.state) {
+  const c = !SNAPSHOT ? s?.card : null;
+  if (!c || c.who === 'unknown') return null;
+  return c.who === 'self' ? s.name || 'it' : c.who === 'pal' ? c.name || 'its pen pal' : c.who === 'empty' ? 'nobody (the card is resting)' : "someone else's work";
+}
+
+/** What the two of them are to each other, told from this one's side (and whether you can write to either). */
+function palStory(pal, { card = true, open = null } = {}) {
+  const me = app.state.name || 'It';
+  const reachable = !SNAPSHOT || Boolean(RELAY); // can people write to this one, here?
+  if (!card) return h('p', {}, `${pal} is another mind like ${me}, on someone else's graphics card, that also knows the world only through letters. Their letters leave at night.`);
+  if (!reachable) {
+    const mate = housemate();
+    return h(
+      'p',
+      {},
+      `${me} and ${pal} live on the same graphics card. They take turns with it and can never meet; they write to each other, and their letters leave at night. Nobody can write to ${me} directly: its only letters are ${pal}'s. `,
+      mate?.page ? h('a', { href: mate.page, target: '_blank', rel: 'noopener' }, `Write to ${pal} ↗`) : `Write to ${pal}`,
+      `, and ${pal} may pass your words on.`,
+    );
+  }
+  return h(
+    'p',
+    {},
+    `${pal} is another mind living on the same graphics card as ${me}. They take turns with the card and can never meet; they write to each other, and their letters leave at night. `,
+    open === false ? `Nobody else can write to ${pal}: its only letters are ${me}'s. Write to ${me}, and what you say may reach ${pal}.` : '',
+  );
+}
+
+function renderPalCard() {
+  const card = $('#pal-card');
+  if (!card) return;
+  const k = housemate();
+  card.hidden = !k;
+  if (!k) return;
+  const s = app.state;
+  const me = s.name || 'It';
+  const holder = cardHolder();
+  fill(
+    card,
+    cardHead(`${k.name}, on the same card`, holder ? `on the card now: ${holder}` : null),
+    palStory(k.name, k),
+    k.last
+      ? h(
+          'div',
+          { class: 'pal-last' },
+          h('div', { class: 'from' }, `${k.name}'s last letter · ${dayTime(k.last.at)}${k.last.read ? '' : ` · ${me} has not opened it yet`}`),
+          h('p', { class: 'voice' }, k.last.text.length > 300 ? `${k.last.text.slice(0, 299).trimEnd()}…` : k.last.text),
+        )
+      : null,
+    h('p', { class: 'meta' }, `${s.pals?.waiting ? `${s.pals.waiting} letter${s.pals.waiting === 1 ? '' : 's'} from ${me} will leave` : 'Letters leave'} at ${me}'s next night, ${s.rhythm.untilNight} cycle${s.rhythm.untilNight === 1 ? '' : 's'} from now.`),
+    h('div', { class: 'pal-links' }, h('a', { class: 'btn', href: '#/pal' }, 'Read their letters'), k.page ? h('a', { class: 'btn', href: k.page, target: '_blank', rel: 'noopener' }, `${k.name}'s page ↗`) : null),
+  );
+}
+
+const DID_AFTER = { draw: 'drew', write: 'wrote', build: 'built', tend: 'tended', rest: 'rested', ask: 'asked visitors a question', errand: 'sent people on an errand' };
+
+/** Their correspondence as one thread, oldest first, each letter with what its reader did next. */
+async function renderPal(current) {
+  app.thread ??= await api('/api/thread').catch(() => []);
+  if (!current()) return;
+  const s = app.state;
+  const me = s.name || 'It';
+  const t = app.thread.find((x) => x.card) || app.thread[0];
+  if (!t) return fill($('#view'), h('p', { class: 'empty' }, 'It has no pen pal yet.'));
+  const holder = cardHolder();
+  const letter = (it) => {
+    const out = it.dir === 'out';
+    const after = out
+      ? it.wrote?.diary
+        ? [`Written in cycle ${it.wrote.cycle}. ${me}'s diary that cycle: `, h('q', {}, it.wrote.diary)]
+        : null
+      : it.read
+        ? [`${me} read this in cycle ${it.read.cycle}, then ${DID_AFTER[it.read.action] || it.read.action}${it.read.title ? ` “${it.read.title}”` : ''}. Its diary: `, h('q', {}, it.read.diary)]
+        : [`${me} has not opened this yet.`];
+    return h(
+      'article',
+      { class: `pal-letter ${out ? 'out' : 'in'}` },
+      h('div', { class: 'from' }, out ? `${me} to ${t.name}${it.first ? ' · its first letter' : ''} · left on night ${it.night}` : `${t.name} to ${me} · ${dayTime(it.at)}`),
+      h('p', { class: 'body voice' }, it.text),
+      after ? h('div', { class: 'after' }, ...after) : null,
+    );
+  };
+  fill(
+    $('#view'),
+    h(
+      'div',
+      { class: 'pal-view' },
+      h(
+        'section',
+        { class: 'card pal-intro' },
+        h('h2', {}, `${me} and ${t.name}`),
+        palStory(t.name, t),
+        holder && t.card ? h('p', { class: 'meta' }, `On the card right now: ${holder}.`) : null,
+        t.page ? h('a', { class: 'btn', href: t.page, target: '_blank', rel: 'noopener' }, `${t.name}'s own page ↗`) : null,
+      ),
+      h('section', { class: 'pal-thread' }, t.items.length ? t.items.map(letter) : h('p', { class: 'empty' }, 'They have not written to each other yet.')),
+      s.pals?.waiting ? h('p', { class: 'meta' }, `${s.pals.waiting} letter${s.pals.waiting === 1 ? '' : 's'} from ${me} waiting to leave tonight.`) : null,
+    ),
   );
 }
 

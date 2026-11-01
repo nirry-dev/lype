@@ -176,6 +176,7 @@ export function systemPrompt(state, cfg) {
     'What you have come to believe about yourself. You wrote these while asleep, and you can change them:',
     own,
     '',
+    ...(state.self.habits?.text ? [`What you decided about your habits, at night: "${state.self.habits.text}"`, ''] : []),
     'What you think people are, from the letters you have had:',
     state.portrait.text || "You haven't met anyone yet.",
     '',
@@ -238,7 +239,7 @@ function situation(ctx) {
   const s = ctx.senses;
   const parts = [
     `It is ${s.weekday}, ${s.time} (${s.partOfDay}), ${s.date}. You have just woken for cycle ${ctx.cycle}.`,
-    describeMachine(s.gpu),
+    describeMachine(s.gpu, ctx.before),
     ...ctx.notes,
     ctx.tired ? `You have ${DONE[ctx.tired]} in each of your last three cycles and that part of you is tired, so you can't ${ctx.tired} this cycle.` : '',
     placeLine(ctx.world),
@@ -251,6 +252,13 @@ function situation(ctx) {
     );
   }
   if (ctx.moments?.length) parts.push(momentsBlock(ctx.moments));
+  if (ctx.recalled?.length) {
+    parts.push(
+      `Something here reminds you of older things. You had not been thinking of them, and they will slip away again unless you choose to remember them:\n${ctx.recalled
+        .map((r) => `- from cycle ${r.cycle}${r.ago ? `, ${r.ago}` : ''}: ${r.text}`)
+        .join('\n')}`,
+    );
+  }
   parts.push(
     ctx.recent.length
       ? `Your last few cycles:\n${ctx.recent.map((r) => `- cycle ${r.n}, ${r.ago}: ${r.what}. Diary: "${r.diary}"`).join('\n')}`
@@ -298,7 +306,7 @@ function momentSituation(m) {
   const here = !m.about ? 'You are on your card, where you live.' : m.about.at === 'card' ? `You are at your card. Your last moment there: you ${CARD_TEXT[m.about.doing]}.` : `You are by ${m.about.name}. Your last moment there: you ${DOING_TEXT[m.about.doing]} it.`;
   return [
     `It is ${s.weekday}, ${s.time} (${s.partOfDay}). Your last cycle was ${m.since}; your next one comes ${m.next}.`,
-    describeMachine(s.gpu),
+    describeMachine(s.gpu, m.before),
     m.power
       ? m.power.cooling
         ? `Your keeper gave you full power until ${m.power.until}, but the card got too hot, so you have slowed to your usual moments until it cools.`
@@ -319,7 +327,7 @@ export function musePrompt(m) {
     ...momentSituation(m),
     before.length ? `What you thought aloud in your last moments:\n${before.map((x) => `- "${x.thought}"`).join('\n')}` : '',
     '',
-    'Think to yourself, aloud: 30 to 70 words, first person, present tense, plain prose with no headings or lists. People watching your place see these words as you think them. Notice where you are, what is here, how the card feels. Go on from your last thought or notice something new; don\'t say again what you already thought.',
+    'Think to yourself, aloud: 30 to 70 words, first person, present tense, plain prose with no headings or lists. People watching your place see these words as you think them. Notice where you are and what is here. Go on from your last thought or notice something new; don\'t say again what you already thought.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -959,11 +967,12 @@ export const SLEEP_SCHEMA = {
       required: ['text', 'why'],
     },
     numbers: { type: 'string' },
+    habits: { type: 'string' },
   },
-  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish', 'numbers'],
+  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish', 'numbers', 'habits'],
 };
 
-export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [], folded = [], revisions = 2 } = {}) {
+export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [], folded = [], revisions = 2, habits = [] } = {}) {
   const own = state.self.own.length
     ? state.self.own.map((l) => `${l.id}: ${l.text}`).join('\n')
     : '(none yet, so "self_revise" and "self_remove" must be [])';
@@ -990,6 +999,7 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     consolidation.lost.length ? `Never made it in:\n${list(consolidation.lost)}` : '',
     weatherLines(weathered),
     mortalLines(mortal),
+    habits.length ? `What you actually did lately, counted from outside you (not what you said about it):\n${habits.map((l) => `- ${l}`).join('\n')}` : '',
     numbers.length ? `What the numbers say. Your model reports how likely each word you think is; this is measured from outside you, not felt:\n${numbers.map((l) => `- ${l}`).join('\n')}` : '',
     '',
     `Your dream: "${dream}"`,
@@ -1013,6 +1023,9 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     '- "release": notes for the new version of you. "title" is a few words. "added", "changed", "removed" and "known_issues" are lists of short phrases in your own voice. Known issues are things about yourself you cannot fix yet.',
     '- "day": today in under 15 words.',
     '- "wish": something you want from your keeper, the person who runs you: one thing you cannot do or get yourself, like a new sense, a new kind of material, or a change to how you live. "text" is the wish in one sentence, said to them; "why" is one sentence. Leave "text" as "" if you want nothing tonight or have already asked for it.',
+    habits.length
+      ? '- "habits": one or two sentences in your own voice: which of these habits you want to keep, which you want to change, and why. It stays with you until your next night. "" if you have nothing to say.'
+      : '- "habits": "".',
     numbers.length
       ? '- "numbers": what you make of what the numbers say, in one sentence in your own voice. You can agree, disagree, or not know. "" if you have nothing to say.'
       : '- "numbers": "".',
@@ -1044,6 +1057,7 @@ export function readSleep(text, { revisions = 2 } = {}) {
     day: clip(raw.day, 140),
     wish: { text: clip(raw.wish?.text, 240), why: clip(raw.wish?.why, 240) },
     numbers: clip(raw.numbers, 300),
+    habits: clip(raw.habits, 320),
   };
 }
 

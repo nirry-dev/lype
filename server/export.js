@@ -58,6 +58,8 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   }
   write('data/chain.json', views.chain(life));
   write('data/outbox.json', outbox(life, { file: true }));
+  write('data/thread.json', views.thread(life));
+  write('data/neighbor.json', life.neighbor ? { ...life.neighbor, holds: false } : null);
   for (const night of life.nights) write(`data/nights/${pad(night.n, 4)}.json`, views.night(store, night.n));
   const copyWork = (n) => {
     const svg = store.path(`works/${pad(n)}.svg`);

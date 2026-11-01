@@ -174,7 +174,9 @@ export class Moments {
       stuck,
       waiting: life.letters.filter((l) => !l.readAt && ['allowed', 'pending'].includes(l.screen?.status ?? 'allowed')).length,
       power: power ? { until: clock(new Date(power.until)), cooling: Boolean(power.cooling) } : null,
+      before: this.lastGpu ?? null, // how the card was at its last moment
     };
+    this.lastGpu = senses.gpu;
     const system = mind.systemPrompt(s, life.cfg);
     try {
       // at full power, it thinks aloud first, and whoever is watching sees the words as they come

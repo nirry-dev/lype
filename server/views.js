@@ -1,5 +1,5 @@
 // What the public may see of a life. Shared by the live server and the static export, so both hide the same things.
-import { letterStatus, publicCycle, publicLetter, publicLook, publicWish } from './life.js';
+import { influencedBy, letterStatus, publicCycle, publicLetter, publicLook, publicWish } from './life.js';
 import { publicSeal } from '../web/lib/seal.js';
 import { pad } from './store.js';
 import { borrowed, loadCatalogue } from './models.js';
@@ -120,10 +120,42 @@ export function errands(life) {
 
 /** Letters the public may read, newest first; a visitor also sees their own letters with their screening status. */
 export function letters(life, me = null) {
+  const sent = (life.state.outbox || []).filter((o) => o.sentAt && o.kind !== 'line' && !o.held);
   return life.letters
     .filter((l) => letterStatus(l) === 'allowed' || (me && l.person === me))
-    .map((l) => ({ ...publicLetter(l, { own: Boolean(me && l.person === me) }), mine: Boolean(me && l.person === me) }))
+    .map((l) => {
+      // a person's letter whose words it carried on to a pen pal, in a letter written after it read it
+      const read = l.readAt && !l.pal ? life.cycles.find((c) => c.letters.includes(l.id))?.n : null;
+      const passed = read ? sent.filter((o) => o.cycle >= read && influencedBy(l, o.text)).map((o) => ({ to: o.toName, night: o.night })) : [];
+      return { ...publicLetter(l, { own: Boolean(me && l.person === me) }), mine: Boolean(me && l.person === me), ...(passed.length ? { passedOn: passed } : {}) };
+    })
     .reverse();
+}
+
+/**
+ * Its correspondence with each pen pal as one thread, oldest first: the letters it opened from them (and what it did
+ * in the cycle it read each one), and the letters it sent them (and what it wrote in its diary the cycle it wrote each).
+ */
+export function thread(life) {
+  const s = life.state;
+  const mates = new Set(life.housemates().map((h) => h.url));
+  return Object.values(s.pals || {})
+    .filter((p) => p.id)
+    .map((p) => {
+      const ins = life.letters
+        .filter((l) => l.pal?.id === p.id && letterStatus(l) === 'allowed')
+        .map((l) => {
+          const c = l.readAt ? life.cycles.find((x) => x.letters.includes(l.id)) : null;
+          return { dir: 'in', id: l.id, ref: l.pal.letter, text: l.text, at: l.at, read: c ? { cycle: c.n, action: c.action, title: c.title || '', diary: c.diary } : null };
+        });
+      const outs = (s.outbox || [])
+        .filter((o) => o.to === p.id && o.sentAt && o.kind !== 'line' && !o.held)
+        .map((o) => {
+          const c = life.cycles.find((x) => x.n === o.cycle);
+          return { dir: 'out', id: o.id, ref: o.id, inReplyTo: o.inReplyTo || null, text: o.text, at: o.sentAt, night: o.night, first: Boolean(o.first), wrote: c ? { cycle: c.n, diary: c.diary } : null };
+        });
+      return { name: p.name, page: p.page || null, card: mates.has(p.url), open: p.open ?? null, items: [...ins, ...outs].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) };
+    });
 }
 
 /** The whole life in order, for replay: every cycle as the public may see it (drawings by path), and every night. */

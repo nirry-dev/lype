@@ -197,6 +197,8 @@ async function api(req, res, url) {
   if (path === '/api/life' && method === 'GET') return json(res, 200, views.replay(life, store));
   if (path === '/api/atlas' && method === 'GET') return json(res, 200, views.atlas(life, store));
   if (path === '/api/world' && method === 'GET') return json(res, 200, views.world(life));
+  if (path === '/api/thread' && method === 'GET') return json(res, 200, views.thread(life));
+  if (path === '/api/neighbor' && method === 'GET') return json(res, 200, life.neighbor ? { ...life.neighbor, holds: life.card?.who === 'pal' } : null);
 
   if (path === '/api/letters' && method === 'GET') {
     return json(res, 200, views.letters(life, visitorId(url.searchParams.get('visitor'))));

@@ -811,6 +811,11 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   const labels = document.createElement('div');
   labels.className = 'walk-labels';
   labels.setAttribute('aria-hidden', 'true');
+  const neighborLabel = document.createElement('a'); // the pal it shares its card with, over its town; opens its page
+  neighborLabel.className = 'walk-label neighbor';
+  neighborLabel.target = '_blank';
+  neighborLabel.rel = 'noopener';
+  neighborLabel.hidden = true;
   const sayLabel = document.createElement('div'); // what it says in a moment, over its head for a while
   sayLabel.className = 'walk-label say';
   sayLabel.hidden = true;
@@ -823,7 +828,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   focus.className = 'walk-focus';
   host.append(canvas, focus, labels, mini);
   selfLabel.className = 'walk-label self';
-  labels.append(selfLabel, sayLabel);
+  labels.append(selfLabel, sayLabel, neighborLabel);
 
   const gl = canvas.getContext('webgl', { antialias: true, premultipliedAlpha: false, alpha: true });
   if (!gl) {
@@ -993,6 +998,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   // Where it is and where it is going: a spot on the ground (x, z), a height it floats at, which way it faces.
   const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };
   let said = null; // its words from its last moment: { text, n, until } (shown from when it gets there)
+  // A pal that shares its graphics card: its town, faint, past the edge of this one, lit while it has the card.
+  let neighbor = null; // { name, page, at: [x, z] (its card), things: [{ pos, placed }] }
   let saidTimer = 0;  const keys = new Set();
   let fan = 0;
   let raf = 0;
@@ -1257,6 +1264,24 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
         solid(q.p.shape, at, q.size, q.color, { yaw: q.yaw, glow: q.glow ? night * 0.9 : 0 });
         if (q.glow && night > 0.25) glows.push({ at: [at[0], at[1] + q.size[1] / 2, at[2]], r: q.size[0], color: q.color });
       }
+    }
+
+    // the pal it shares the card with: its town past the edge of this one, faint, and lit while it has the card
+    if (neighbor) {
+      const holds = Boolean(look.palHolds);
+      gl.uniform1f(prog.uLight, light);
+      draw(mat.model(neighbor.groundAt, 0, 0, neighbor.groundSize), meshes.flat, neighbor.tex, [0.9, 0.9, 0.95, 0.9], { depthWrite: false });
+      for (const th of neighbor.things) {
+        for (const q of th.placed) {
+          const at = [th.pos[0] + q.at[0], q.at[1], th.pos[2] + q.at[2]];
+          const color = q.color.map((c) => c * 0.55 + 0.08);
+          solid(q.p.shape, at, q.size, color, { yaw: q.yaw, tilt: q.tilt, glow: q.glow || holds ? (holds ? 0.35 : 0) + night * 0.4 : 0, points: q.p.points });
+        }
+      }
+      gl.uniform1f(prog.uLight, 1);
+      halo([neighbor.at[0], 0.02, neighbor.at[2]], holds ? 1.6 : 1, holds ? [1, 0.82, 0.55] : [0.6, 0.65, 0.75], holds ? 0.45 + night * 0.3 : 0.12);
+      if (holds) spark([neighbor.at[0], 0.5, neighbor.at[2]], 1.4, [1, 0.85, 0.6], 0.35 + night * 0.3);
+      gl.uniform1f(prog.uLight, light);
     }
 
     // while it builds: its lot marked out, and the parts it has written so far rising into place
@@ -1681,6 +1706,15 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
         selfLabel.textContent = look.name;
         selfLabel.style.transform = `translate(${((x + 1) / 2) * w}px, ${((1 - y) / 2) * h}px) translate(-50%, -100%)`;
       }
+      if (neighbor) {
+        const [nx, ny, nz, nd] = mat.apply(vp, [neighbor.at[0], 1.1, neighbor.at[2]]);
+        const seen = nd > 0 && nz < 1 && Math.abs(nx) < 1.05 && Math.abs(ny) < 1.05;
+        neighborLabel.hidden = !seen;
+        if (seen) {
+          neighborLabel.textContent = `${neighbor.name}${look.palHolds ? ' · has the card now' : ''}${neighbor.page ? ' ↗' : ''}`;
+          neighborLabel.style.transform = `translate(${((nx + 1) / 2) * w}px, ${((1 - ny) / 2) * h}px) translate(-50%, -100%)`;
+        }
+      }
       const speaking = Boolean(said?.until) && performance.now() < said.until && look.about?.n === said.n && depth > 0 && z < 1 && Math.abs(x) < 1.1 && Math.abs(y) < 1.1;
       sayLabel.hidden = !speaking;
       if (speaking) {
@@ -1938,6 +1972,38 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   return {
     show,
     building,
+    /**
+     * The pal it shares the card with, as that pal shows its place: drawn past the east edge of this town, a few
+     * streets away, faint. Null takes it away.
+     */
+    neighbor(n) {
+      if (neighbor?.tex) gl.deleteTexture(neighbor.tex);
+      neighbor = null;
+      if (n?.world?.things && world) {
+        const nw = n.world;
+        const east = Math.max(world.card.x, ...world.things.map((t) => t.x)) - world.card.x;
+        // its nearest lot two empty streets past the east edge of this town
+        const ox = (east + 4 - Math.min(0, ...nw.things.map((t) => t.x - nw.card.x))) * PITCH;
+        const pos = (p) => [ox + (p.x - nw.card.x) * PITCH, 0, (p.y - nw.card.y) * PITCH];
+        const margin = 2;
+        const gw = nw.w + margin * 2;
+        const gh = nw.h + margin * 2;
+        neighbor = {
+          name: n.name || 'its neighbour',
+          page: n.page || null,
+          at: pos(nw.card),
+          tex: texture(groundTexture(nw, margin)),
+          groundAt: [ox + (gw / 2 - nw.card.x - margin - 0.5) * PITCH, -0.01, (gh / 2 - nw.card.y - margin - 0.5) * PITCH],
+          groundSize: [gw * PITCH, 1, gh * PITCH],
+          things: nw.things.filter((t) => t.form?.parts?.length && !t.ruin).map((t) => ({ pos: pos(t), placed: placedParts(t, t.form, dimsOf) })),
+        };
+        if (n.page) neighborLabel.href = n.page;
+        else neighborLabel.removeAttribute('href');
+      }
+      neighborLabel.hidden = !neighbor;
+      dirty = true;
+      schedule();
+    },
     /** What it is doing now, its body, its name: it goes where that takes it. */
     setLook(next) {
       if (next.bodyLive == null) creature.born = [];

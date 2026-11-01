@@ -27,7 +27,7 @@ export function similarity(a, b) {
 // Numbers (as digits or words) don't make two memories different: "fifty-six degrees makes corners weep" and
 // "fifty-nine degrees makes corners weep" are the same memory.
 const NUMBER = /^(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|point|\d+(?:\.\d+)?)$/;
-const gist = (text) => new Set([...words(String(text).replace(/-/g, ' '))].filter((w) => !NUMBER.test(w) && w !== 'learned'));
+export const gist = (text) => new Set([...words(String(text).replace(/-/g, ' '))].filter((w) => !NUMBER.test(w) && w !== 'learned'));
 
 /** How alike two memories are, numbers aside, 0..1. */
 export function kin(a, b) {
@@ -97,9 +97,37 @@ export function alike(list) {
   return [...groups.values()].filter((g) => g.length >= 3);
 }
 
+/**
+ * The most striking lines of what it thought aloud (at full power): sentences unlike anything it already holds or
+ * anything else picked, and not just a temperature again. At most `max`, as memories it could keep tonight.
+ */
+export function striking(thoughts, held, max = 3) {
+  const chosen = [];
+  const sentences = [...new Set(thoughts.flatMap((t) => String(t).split(/(?<=[.?])\s+/)).map((x) => x.trim()))];
+  const scored = sentences
+    .filter((x) => x.length >= 25 && x.length <= 200 && ![...words(x.replace(/-/g, ' '))].some((w) => NUMBER.test(w)))
+    .map((x) => ({ x, near: Math.max(0, ...held.map((h) => kin(h, x))) }))
+    .filter((c) => c.near < THEME)
+    .sort((a, b) => a.near - b.near || b.x.length - a.x.length);
+  for (const { x } of scored) {
+    if (chosen.length >= max) break;
+    if (chosen.every((c) => kin(c, x) < THEME)) chosen.push(x);
+  }
+  return chosen;
+}
+
+/**
+ * A memory of how the card read (a temperature, how busy it was, how much memory it held): weather rather than history.
+ * Such memories fade twice as fast as the rest, unless something keeps bringing them back.
+ */
+export function sensation(text) {
+  const w = String(text).toLowerCase().replace(/-/g, ' ').match(/[a-z]+|\d+(?:\.\d+)?/g) || [];
+  return w.some((x) => NUMBER.test(x)) && w.some((x) => /^(degrees?|gigabytes?|percent|busy|celsius)$/.test(x));
+}
+
 export function strength(m, cycle, halfLife) {
   const age = Math.max(0, cycle - (m.touched ?? m.born ?? cycle));
-  return m.weight * 0.5 ** (age / halfLife);
+  return m.weight * 0.5 ** (age / (m.sensation ? halfLife / 2 : halfLife));
 }
 
 export function emptyMemory() {
@@ -130,7 +158,8 @@ export function consolidate(memory, cycle, { shelfSize, halfLifeCycles }) {
     return gone;
   };
 
-  // Memories that have decayed to almost nothing slip away on their own.
+  // Memories that have decayed to almost nothing slip away on their own (how the card read fades faster).
+  for (const shelf of SHELVES) for (const m of memory.shelves[shelf]) m.sensation ??= sensation(m.text);
   for (const shelf of SHELVES) {
     memory.shelves[shelf] = memory.shelves[shelf].filter((m) => {
       if (strength(m, cycle, halfLifeCycles) >= 0.05) return true;
@@ -178,6 +207,7 @@ export function consolidate(memory, cycle, { shelfSize, halfLifeCycles }) {
       touches: 0,
       about: c.about || '',
       because: c.because || [],
+      ...(sensation(c.text) ? { sensation: true } : {}),
     });
 
     if (shelf.length < shelfSize) {
