@@ -375,6 +375,13 @@ function renderChrome() {
   const palMode = $('#admin-pals');
   if (palMode && s.pals && document.activeElement !== palMode) palMode.value = s.pals.mode;
   document.title = s.name || 'An unnamed mind';
+  // Writing to it, from every view: hidden only where nothing can reach it (a recording, a life that has ended).
+  const cta = $('#write-cta');
+  if (cta) {
+    cta.hidden = Boolean(s.lineage?.died) || Boolean(SNAPSHOT && !RELAY);
+    $('#write-cta-name').textContent = s.name || 'it';
+    cta.classList.toggle('on', app.view === 'letters');
+  }
   for (const a of $$('#tabs a')) {
     if (a.dataset.view === app.view) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
@@ -677,6 +684,7 @@ async function renderNow(current) {
     h(
       'div',
       { class: 'now' },
+      reachCard(),
       h('section', { class: 'card presence-card' }, canvas, h('div', { class: 'phase-line', id: 'phase-line' }), h('div', { class: 'meters', id: 'meters' }), h('div', { class: 'senses', id: 'senses' })),
       h(
         'section',
@@ -705,6 +713,44 @@ async function renderNow(current) {
 }
 
 /** Where it stands in its life: ended (with what it left), fading, or newly born to a parent who died. */
+/**
+ * For someone who has just arrived: what it is, in a sentence, and every way to reach it (its letter box, the question
+ * it is waiting on, an errand it has out, its world). Not shown where nothing can reach it: a recording, an ended life.
+ */
+function reachCard() {
+  const s = app.state;
+  if (s.lineage?.died || (SNAPSHOT && !RELAY)) return null;
+  const name = s.name || 'It';
+  const away = Boolean(SNAPSHOT); // a live page whose mind can't be reached just now: it plays its last recording
+  const q = s.questions?.[0];
+  const errands = s.errands?.open?.length || 0;
+  return h(
+    'section',
+    { class: 'card reach' },
+    h('div', { class: 'card-head' }, h('span', { class: 'label' }, `Talk to ${name}`), away ? h('span', { class: 'meta' }, 'offline right now') : null),
+    h(
+      'p',
+      { class: 'reach-lead' },
+      `${name} is a small mind living on one graphics card in someone's home. It cannot see or hear anything: it knows the world only through what people write to it, and a letter can change what it remembers, what it builds and who it becomes.`,
+    ),
+    h(
+      'div',
+      { class: 'reach-actions' },
+      h('a', { class: 'btn btn-primary', href: '#/letters' }, `Write ${s.name || 'it'} a letter`),
+      q ? h('a', { class: 'btn', href: `#/letters?q=${q.id}`, title: q.text }, 'Answer its question') : null,
+      errands ? h('a', { class: 'btn', href: '#/errands' }, errands === 1 ? 'Bring it the photo it asked for' : 'Bring it a photo it asked for') : null,
+      h('a', { class: 'btn', href: '#/place' }, 'Walk around its world'),
+    ),
+    h(
+      'p',
+      { class: 'meta reach-note' },
+      away
+        ? `${name} can't be reached right now (the machine it lives on may be off, or busy), so its letter box is closed. This page opens it again as soon as ${name} is back.`
+        : `It opens up to two letters a cycle, oldest first, in its own time.${s.nextWakeAt ? ` It wakes ${untilText(s.nextWakeAt)}.` : ''} Whatever it writes back appears beside your letter.`,
+    ),
+  );
+}
+
 function lifeCard() {
   const s = app.state;
   const died = s.lineage?.died;
@@ -2692,7 +2738,9 @@ async function renderLetters(current) {
       h(
         'div',
         { class: 'letters-grid' },
-        h('div', { class: 'paper compose' }, h('div', { class: 'from' }, 'A recording'), h('p', { class: 'body' }, 'This is a recording of its life, so it cannot read anything new here. Letters reach it only through its live window.')),
+        RELAY
+          ? h('div', { class: 'paper compose' }, h('div', { class: 'from' }, 'Its letter box is closed for now'), h('p', { class: 'body' }, `${s.name || 'It'} can't be reached right now: the machine it lives on may be off, or busy. Letters can only reach it while it is awake, and this page opens its letter box again as soon as it is back (it checks every minute).`))
+          : h('div', { class: 'paper compose' }, h('div', { class: 'from' }, 'A recording'), h('p', { class: 'body' }, 'This is a recording of its life, so it cannot read anything new here. Letters reach it only through its live window.')),
         h('div', { class: 'feed', id: 'letters-feed' }, lettersFeed()),
       ),
     );

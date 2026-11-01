@@ -426,6 +426,21 @@ main {
   gap: 18px;
   min-width: 0;
 }
+/* Wide: the way to reach it sits top right, beside its light; narrow, it comes first. */
+@media (min-width: 981px) {
+  .now > .reach {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .now > .presence-card {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+  .now > .reach ~ .inside {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}
 .making {
   display: grid;
   grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
@@ -578,6 +593,53 @@ main {
   background: color-mix(in srgb, var(--mind) 14%, var(--bg-3));
   color: var(--text);
   font-weight: 600;
+}
+/* Writing to it: a button in the header on every view, and a card for someone who has just arrived. */
+.write-cta {
+  flex: none;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--mind) 55%, var(--line-2));
+  background: color-mix(in srgb, var(--mind) 20%, var(--bg-3));
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.write-cta:hover {
+  background: color-mix(in srgb, var(--mind) 30%, var(--bg-3));
+}
+.write-cta.on {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mind) 35%, transparent);
+}
+.write-cta[hidden] {
+  display: none;
+}
+.reach {
+  border-color: color-mix(in srgb, var(--mind) 35%, var(--line));
+  background: linear-gradient(160deg, color-mix(in srgb, var(--mind) 9%, var(--bg-2)), var(--bg-2) 70%);
+}
+.reach-lead {
+  margin: 4px 0 0;
+  color: var(--text);
+  font: 17px/1.5 var(--serif);
+}
+.reach-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+.reach-actions .btn {
+  display: inline-block;
+  padding: 8px 14px;
+  font-size: 14px;
+  color: var(--text);
+  text-decoration: none;
+}
+.reach-note {
+  margin: 0;
 }
 .ribbon {
   display: flex;
@@ -1354,7 +1416,12 @@ dialog::backdrop {
   }
   .status {
     margin-left: auto;
-    max-width: 52vw;
+    max-width: 34vw;
+  }
+  .write-cta {
+    order: 2;
+    padding: 6px 12px;
+    font-size: 13px;
   }
   .version {
     grid-template-columns: 1fr;
@@ -2177,5 +2244,17 @@ a.btn {
   .walk-mini {
     left: 8px;
     bottom: 8px;
+  }
+}
+
+/* A phone: the header keeps its name and the way to write to it; its status (said again just below) is only a dot. */
+@media (max-width: 480px) {
+  .status .status-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
