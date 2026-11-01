@@ -494,9 +494,10 @@ function placedParts(t, form, dimsOf = () => null) {
 
 /**
  * @param {HTMLElement} host  an element to fill (it gets a canvas, a minimap and a layer of name labels)
- * @param {{ asset: (path: string) => string, onSelect: (id: string | null) => void }} opts
+ * @param {{ asset: (path: string) => string, onSelect: (id: string | null) => void, models?: string }} opts  `models`: where the
+ *   borrowed models' catalogue and meshes are served from (default: models/ beside the page)
  */
-export function createWalk(host, { asset, onSelect }) {
+export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/' }) {
   const canvas = document.createElement('canvas');
   canvas.className = 'walk-canvas';
   canvas.tabIndex = 0;
@@ -550,7 +551,7 @@ export function createWalk(host, { asset, onSelect }) {
     if (!ref.includes('/')) {
       if (names === null) {
         names = 'loading';
-        fetch('models/catalogue.json')
+        fetch(`${modelsAt}catalogue.json`)
           .then((r) => r.json())
           .then((c) => {
             names = new Map(c.models.map((m) => [m.name, m.id]));
@@ -564,7 +565,7 @@ export function createWalk(host, { asset, onSelect }) {
     const got = models.get(id);
     if (got) return typeof got === 'object' ? got : null;
     models.set(id, 'loading');
-    fetch(`models/${id}.bin`)
+    fetch(`${modelsAt}${id}.bin`)
       .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
       .then((buf) => {
         const { v, col, dims } = unpackModel(buf);
