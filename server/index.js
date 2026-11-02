@@ -41,7 +41,8 @@ const PAGE_CSP = [
   "img-src 'self' data:",
   "connect-src 'self'",
   "base-uri 'none'",
-  "frame-ancestors 'none'",
+  // only the local apps its keeper named (config framedBy) may show it in their windows
+  `frame-ancestors ${(cfg.framedBy || []).filter((o) => /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(o)).join(' ') || "'none'"}`,
 ].join('; ');
 
 // ---------- helpers ----------

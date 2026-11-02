@@ -100,6 +100,9 @@ const DEFAULTS = {
     // The site that copy lives on, linked at the left of its header as a way back ({ url, name }; "" url = no link).
     home: { url: '', name: '' },
   },
+  // Apps on this machine that may show its page inside their own window (origins like "http://127.0.0.1:8190", the Nirry
+  // app's Lab › Lype). Nothing else may frame it.
+  framedBy: [],
   relay: {
     // A relay (relay/, a Cloudflare Worker) it dials out to, so a static site can follow it live and visitors can write
     // to it without anyone reaching this machine. "" = none. The token is a shared secret, also set on the relay.
