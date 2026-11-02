@@ -106,3 +106,14 @@ test('reading a letter from someone nothing in its place comes from, it is told 
   assert.doesNotMatch(ask([letter('Teo', false)]), /Nothing in your place comes from/);
   assert.doesNotMatch(ask([letter('Yzri', true)], 0), /Nothing in your place comes from/, 'with nothing built it is told that instead');
 });
+
+test('it is told what it saw in a photo sent with a letter, before it reads the words', async () => {
+  const mind = await import('../server/mind.js');
+  const base = { cycle: 40, tired: null, habits: { total: 0 }, errands: { canPost: false }, senses: { weekday: 'Monday', time: '10:00', partOfDay: 'morning', date: '2026-11-02', gpu: null }, notes: [], waiting: 0, questions: [], recent: [] };
+  const letter = (look) => ({ id: 'L4', from: 'Ines', text: 'My window.', nth: 1, remembered: [], photo: { look } });
+  const ask = (l) => mind.actPrompt({ ...base, world: { count: 0, standing: 0 }, letters: [l] }, 'thinking');
+  assert.match(ask(letter({ see: 'A grey roof under rain.' })), /They sent a photo with it, to show you something, and you looked at it before you read\. What you saw: A grey roof under rain\./);
+  assert.match(ask(letter({ failed: true })), /They sent a photo with it, to show you something, but you could not make anything of it\./);
+  assert.match(mind.lookPrompt(null, { from: 'Ines', text: 'My window.' }), /Ines sent you a letter with a photo[\s\S]*they begin: "My window\."/);
+  assert.doesNotMatch(mind.lookPrompt(null, { from: 'Ines', text: 'My window.' }), /"answers"/);
+});

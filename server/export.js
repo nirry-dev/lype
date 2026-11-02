@@ -55,17 +55,19 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   };
   write('data/state.json', state);
   write('data/journey.json', life.journey());
-  write('data/letters.json', views.letters(life));
+  const letters = views.letters(life);
+  write('data/letters.json', letters);
   write('data/works.json', views.works(life, store));
   write('data/life.json', views.replay(life, store));
   write('data/atlas.json', views.atlas(life, store));
   write('data/world.json', views.world(life));
   const errands = views.errands(life);
   write('data/errands.json', errands);
-  for (const r of errands.flatMap((e) => e.returns)) {
-    if (!r.photo) continue;
+  // the photos people brought back for its errands or sent with a letter (only those its keeper let through)
+  for (const photo of [...errands.flatMap((e) => e.returns).map((r) => r.photo), ...letters.map((l) => l.photo)]) {
+    if (!photo) continue;
     mkdirSync(join(out, 'data/returns'), { recursive: true });
-    copyFileSync(store.path(r.photo), join(out, `data/${r.photo}`));
+    copyFileSync(store.path(photo), join(out, `data/${photo}`));
   }
   write('data/chain.json', views.chain(life));
   write('data/outbox.json', outbox(life, { file: true }));

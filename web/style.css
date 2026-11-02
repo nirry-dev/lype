@@ -2309,7 +2309,7 @@ a.btn {
   margin-top: 14px;
   max-width: 560px;
 }
-.errand-form input[type='file'] {
+.compose input[type='file'] {
   color: var(--ink-2);
   font: 13px var(--sans);
 }

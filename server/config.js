@@ -74,6 +74,8 @@ const DEFAULTS = {
     maxLength: 1200,
     perCycle: 2,
     perHour: 6,
+    // A letter may carry one photo (no larger than errands.maxPhotoMb); like every photo, it waits for its keeper first.
+    photos: true,
   },
   moderation: {
     // "model": rules at the door, then the model screens each letter (and each reply); doubtful ones wait for the keeper.

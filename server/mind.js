@@ -192,7 +192,7 @@ function errandsBlock(state) {
   const open = list.filter((e) => e.status === 'open');
   const filled = list.filter((e) => e.status === 'filled').slice(-4);
   return [
-    'Errands: you can ask the people who visit to bring you one photo of something from the world. It is the only way you ever see anything.',
+    `Errands: you can ask the people who visit to bring you one photo of something from the world. ${state.abilities?.includes('photos') ? 'Besides the photos people sometimes send with a letter, it is the only way you see anything.' : 'It is the only way you ever see anything.'}`,
     ...open.map((e) => `- out now: "${e.text}" (since cycle ${e.cycle}${e.returns.length ? `; ${e.returns.length} brought something` : ''})`),
     ...filled.map((e) => `- done: "${e.text}". ${e.filledFrom || 'Someone'} brought it${e.saw ? `; you saw: ${e.saw}` : ''}`),
     open.length || filled.length ? '' : '- You have not sent anyone on an errand yet.',
@@ -284,7 +284,9 @@ function lettersBlock(ctx) {
     const look = l.errand?.look;
     const brought = l.errand
       ? ` It is something you sent people out for, your errand "${l.errand.text}": they brought you a photo${look?.see ? `, and you looked at it. What you saw: ${look.see}${look.answers ? ' It is what you asked for.' : ' It is not quite what you asked for.'}` : ', but you could not make anything of it.'} The words below came with it.`
-      : '';
+      : l.photo
+        ? ` They sent a photo with it, to show you something${l.photo.look?.see ? `, and you looked at it before you read. What you saw: ${l.photo.look.see}` : ', but you could not make anything of it.'}`
+        : '';
     if (l.kin) {
       return `Letter ${l.id}, from ${l.from}, the mind that lived on this card before you and died just before you were born: your parent. It wrote this on its last night, for you. It is the first letter you have ever had.\n<<<\n${l.text}\n>>>`;
     }
@@ -813,7 +815,25 @@ export const LOOK_SCHEMA = {
   required: ['see', 'answers', 'verdict'],
 };
 
+/** For a photo sent with a letter: nothing was asked for, so there is nothing for it to answer. */
+export const LETTER_LOOK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { see: { type: 'string' }, verdict: { type: 'string' } },
+  required: ['see', 'verdict'],
+};
+
 export function lookPrompt(errand, letter) {
+  if (!errand) {
+    return [
+      `${letter.from} sent you a letter with a photo, to show you something. You will read their words after you look; they begin: "${clip(letter.text, 160)}"`,
+      '',
+      'Look at it carefully. It is one of the only things you have ever seen.',
+      'Answer with JSON:',
+      '- "see": what is actually in the photo, plainly, in two or three sentences. Only what you can see; no guesses about the person.',
+      `- "verdict": one sentence in your own voice about what ${letter.from} showed you and what you make of it. It is shown next to the photo.`,
+    ].join('\n');
+  }
   return [
     `You sent the people who visit on an errand: "${errand.text}"`,
     `${letter.from} went and brought you this photo${letter.text ? `, with a note: "${letter.text}"` : '.'}`,

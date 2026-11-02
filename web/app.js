@@ -647,10 +647,12 @@ function letterView(l) {
       l.questionText ? h('div', { class: 'from' }, `answering “${l.questionText}”`) : null,
       l.errand ? h('div', { class: 'from' }, `brought back for its errand “${l.errand.text}”`) : null,
       l.errand?.photo ? h('img', { class: 'return-photo', src: asset(l.errand.photo), alt: `The photo ${l.from} brought back`, loading: 'lazy' }) : null,
+      l.photo ? h('img', { class: 'return-photo', src: asset(l.photo), alt: `The photo ${l.from} sent with this letter`, loading: 'lazy' }) : null,
       l.text ? h('p', { class: 'body' }, l.text) : null,
       'readCycle' in l || l.readAt !== undefined ? h('div', { class: 'status-line' }, letterLine(l)) : null,
     ),
     l.errand?.look ? lookBlock(l.errand.look) : null,
+    l.look ? lookBlock(l.look, { asked: false }) : null,
     reply ? h('div', { class: 'reply-block' }, h('span', { class: 'label' }, `It wrote back${reply.cycle ? ` · cycle ${reply.cycle}` : ''}`), h('p', { class: 'voice' }, reply.text)) : null,
     l.passedOn?.length
       ? h('div', { class: 'influence' }, `↳ Something of this reached ${[...new Set(l.passedOn.map((p) => p.to))].join(' and ')}, in ${l.passedOn.length === 1 ? 'a letter' : 'letters'} that left on night ${l.passedOn.map((p) => p.night).join(', ')}.`)
@@ -666,14 +668,14 @@ function letterView(l) {
   );
 }
 
-/** What it made of a photo someone brought it. */
-function lookBlock(look) {
+/** What it made of a photo someone brought it (`asked`: for one of its errands) or sent with a letter. */
+function lookBlock(look, { asked = true } = {}) {
   if (look.failed) return h('div', { class: 'reply-block' }, h('span', { class: 'label' }, 'It looked'), h('p', { class: 'muted', style: 'margin:0' }, 'It could not make anything of it.'));
   if (look.withheld) return h('div', { class: 'reply-block' }, h('span', { class: 'label' }, 'It looked'), h('p', { class: 'muted', style: 'margin:0' }, 'What it said about it was held back.'));
   return h(
     'div',
     { class: 'reply-block' },
-    h('span', { class: 'label' }, look.answers ? 'It looked: this is what it asked for' : 'It looked: not quite what it asked for'),
+    h('span', { class: 'label' }, !asked ? 'It looked' : look.answers ? 'It looked: this is what it asked for' : 'It looked: not quite what it asked for'),
     h('p', { class: 'voice' }, look.verdict),
     look.see ? h('p', { class: 'meta', style: 'margin:6px 0 0' }, `What it saw: ${look.see}`) : null,
   );
@@ -2329,7 +2331,7 @@ function wishItem(x) {
           { class: 'reply-block keeper-answer' },
           h('span', { class: 'label' }, answered[x.answer.status]),
           x.answer.text ? h('p', { class: 'voice' }, x.answer.text) : null,
-          h('span', { class: 'meta' }, x.answer.told ? `It heard this in cycle ${x.answer.told}.` : 'It has not woken since.'),
+          h('p', { class: 'meta', style: 'margin:4px 0 0' }, x.answer.told ? `It heard this in cycle ${x.answer.told}.` : 'It has not woken since.'),
         )
       : null,
     app.admin && x.status === 'open' ? keeperWish(x) : null,
@@ -3007,6 +3009,32 @@ async function renderLetters(current) {
   const msg = h('div', { class: 'form-msg', role: 'status' });
   const away = Boolean(SNAPSHOT); // its page is live, but it can't be reached just now: letters wait at its relay
   const send = h('button', { class: 'send', type: 'submit' }, 'Leave it');
+  // One photo, if they like, to show it what the words are about. A letter left at the door while it is away is words only.
+  const photos = s.letterPhotos && !away;
+  const file = h('input', { type: 'file', accept: 'image/*' });
+  const preview = h('img', { class: 'return-preview', alt: 'Your photo', hidden: true });
+  const unpick = h('button', { class: 'btn', type: 'button', hidden: true }, 'Leave the photo out');
+  let photo = null;
+  const clearPhoto = () => {
+    photo = null;
+    file.value = '';
+    preview.hidden = unpick.hidden = true;
+  };
+  unpick.addEventListener('click', clearPhoto);
+  file.addEventListener('change', async () => {
+    photo = null;
+    preview.hidden = unpick.hidden = true;
+    if (!file.files[0]) return;
+    msg.textContent = 'Making it small…';
+    try {
+      photo = await photoForErrand(file.files[0]);
+      preview.src = photo;
+      preview.hidden = unpick.hidden = false;
+      msg.textContent = '';
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+  });
   const form = h(
     'form',
     { class: 'paper compose', id: 'compose-form' },
@@ -3014,6 +3042,12 @@ async function renderLetters(current) {
     h('label', {}, h('span', { class: 'label' }, 'Sign as'), name),
     s.questions.length ? h('div', { class: 'q-field' }, h('span', { class: 'label' }, s.questions.length === 1 ? 'This is just a letter, or an answer to its question' : 'This is just a letter, or an answer to one of its questions'), question) : null,
     h('label', {}, h('span', { class: 'label' }, 'Your letter'), text),
+    photos ? h('label', {}, h('span', { class: 'label' }, 'A photo, if you like'), file) : null,
+    photos ? preview : null,
+    photos ? unpick : null,
+    photos
+      ? h('p', { class: 'hint' }, 'A photo shows it what your words are about. Its keeper looks at it before it, or anyone, sees it. Leave out people and faces, and anything that shows who you are or where you live. It is made small and stripped of its location and camera details before it leaves this page.')
+      : null,
     away ? h('p', { class: 'away-note' }, `${s.name || 'It'} is offline right now. Your letter waits for it at the door and reaches it as soon as it is back; then it reads it in its own time.`) : null,
     send,
     msg,
@@ -3027,12 +3061,25 @@ async function renderLetters(current) {
     msg.textContent = 'Leaving it on the desk…';
     try {
       local?.setItem('iterant.name', name.value.trim());
-      const letter = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: name.value, text: text.value, visitor, question: question.querySelector('input:checked')?.value || null }) };
+      const letter = {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          from: name.value,
+          text: text.value,
+          visitor,
+          question: question.querySelector('input:checked')?.value || null,
+          ...(photos && photo ? { photo: photo.replace(/^data:image\/jpeg;base64,/, '') } : {}),
+        }),
+      };
       const sent = away ? await toMailbox(letter) : await api('/api/letters', letter);
       text.value = '';
+      clearPhoto();
       msg.textContent = sent.waiting
         ? `Your letter is waiting at the door${sent.ahead ? ` with ${sent.ahead} other letter${sent.ahead === 1 ? '' : 's'}` : ''}. ${s.name || 'It'} gets it as soon as it is back.`
-        : sent.status === 'held'
+        : sent.status === 'held' && sent.statusReason === 'a photo waits for its keeper'
+          ? 'Left on its desk with your photo. Its keeper looks at the photo first; then it looks too, and reads your letter in its own time.'
+          : sent.status === 'held'
           ? `Held for its keeper: ${sent.statusReason}. It won't read it unless they let it through.`
           : sent.status === 'pending'
             ? 'Left on its desk. It is screened first, then it reads it in its own time.'
@@ -3080,7 +3127,7 @@ function keeperCard() {
         'div',
         { class: 'held' },
         h('div', { class: 'meta' }, `From ${l.from} · ${dayTime(l.at)} · ${l.heldReply ? 'its reply was held' : l.status}${l.heldReply ? ` (${l.heldReply.reason})` : l.statusReason ? ` · ${l.statusReason}` : ''}`),
-        l.errand ? h('p', { class: 'meta' }, `A photo for its errand “${l.errand.text}”`) : null,
+        l.errand ? h('p', { class: 'meta' }, `A photo for its errand “${l.errand.text}”`) : l.heldPhoto ? h('p', { class: 'meta' }, 'A letter with a photo') : null,
         l.heldPhoto ? h('img', { class: 'return-photo', src: `${l.heldPhoto}?key=${encodeURIComponent(app.admin)}`, alt: 'The photo waiting for you' }) : null,
         l.text ? h('p', { class: 'body' }, l.text) : null,
         l.heldReply ? h('p', { class: 'voice' }, `It wrote back: ${l.heldReply.text}`) : null,

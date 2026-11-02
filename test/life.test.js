@@ -1,6 +1,6 @@
 // A whole short life with the mock brain: birth, letters, cycles, a night, the drift guard, influence tracing.
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -128,6 +128,37 @@ test('a photo brought back for an errand waits for its keeper, is looked at, and
   assert.equal(shown.returns[0].photo, `returns/${stored.id}.jpg`);
   assert.ok(shown.returns[0].look.verdict);
   assert.equal(life.addReturn({ errand: e.id, from: 'June', text: '', person: 'v10', photo: cleanJpeg(fakeJpeg()).data }).ok, false, 'a filled errand takes no more photos');
+});
+
+test('a letter can carry a photo: it waits for its keeper, it looks before it reads, and the photo is shown with the letter', async () => {
+  const life = makeLife();
+  const held = life.addLetter({ from: 'Ines', text: 'This is the view from my window this morning.', person: 'v21', photo: cleanJpeg(fakeJpeg()).data });
+  assert.equal(held.status, 'held', 'a photo always waits for a person');
+  assert.equal(held.photo, null, 'nobody sees the photo before its keeper lets it through');
+  assert.ok(life.keeperQueue().find((l) => l.id === held.id).heldPhoto, 'its keeper sees the photo');
+  assert.ok(!views.letters(life).some((l) => l.id === held.id));
+  assert.ok(life.decide(held.id, 'allow').ok);
+
+  const stored = life.letters.find((l) => l.id === held.id);
+  for (let i = 0; i < 3 && !stored.readAt; i++) assert.ok((await life.wake('test')).ok);
+  clearTimeout(life.timer);
+  assert.ok(stored.readAt, 'it read the letter');
+  assert.ok(stored.look.see, 'it looked at the photo');
+  assert.equal(stored.seenCycle, stored.readCycle);
+  assert.equal(stored.errand, undefined, 'a letter with a photo is not an errand');
+  const shown = views.letters(life).find((l) => l.id === held.id);
+  assert.equal(shown.photo, `returns/${held.id}.jpg`);
+  assert.ok(shown.look.verdict);
+  assert.equal(shown.look.answers, undefined, 'nothing was asked for, so there is nothing to answer');
+  const record = life.store.read(`cycles/${String(stored.readCycle).padStart(6, '0')}.json`);
+  assert.equal(record.letters.find((l) => l.id === held.id).photo, `returns/${held.id}.jpg`);
+
+  // a photo its keeper turns away is not kept
+  const turned = life.addLetter({ from: 'Ines', text: 'And another.', person: 'v21', photo: cleanJpeg(fakeJpeg()).data });
+  assert.ok(existsSync(life.store.path(`returns/${turned.id}.jpg`)));
+  assert.ok(life.decide(turned.id, 'reject').ok);
+  assert.ok(!existsSync(life.store.path(`returns/${turned.id}.jpg`)));
+  assert.equal(life.letters.find((l) => l.id === turned.id).photo, null);
 });
 
 test('on its second night it chooses a name, once: a description is turned down and it chooses again', async () => {

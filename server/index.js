@@ -8,7 +8,7 @@ import { createBrain } from './brain.js';
 import { cleanJpeg } from './errands.js';
 import { exportLife, withHome } from './export.js';
 import { ROOT, loadConfig } from './config.js';
-import { Life, letterStatus } from './life.js';
+import { Life, letterStatus, photoOf } from './life.js';
 import * as pals from './pals.js';
 import { publish } from './publish.js';
 import { RELAY_KEY, connectRelay } from './relay.js';
@@ -51,6 +51,17 @@ function json(res, status, data) {
   const body = JSON.stringify(data);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(body);
+}
+
+/** How large a request carrying one photo may be: the largest photo, a third larger as base64, and room for words. */
+const photoBodyLimit = () => Math.ceil(cfg.errands.maxPhotoMb * 1024 * 1024 * 1.4) + 8192;
+
+/** A photo sent as base64 JPEG, cleaned of all but its picture ({ data }), or why it can't be taken ({ error, status }). */
+function readPhoto(sent) {
+  const raw = Buffer.from(String(sent).replace(/^data:image\/jpeg;base64,/, ''), 'base64');
+  if (!raw.length) return { error: 'That photo was empty.', status: 400 };
+  if (raw.length > cfg.errands.maxPhotoMb * 1024 * 1024) return { error: `That photo is larger than ${cfg.errands.maxPhotoMb} MB.`, status: 413 };
+  return { data: cleanJpeg(raw).data };
 }
 
 async function readBody(req, limit = 16 * 1024) {
@@ -205,31 +216,32 @@ async function api(req, res, url) {
     return json(res, 200, views.letters(life, visitorId(url.searchParams.get('visitor'))));
   }
   if (path === '/api/letters' && method === 'POST') {
-    const body = await readBody(req);
+    const body = await readBody(req, cfg.letters.photos ? photoBodyLimit() : undefined);
     const text = tidy(body.text, cfg.letters.maxLength);
     const from = tidy(body.from, 40).replace(/\n/g, ' ') || 'someone';
     const vid = visitorId(body.visitor);
     if (!text) return json(res, 400, { error: 'A letter needs some words.' });
+    if (body.photo && !cfg.letters.photos) return json(res, 403, { error: 'It does not take photos with letters.' });
+    const photo = body.photo ? readPhoto(body.photo) : null;
+    if (photo?.error) return json(res, photo.status, { error: photo.error });
     const ip = fromRelay(req) || req.socket.remoteAddress || 'unknown';
     if (rateLimited([`ip:${ip}`, ...(vid ? [`v:${vid}`] : [])])) return json(res, 429, { error: 'That is a lot of letters for one hour. It reads slowly; give it time.' });
-    const letter = life.addLetter({ from, text, person: vid || `name:${from.toLowerCase()}`, question: typeof body.question === 'string' ? body.question : null });
+    const letter = life.addLetter({ from, text, person: vid || `name:${from.toLowerCase()}`, question: typeof body.question === 'string' ? body.question : null, photo: photo?.data });
     return json(res, 201, letter);
   }
   if (path === '/api/errands' && method === 'GET') return json(res, 200, views.errands(life));
   const brought = /^\/api\/errands\/(e\d+)\/returns$/.exec(path);
   if (brought && method === 'POST') {
     if (!cfg.errands.enabled) return json(res, 403, { error: 'It is not sending anyone on errands.' });
-    const maxBytes = cfg.errands.maxPhotoMb * 1024 * 1024;
-    const body = await readBody(req, Math.ceil(maxBytes * 1.4) + 8192); // base64 is a third larger
-    const raw = Buffer.from(String(body.photo || '').replace(/^data:image\/jpeg;base64,/, ''), 'base64');
-    if (!raw.length) return json(res, 400, { error: 'An errand is answered with a photo.' });
-    if (raw.length > maxBytes) return json(res, 413, { error: `That photo is larger than ${cfg.errands.maxPhotoMb} MB.` });
-    const photo = cleanJpeg(raw).data;
+    const body = await readBody(req, photoBodyLimit());
+    if (!body.photo) return json(res, 400, { error: 'An errand is answered with a photo.' });
+    const photo = readPhoto(body.photo);
+    if (photo.error) return json(res, photo.status, { error: photo.error });
     const from = tidy(body.from, 40).replace(/\n/g, ' ') || 'someone';
     const vid = visitorId(body.visitor);
     const ip = fromRelay(req) || req.socket.remoteAddress || 'unknown';
     if (rateLimited([`ip:${ip}`, ...(vid ? [`v:${vid}`] : [])])) return json(res, 429, { error: 'That is a lot for one hour. It reads slowly; give it time.' });
-    const result = life.addReturn({ errand: brought[1], from, text: tidy(body.note, 400), person: vid || `name:${from.toLowerCase()}`, photo });
+    const result = life.addReturn({ errand: brought[1], from, text: tidy(body.note, 400), person: vid || `name:${from.toLowerCase()}`, photo: photo.data });
     return result.ok ? json(res, 201, result.letter) : json(res, 409, { error: result.reason });
   }
   if (path === '/api/you' && method === 'GET') {
@@ -327,12 +339,12 @@ async function serveWork(res, path) {
 /** A photo someone brought back: public once its keeper allowed it; before that, only to its keeper. */
 async function servePhoto(res, url) {
   const m = /^\/returns\/(L\d+)\.jpg$/.exec(url.pathname);
-  const letter = m && life.letters.find((l) => l.id === m[1] && l.errand?.photo);
+  const letter = m && life.letters.find((l) => l.id === m[1] && photoOf(l));
   const key = Buffer.from(url.searchParams.get('key') || '');
   const keeper = key.length === adminToken.length && timingSafeEqual(key, Buffer.from(adminToken));
   if (!letter || (letterStatus(letter) !== 'allowed' && !keeper)) return json(res, 404, { error: 'not found' });
   try {
-    const body = await readFile(store.path(letter.errand.photo));
+    const body = await readFile(store.path(photoOf(letter)));
     res.writeHead(200, {
       'content-type': 'image/jpeg',
       'content-security-policy': "default-src 'none'",
