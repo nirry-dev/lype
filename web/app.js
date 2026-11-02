@@ -2035,7 +2035,7 @@ async function renderPlace(current) {
         modes,
         walking ? [app.walkHost, app.walk ? null : placeMap(w)] : placeMap(w),
         walking
-          ? h('div', { class: 'place-legend' }, h('span', {}, 'Above · Follow · Eye level: how you see it'), h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'click or Tab: read a sign'), h('span', {}, 'map: go there'), housemate() ? h('span', {}, `east, a few streets away: ${housemate().name}'s town`) : null)
+          ? h('div', { class: 'place-legend' }, h('span', {}, 'Above · Follow · Eye level: how you see it'), h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'eye level: click, then the mouse looks · Shift: run · Space: jump · Esc: let go'), h('span', {}, 'click or Tab: read a sign'), h('span', {}, 'map: go there'), housemate() ? h('span', {}, `east, a few streets away: ${housemate().name}'s town`) : null)
           : h('div', { class: 'place-legend' }, h('span', {}, 'faint: wearing away'), h('span', {}, 'cracked: a ruin'), h('span', {}, 'lines: what each thing was built beside'), h('span', {}, 'glow: where it was last')),
       ),
       h('aside', { class: 'place-side' }, h('div', { class: 'card' }, cardHead('Looking at'), h('div', { id: 'place-inspect' })), wishesCard(w)),

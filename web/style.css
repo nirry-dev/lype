@@ -2455,6 +2455,49 @@ a.btn {
 .walk[data-lens='eyes'] .walk-canvas {
   cursor: crosshair;
 }
+/* at eye level, as in a first-person game: a crosshair while the mouse is held, and how to take it */
+.walk-crosshair,
+.walk-hint {
+  display: none;
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+}
+.walk[data-lens='eyes'][data-hold='held'] .walk-crosshair {
+  display: block;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)) center / 2px 100% no-repeat,
+    linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)) center / 100% 2px no-repeat;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9));
+}
+.walk[data-lens='eyes'] .walk-hint {
+  display: block;
+  left: 50%;
+  bottom: 52px; /* above the line that says what it is doing */
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(12, 14, 18, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-2);
+  font: 500 12px var(--mono);
+  white-space: nowrap;
+  max-width: calc(100% - 32px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.walk[data-lens='eyes'][data-hold='free'] .walk-hint {
+  bottom: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text);
+  font-size: 13px;
+}
 .walk-lens {
   position: absolute;
   top: 10px;

@@ -30,6 +30,11 @@ const LENS = {
   follow: { fov: 0.85, near: 0.04, dist: 2.2, pitch: 0.42, fog: [4.5, 17] },
   eyes: { fov: 1.1, near: 0.02, fog: [3.5, 17] },
 };
+// At eye level it plays like a first-person game: the mouse looks (radians per pixel), and you can jump a little.
+const LOOK = 0.0022;
+const TILT = 1.45; // how far up or down you can look, short of straight up
+const JUMP = 1.1; // how fast a jump leaves the ground, in world units a second
+const FALL = 6; // and how fast it comes back
 
 // ---------- small matrix kit (column-major, as WebGL wants) ----------
 
@@ -864,7 +869,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   const canvas = document.createElement('canvas');
   canvas.className = 'walk-canvas';
   canvas.tabIndex = 0;
-  canvas.setAttribute('aria-label', 'Its place as a world you can walk around. Drag to look around, scroll to come closer, W A S D or the arrow keys to walk, Q and E to turn, and click a thing to read its sign.');
+  canvas.setAttribute('aria-label', 'Its place as a world you can walk around. Drag to look around, scroll to come closer, W A S D or the arrow keys to walk, Q and E to turn, and click a thing to read its sign. At eye level, click to look with the mouse, W A S D to move, Shift to run, Space to jump, and Escape to let go.');
   const labels = document.createElement('div');
   labels.className = 'walk-labels';
   labels.setAttribute('aria-hidden', 'true');
@@ -891,7 +896,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   for (const [l, text, title] of [
     ['above', 'Above', 'The whole town from above'],
     ['follow', 'Follow', 'Low behind it, wherever it goes'],
-    ['eyes', 'Eye level', 'Walk its streets yourself: click the ground or use W A S D to walk, drag to look'],
+    ['eyes', 'Eye level', 'Walk its streets yourself: click to look with the mouse, W A S D to move, Shift to run, Space to jump, Esc to let go'],
   ]) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -905,7 +910,13 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     });
     lensBar.append(b);
   }
-  host.append(canvas, focus, labels, mini, lensBar);
+  const crosshair = document.createElement('div');
+  crosshair.className = 'walk-crosshair';
+  crosshair.setAttribute('aria-hidden', 'true');
+  const hint = document.createElement('div');
+  hint.className = 'walk-hint';
+  hint.setAttribute('aria-hidden', 'true');
+  host.append(canvas, focus, labels, mini, lensBar, crosshair, hint);
   host.dataset.lens = 'above';
   selfLabel.className = 'walk-label self';
   labels.append(selfLabel, sayLabel, neighborLabel);
@@ -1093,7 +1104,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   let eye = [0, 0, 0];
   let aim = [0, 0, 0]; // what the eye looks at
   let lens = 'above';
-  const walker = { x: 0, z: 0, yaw: 0, pitch: 0, stride: 0, goal: null }; // you, at eye level
+  const walker = { x: 0, z: 0, yaw: 0, pitch: 0, stride: 0, goal: null, lift: 0, rise: 0 }; // you, at eye level
   const follow = { yaw: 0, offset: 0, pitch: LENS.follow.pitch, dist: LENS.follow.dist, touched: 0 }; // the camera behind it
 
   // A sky of fixed stars, the same every visit.
@@ -1508,7 +1519,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   function step(dt) {
     let moving = false;
     if (keys.size && lens === 'eyes') {
-      // at eye level: walking pace, turning with Q and E (or the arrows left and right), never through what it built
+      // at eye level: walking pace, A and D to step aside, the arrows left and right to turn, never through what it built
       const speed = (keys.has('Shift') ? 2.6 : 1.1) * dt;
       const fwd = [-Math.sin(walker.yaw), -Math.cos(walker.yaw)];
       const right = [Math.cos(walker.yaw), -Math.sin(walker.yaw)];
@@ -1518,8 +1529,8 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       if (keys.has('s') || keys.has('ArrowDown')) (dx -= fwd[0]), (dz -= fwd[1]);
       if (keys.has('d')) (dx += right[0]), (dz += right[1]);
       if (keys.has('a')) (dx -= right[0]), (dz -= right[1]);
-      if (keys.has('q') || keys.has('ArrowLeft')) walker.yaw += 1.8 * dt;
-      if (keys.has('e') || keys.has('ArrowRight')) walker.yaw -= 1.8 * dt;
+      if (keys.has('ArrowLeft')) walker.yaw += 1.8 * dt;
+      if (keys.has('ArrowRight')) walker.yaw -= 1.8 * dt;
       const len = Math.hypot(dx, dz);
       if (len) stride((dx / len) * speed, (dz / len) * speed);
       walker.goal = null;
@@ -1555,6 +1566,13 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       if (keys.has('e')) cam.yaw -= 1.6 * dt;
       walk(dx * speed, dz * speed);
       cam.goal = null;
+      moving = true;
+    }
+    if (lens === 'eyes' && (walker.lift > 0 || walker.rise > 0)) {
+      // in the air, until you land
+      walker.rise -= FALL * dt;
+      walker.lift += walker.rise * dt;
+      if (walker.lift <= 0) walker.lift = walker.rise = 0;
       moving = true;
     }
     if (cam.goal) {
@@ -1778,7 +1796,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   function see(dt) {
     if (lens === 'eyes') {
       const bob = reduced ? 0 : Math.sin(walker.stride * 9) * 0.006;
-      const e = [walker.x, EYE + bob, walker.z];
+      const e = [walker.x, EYE + (walker.lift ? 0 : bob) + walker.lift, walker.z];
       const c = Math.cos(walker.pitch);
       return { eye: e, aim: [e[0] - Math.sin(walker.yaw) * c, e[1] + Math.sin(walker.pitch), e[2] - Math.cos(walker.yaw) * c] };
     }
@@ -1843,6 +1861,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       [walker.x, walker.z] = open(from.eye[0], from.eye[2]);
       walker.yaw = Math.atan2(walker.x - from.aim[0], walker.z - from.aim[2]);
       walker.pitch = 0;
+      walker.lift = walker.rise = 0;
     } else if (next === 'follow') {
       follow.yaw = creature.heading + Math.PI;
       follow.offset = 0;
@@ -1853,6 +1872,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       cam.goal = [creature.pos[0], 0.4, creature.pos[2]];
       cam.yaw = follow.yaw;
     }
+    if (lens === 'eyes' && looking()) document.exitPointerLock();
     lens = next;
     keys.clear();
     host.dataset.lens = lens;
@@ -2007,13 +2027,56 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
 
   let drag = null;
   const pointers = new Map();
+  // At eye level the mouse is held, as in a first-person game, where the browser lets it be (not in every frame, or on touch).
+  let canHold = Boolean(canvas.requestPointerLock) && matchMedia('(pointer: fine)').matches;
+  const looking = () => document.pointerLockElement === canvas;
+  const showHold = () => {
+    host.dataset.hold = looking() ? 'held' : canHold ? 'free' : 'none';
+    hint.textContent = looking()
+      ? 'W A S D to move · Shift to run · Space to jump · click to read a sign · Esc to let go'
+      : canHold
+        ? 'Click to look around'
+        : 'Drag to look · tap the ground to walk there';
+  };
+  showHold();
+  const onHold = () => {
+    if (looking()) refused = 0;
+    keys.clear();
+    showHold();
+    dirty = true;
+    schedule();
+  };
+  // Chrome refuses a hold asked for again too soon after Esc; only a second refusal in a row means it never will here.
+  let refused = 0;
+  const onHoldRefused = () => {
+    if (++refused > 1) canHold = false;
+    showHold();
+  };
+  document.addEventListener('pointerlockchange', onHold);
+  document.addEventListener('pointerlockerror', onHoldRefused);
   canvas.addEventListener('pointerdown', (e) => {
     canvas.focus({ preventScroll: true });
+    if (lens === 'eyes' && e.pointerType === 'mouse' && canHold && !looking()) {
+      if (e.button === 0) {
+        e.preventDefault();
+        // a promise in newer browsers, nothing in older ones; a refusal is counted from pointerlockerror, which both send
+        Promise.resolve(canvas.requestPointerLock()).catch(() => {});
+      }
+      return;
+    }
     pointers.set(e.pointerId, [e.clientX, e.clientY]);
     canvas.setPointerCapture(e.pointerId);
     drag = { x: e.clientX, y: e.clientY, moved: 0, pan: e.button === 2 || e.shiftKey, pinch: pointers.size === 2 ? pinchDist() : 0 };
   });
   canvas.addEventListener('pointermove', (e) => {
+    if (looking() && lens === 'eyes') {
+      walker.yaw -= e.movementX * LOOK;
+      walker.pitch = clamp(walker.pitch - e.movementY * LOOK, -TILT, TILT);
+      if (drag) drag.moved += Math.abs(e.movementX) + Math.abs(e.movementY);
+      dirty = true;
+      schedule();
+      return;
+    }
     if (!drag || !pointers.has(e.pointerId)) return;
     pointers.set(e.pointerId, [e.clientX, e.clientY]);
     if (pointers.size === 2) {
@@ -2030,8 +2093,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
         const s = cam.dist / canvas.clientHeight;
         walk(-(dx * Math.cos(cam.yaw) + dy * Math.sin(cam.yaw)) * s * 1.2, (dx * Math.sin(cam.yaw) - dy * Math.cos(cam.yaw)) * s * 1.2);
       } else if (lens === 'eyes') {
-        walker.yaw += dx * 0.005;
-        walker.pitch = clamp(walker.pitch + dy * 0.004, -0.6, 0.7);
+        // the view turns the way you drag, as a first-person game turns the way the mouse goes
+        walker.yaw -= dx * 0.005;
+        walker.pitch = clamp(walker.pitch - dy * 0.004, -TILT, TILT);
       } else if (lens === 'follow') {
         follow.offset -= dx * 0.008;
         follow.pitch = clamp(follow.pitch + dy * 0.005, 0.05, 1.2);
@@ -2058,9 +2122,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   canvas.addEventListener(
     'wheel',
     (e) => {
+      if (lens === 'eyes') return; // at eye level the wheel is the page's
       e.preventDefault();
-      if (lens === 'eyes') stride(Math.sin(walker.yaw) * e.deltaY * 0.002, Math.cos(walker.yaw) * e.deltaY * 0.002);
-      else if (lens === 'follow') follow.dist = clamp(follow.dist * Math.exp(e.deltaY * 0.0012), 0.9, 5);
+      if (lens === 'follow') follow.dist = clamp(follow.dist * Math.exp(e.deltaY * 0.0012), 0.9, 5);
       else cam.dist = clamp(cam.dist * Math.exp(e.deltaY * 0.0012), 3, 32);
       dirty = true;
       schedule();
@@ -2069,7 +2133,11 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   );
   canvas.addEventListener('keydown', (e) => {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    if (['w', 'a', 's', 'd', 'q', 'e', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift'].includes(k)) {
+    if (k === ' ' && lens === 'eyes') {
+      e.preventDefault();
+      if (!walker.lift && !reduced) walker.rise = JUMP;
+      schedule();
+    } else if (['w', 'a', 's', 'd', 'q', 'e', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift'].includes(k)) {
       e.preventDefault();
       if (!e.repeat && !keys.has(k)) {
         // A tap is a step; holding the key keeps walking.
@@ -2102,8 +2170,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   function pick(e) {
     if (!view) return;
     const r = canvas.getBoundingClientRect();
-    const px = ((e.clientX - r.left) / r.width) * 2 - 1;
-    const py = 1 - ((e.clientY - r.top) / r.height) * 2;
+    const held = looking();
+    const px = held ? 0 : ((e.clientX - r.left) / r.width) * 2 - 1;
+    const py = held ? 0 : 1 - ((e.clientY - r.top) / r.height) * 2;
     const vp = mat.mul(proj, view);
     let best = null;
     for (const th of things) {
@@ -2122,7 +2191,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       if (d < Infinity && px > x0 && px < x1 && py > y0 - 0.02 && py < y1 + 0.02 && (!best || d < best.d)) best = { th, d };
     }
     // at eye level, a click (or a tap) on open ground walks you there
-    const ground = !best && lens === 'eyes' && groundAt(px, py);
+    const ground = !best && lens === 'eyes' && !held && groundAt(px, py);
     if (ground) {
       walker.goal = open(...ground);
       schedule();
@@ -2246,6 +2315,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     clearTimeout(siteTimer);
     ro.disconnect();
     document.removeEventListener('visibilitychange', onVisible);
+    document.removeEventListener('pointerlockchange', onHold);
+    document.removeEventListener('pointerlockerror', onHoldRefused);
+    if (looking()) document.exitPointerLock();
     gl.getExtension('WEBGL_lose_context')?.loseContext();
     canvas.remove();
     labels.remove();
