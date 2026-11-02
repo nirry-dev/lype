@@ -25,17 +25,17 @@ const KITS = {
   'space-kit': { kit: 'space', words: ['space', 'stars', 'sky', 'moon', 'far'] },
   'train-kit': { kit: 'trains', words: ['train', 'travel', 'journey', 'rail'] },
   // whole buildings, for a town to grow into a city
-  'city-kit-commercial': { kit: 'city', words: ['city', 'shop', 'office', 'tower', 'building'] },
-  'city-kit-suburban': { kit: 'suburb', words: ['house', 'home', 'street', 'garden', 'building'] },
-  'city-kit-industrial': { kit: 'works', words: ['factory', 'work', 'warehouse', 'machine', 'building'] },
+  'city-kit-commercial': { kit: 'city', words: ['city', 'shop', 'office', 'tower', 'building'], buildings: 'commercial' },
+  'city-kit-suburban': { kit: 'suburb', words: ['house', 'home', 'street', 'garden', 'building'], buildings: 'suburban' },
+  'city-kit-industrial': { kit: 'works', words: ['factory', 'work', 'warehouse', 'machine', 'building'], buildings: 'industrial' },
 };
 
 const LEAVE_OUT = [
   // pieces of buildings and ground, not things
   /^(wall|roof|road|floor|stairs|cliff|ground|railroad|track|spline|corridor|pipe|platform|terrain|rail|balcony|overhang|paneling|doorway|supports|structure|metal-panel|patch|hole|debris|planks|poles|cabin|bridge_(side|center)|crops_dirt|snow-flat|trainset-rail|brick-wall|stone-wall|iron-fence-border|border-pillar|mast|blade|tower-(base|middle|roof|top)|castle-|monorail_track|rocket_|fountain-(corner|edge|curved)|chimney-(base|top)|crypt-(door|large-door|large-roof|small-roof)|kitchenCabinet(Corner|UpperCorner)|hedge-(curved|large-curved)|fence_(bend|corner|simpleDiagonal)|path|river|lily|stone_(tall|small|large)?[A-Z]?$|train-connector|tree-(trunk|autumn-trunk))/i,
   /^wall/i,
-  // the city kits' far-away copies of their buildings, and their road and ground pieces
-  /^(low-detail|road|tile|driveway|planter-|grass|pavement)/i,
+  // the city kits' far-away copies of their buildings, and their road and paving pieces
+  /^(low-detail|road|tile|driveway|pavement)/i,
   // figures, and things for hurting
   /^(character|astronaut|alien)|weapon|turret|gun|rifle|blaster|cannon/i,
 ];
@@ -240,6 +240,65 @@ const nameWords = (file) =>
     .filter((w) => w && !/^\d+$/.test(w) && !/^[a-d]$/.test(w))
     .map((w) => ({ advocado: 'avocado', musterd: 'mustard', chopstic: 'chopstick', cne: 'cone', rond: 'round', leafs: 'leaves', wholer: 'whole' })[w] || w);
 
+// ---------- naming a whole building for what it looks like ----------
+// It only ever knows a model's name, and "building f" says nothing; a building is named for its size and its colours
+// as the mesh has them: "two-storey house, white walls, red roof".
+
+const COLOUR_NAMES = [
+  ['white', [0.93, 0.92, 0.9]],
+  ['cream', [0.93, 0.86, 0.7]],
+  ['pale grey', [0.72, 0.73, 0.75]],
+  ['grey', [0.5, 0.52, 0.55]],
+  ['dark grey', [0.27, 0.28, 0.31]],
+  ['black', [0.1, 0.1, 0.12]],
+  ['red', [0.75, 0.25, 0.22]],
+  ['brick-red', [0.6, 0.3, 0.24]],
+  ['brown', [0.45, 0.32, 0.22]],
+  ['tan', [0.72, 0.58, 0.42]],
+  ['orange', [0.9, 0.55, 0.25]],
+  ['yellow', [0.93, 0.8, 0.35]],
+  ['green', [0.35, 0.6, 0.35]],
+  ['teal', [0.25, 0.55, 0.55]],
+  ['blue', [0.3, 0.45, 0.7]],
+  ['pale blue', [0.6, 0.75, 0.88]],
+  ['purple', [0.5, 0.38, 0.62]],
+];
+const colourName = (c) => COLOUR_NAMES.reduce((best, [name, v]) => {
+  const d = Math.hypot(...v.map((x, k) => x - c[k]));
+  return d < best.d ? { name, d } : best;
+}, { name: 'grey', d: Infinity }).name;
+
+/** The colour most of a mesh's area has, among triangles that face `which` way (up: roofs; side: walls). */
+function mainColour({ pos, nor, col, idx }, which, hi) {
+  const area = new Map();
+  for (let i = 0; i < idx.length; i += 3) {
+    const [a, b, c] = [idx[i], idx[i + 1], idx[i + 2]];
+    const ny = (nor[a][1] + nor[b][1] + nor[c][1]) / 3;
+    if (which === 'up' ? ny < 0.5 : Math.abs(ny) > 0.3) continue;
+    if (which === 'up' && Math.max(pos[a][1], pos[b][1], pos[c][1]) < hi * 0.45) continue; // a roof, not the pavement
+    const u = pos[b].map((v, k) => v - pos[a][k]);
+    const w = pos[c].map((v, k) => v - pos[a][k]);
+    const size = Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) / 2;
+    const name = colourName([0, 1, 2].map((k) => (col[a][k] + col[b][k] + col[c][k]) / 3));
+    area.set(name, (area.get(name) || 0) + size);
+  }
+  return [...area].sort((x, y) => y[1] - x[1])[0]?.[0] || null;
+}
+
+/** What a whole building is called, from its kit, its size and its colours; null for what is not a whole building. */
+function buildingName(kind, stem, mesh, dims) {
+  if (!/^building/.test(stem)) return null;
+  const [w, h, d] = dims;
+  const walls = mainColour(mesh, 'side', h);
+  const roof = mainColour(mesh, 'up', h);
+  const looks = [walls && `${walls} walls`, roof && roof !== walls && `${roof} roof`].filter(Boolean).join(', ');
+  let what;
+  if (kind === 'suburban') what = h < 0.85 ? 'one-storey house' : 'two-storey house';
+  else if (kind === 'commercial') what = /skyscraper/.test(stem) ? 'skyscraper' : h < 1.4 ? 'shop' : h < 2.2 ? 'office building' : 'tall office building';
+  else what = Math.max(w, d) > 1.6 && h < 1.2 ? 'warehouse' : h > 1.5 ? 'tall factory' : 'factory';
+  return `${what}${looks ? `, ${looks}` : ''}`;
+}
+
 const models = [];
 if (existsSync(OUT)) rmSync(OUT, { recursive: true });
 mkdirSync(OUT, { recursive: true });
@@ -257,25 +316,39 @@ for (const folder of readdirSync(SRC)) {
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.glb')).sort()) {
     const stem = file.replace(/\.glb$/, '');
     if (LEAVE_OUT.some((re) => re.test(stem))) continue;
-    // Variants that differ only by a letter (rock A to F) are one thing to it: the first stands for them all.
-    const words = nameWords(file);
+    // Variants that differ only by a letter (rock A to F) are one thing to it: the first stands for them all. Whole
+    // buildings each look different, so each is kept, and named for how it looks.
+    const whole = about.buildings && /^building/.test(stem);
+    let words = nameWords(file);
     const key = `${about.kit}|${words.join(' ')}`;
-    if (seen.has(key)) continue;
+    if (!whole && seen.has(key)) continue;
     seen.add(key);
     const mesh = readGlb(join(dir, file), colormaps);
     if (!mesh.idx.length) continue;
     const { buf, dims } = pack(mesh);
+    const named = whole && buildingName(about.buildings, stem, mesh, dims);
+    if (named) words = named.toLowerCase().split(/[^a-z]+/).filter(Boolean);
     const id = `${about.kit}/${stem}`;
     writeFileSync(join(OUT, `${id}.bin`), buf);
     bytes += buf.length;
-    models.push({ id, words, kit: about.kit, dims });
+    models.push({ id, words, kit: about.kit, dims, ...(named ? { label: named } : {}) });
   }
 }
 
 // A name for each, in words; where two kits have the same thing, the kit tells them apart.
 const byName = new Map();
-for (const m of models) byName.set(m.words.join(' '), [...(byName.get(m.words.join(' ')) || []), m]);
-for (const [name, list] of byName) for (const m of list) m.name = list.length > 1 ? `${name} (${m.kit})` : name;
+const baseName = (m) => m.label || m.words.join(' ');
+for (const m of models) byName.set(baseName(m), [...(byName.get(baseName(m)) || []), m]);
+// The city kits came later: where one of theirs shares a name with an older thing, the older one keeps its name (what
+// it already borrowed is known by it) and the newer is told apart by its kit, or by a number among its own look-alikes.
+const LATER = new Set(Object.values(KITS).filter((k) => k.buildings).map((k) => k.kit));
+for (const [name, list] of byName) {
+  const older = list.filter((m) => !LATER.has(m.kit));
+  const newer = list.filter((m) => LATER.has(m.kit));
+  for (const m of older) m.name = older.length > 1 ? `${name} (${m.kit})` : name;
+  const kits = new Set(newer.map((m) => m.kit));
+  newer.forEach((m, i) => (m.name = list.length === 1 ? name : kits.size === newer.length ? `${name} (${m.kit})` : `${name} (${i + 1})`));
+}
 
 writeFileSync(
   join(OUT, 'catalogue.json'),

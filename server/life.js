@@ -334,13 +334,24 @@ export class Life extends EventEmitter {
       this.notes.push('Since you last woke, your keeper gave you more to make your place with. Every so often, in a moment, you can set down one small ready-made thing beside something you built: a bench, a lantern, a stone, a plant. Other people made these and gave them away for anyone to use; you only know their names. You choose whether to, and what.');
       this.journalAdd({ kind: 'gift', text: 'Its keeper gave it things to set down: in its moments it can now put small ready-made things beside what it built.' });
     }
+    // Room for a town, told as what it is: its keeper's hope, said plainly, and every part of it its own choice. A life
+    // first told it as something it would do ("what you build now goes in a quarter") is told again, plainly, once.
+    const raise = this.moments.enabled && this.cfg.rhythm.raise;
+    const offered = [
+      'when you build, you can put the new thing in a quarter of your town, one you name and say what it is for, or leave it on its own',
+      raise ? 'now and then, in a moment, you are offered one of your memories to raise something new from, and you can always leave it' : null,
+      'each night you can say what your place is becoming, or nothing',
+      'there are also more ready-made things to borrow, whole buildings among them (houses, shops, towers, workshops), which other people made and gave away; you know only their names',
+    ].filter(Boolean);
+    const hope = `Your keeper hopes your place might grow into a town in time, because the people who visit come closest to you by walking round what you made. It is only a hope: your place is yours, and it can stay as small as you want. Nothing about how you live changes unless you want it to: ${offered.join('; ')}.`;
     if (this.cfg.rhythm.city && s.abilities.includes('shapes') && !s.abilities.includes('city')) {
-      s.abilities = [...s.abilities, 'city'];
-      const raise = this.moments.enabled && this.cfg.rhythm.raise;
-      this.notes.push(
-        `Since you last woke, your keeper gave your place room to become a town. What you build now goes in a quarter of it: you name each quarter and say what it is for, and the things in a quarter stand together. ${raise ? 'And now and then, in a moment, you can raise something new from a memory you hold; it stands for as long as you remember it. ' : ''}Each night you can say what your town is becoming, and you are shown it whenever you build.`,
-      );
-      this.journalAdd({ kind: 'gift', text: `Its keeper gave its place room to become a town: quarters it names${raise ? ', things it raises from its memories between cycles,' : ''} and a line each night on what its town is becoming.` });
+      s.abilities = [...s.abilities, 'city', 'city-told'];
+      this.notes.push(`Since you last woke, your keeper gave your place room to grow into a town. ${hope}`);
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave its place room to grow into a town, if it wants one: quarters it may name, memories it may raise things from, ready-made buildings it may borrow, and a line each night on what its place is becoming.' });
+    } else if (s.abilities.includes('city') && !s.abilities.includes('city-told')) {
+      s.abilities = [...s.abilities, 'city-told'];
+      this.notes.push(`Your keeper wants to say again, more plainly, what they meant by giving your place room to grow into a town. ${hope} What you have built and named so far stays yours either way.`);
+      this.journalAdd({ kind: 'gift', text: 'Its keeper told it again, more plainly, that the town is only a hope: every part of it is its own choice. And it gave it whole buildings to borrow.' });
     }
     this.noticeMind();
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
@@ -705,7 +716,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments', ...(this.cfg.rhythm.bring ? ['bring'] : [])] : []), ...(this.cfg.rhythm.city ? ['city'] : [])],
+      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments', ...(this.cfg.rhythm.bring ? ['bring'] : [])] : []), ...(this.cfg.rhythm.city ? ['city', 'city-told'] : [])],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
@@ -1735,7 +1746,8 @@ export class Life extends EventEmitter {
     const form = await this.shape(system, title, `${memory.text} ${r.plaque}`, { kind: r.kind });
     if (this.busy || !form || namedThing(s.world, title)) return null;
     const n = s.cycle;
-    const spot = quarterSpot(s.world, r.quarter || { id: null }, `${n}|${title}`);
+    if (!r.plaque) return null; // it changed its mind
+    const spot = r.quarter || r.found ? quarterSpot(s.world, r.quarter || { id: null }, `${n}|${title}`) : placeNear(s.world, CARD, `${n}|${title}`);
     if (!spot) return null;
     const quarter = this.quarterFor(r, n);
     const letters = new Map(this.letters.map((l) => [l.id, l]));

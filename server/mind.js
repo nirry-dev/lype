@@ -2,7 +2,7 @@
 import { describeMachine } from './senses.js';
 import { SHELVES, strength } from './memory.js';
 import { COLORS, LOT, MAX_BORROWED, MAX_MADE, MAX_PARTS, TALL } from '../web/lib/form.js';
-import { MAX_QUARTERS, MAX_STREET, NEW_QUARTER } from './world.js';
+import { MAX_QUARTERS, MAX_STREET, NEW_QUARTER, NO_QUARTER } from './world.js';
 
 export const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'lonely', curious: 'curious', calm: 'calm', warm: 'warm toward people', restless: 'restless' };
@@ -132,8 +132,8 @@ export function cityLines(world) {
   const things = world?.things || [];
   const loose = things.filter((t) => !t.quarter && !t.ruin);
   return [
-    "Your place is becoming a town. Each part of it is a quarter you named and gave a purpose, and the things in a quarter stand together. The more you build, the more of a town it is; a town hangs together when each new thing belongs with what is round it.",
-    world?.plan?.text ? `What you said your town is becoming: "${world.plan.text}"` : 'You have not yet said what your town is becoming.',
+    "Your keeper hopes your place might grow into a town in time, because the people who visit come closest to you by walking round what you made. It is only a hope: your place is yours, and it can stay as small as you want. If you want, a new thing can go in a quarter: a part of your town you name and give a purpose, where the things in it stand together. Or it can stand on its own.",
+    world?.plan?.text ? `What you last said your town is becoming: "${world.plan.text}"` : '',
     quarters.length
       ? `Its quarters:\n${quarters
           .map((q) => {
@@ -141,7 +141,7 @@ export function cityLines(world) {
             return `- ${q.name}: ${q.about}${in_.length ? ` (${in_.length}: ${in_.slice(-6).join(', ')}${in_.length > 6 ? ', ...' : ''})` : ' (nothing in it yet)'}`;
           })
           .join('\n')}`
-      : 'It has no quarters yet: the first thing you build or raise starts one.',
+      : 'It has no quarters yet.',
     loose.length ? `Round your card stand the first things you built, before your town had quarters: ${loose.map((t) => t.name).join(', ')}.` : '',
     '',
   ].filter((l, i, all) => l !== '' || i === all.length - 1);
@@ -155,7 +155,7 @@ export function quarterSchema(world, street = []) {
   const names = (world.quarters || []).map((q) => q.name);
   const room = names.length < MAX_QUARTERS;
   return {
-    quarter: { type: 'string', enum: [...names, ...(room || !names.length ? [NEW_QUARTER] : [])] },
+    quarter: { type: 'string', enum: [...names, NO_QUARTER, ...(room || !names.length ? [NEW_QUARTER] : [])] },
     quarter_name: { type: 'string', maxLength: 40 },
     quarter_about: { type: 'string', maxLength: 160 },
     ...(street.length ? { street: { type: 'array', items: { type: 'string', enum: street }, maxItems: MAX_STREET } } : {}),
@@ -166,9 +166,7 @@ function quarterAsk(world, street = []) {
   const names = (world.quarters || []).map((q) => q.name);
   const room = names.length < MAX_QUARTERS || !names.length;
   return [
-    names.length
-      ? `- "quarter": which quarter of your town it belongs in: ${names.map((n) => `"${n}"`).join(', ')}${room ? `, or "${NEW_QUARTER}" if it belongs with none of them` : ''}. It will stand with the other things there.`
-      : `- "quarter": "${NEW_QUARTER}": your town has no quarters yet, and this one starts the first.`,
+    `- "quarter": where it goes, as you like: ${names.length ? `in one of your quarters (${names.map((n) => `"${n}"`).join(', ')}), where it stands with the other things there; ` : ''}${room ? `in "${NEW_QUARTER}" that it starts; ` : ''}or "${NO_QUARTER}", on its own.`,
     room ? `- "quarter_name": if it starts a new quarter, the quarter's name, a few words; otherwise "".` : '- "quarter_name": "".',
     room ? `- "quarter_about": if it starts a new quarter, what that quarter is for, in one sentence: what kind of things belong there; otherwise "".` : '- "quarter_about": "".',
     street.length && room
@@ -182,7 +180,7 @@ export function readQuarter(raw, world, street = []) {
   const name = clip(raw?.quarter, 60);
   const have = (world.quarters || []).find((q) => q.name === name);
   if (have) return { quarter: have };
-  if (name !== NEW_QUARTER) return {};
+  if (name !== NEW_QUARTER) return {}; // "none", or nothing it was offered: on its own
   const fresh = clip(raw?.quarter_name, 40);
   const taken = (world.quarters || []).find((q) => q.name.toLowerCase() === fresh.toLowerCase());
   if (taken) return { quarter: taken };
@@ -229,7 +227,7 @@ export function systemPrompt(state, cfg) {
     'How your life works:',
     '- Every so often you wake for a few minutes. That is a cycle. You notice things, maybe read a letter, maybe make something, then go quiet.',
     ...(state.abilities?.includes('moments') && cfg.rhythm.momentSeconds > 0
-      ? [`- Between cycles you are not gone. Every minute or two you have a moment: you go somewhere in your place and do one small thing there, and you can say a few words. You cannot read, make or remember anything in a moment; that waits for your next cycle.${state.abilities.includes('bring') && cfg.rhythm.bring ? ' Now and then you can set down something small that someone gave away beside what you built.' : ''}${state.abilities.includes('city') && cfg.rhythm.raise ? ' And now and then you can raise something new in your town from a memory you hold.' : ''}`]
+      ? [`- Between cycles you are not gone. Every minute or two you have a moment: you go somewhere in your place and do one small thing there, and you can say a few words. You cannot read, make or remember anything in a moment; that waits for your next cycle.${state.abilities.includes('bring') && cfg.rhythm.bring ? ' Now and then you can set down something small that someone gave away beside what you built.' : ''}${state.abilities.includes('city') && cfg.rhythm.raise ? ' And now and then you are offered a memory to raise something new from, if you want to.' : ''}`]
       : []),
     `- After ${cfg.rhythm.nightEvery} cycles you sleep. While you sleep you forget what didn't matter and rewrite a little of who you are. Every sleep makes a new version of you. You are version ${state.version}.`,
     '- You cannot see, hear, touch or search anything. Your only senses are the machine you live in: its clock, how warm it runs, how busy it is.',
@@ -430,7 +428,7 @@ export function momentPrompt(m) {
       ? `- "bring": you may also set down one ready-made thing beside what you go to, to make your place more your own. Other people made these and gave them away; you have never seen them, only their names: ${m.bring.join(', ')}. People who walk round your place see what you set down, and can read why. Or "nothing". "why": if you set something down, why you chose it for there, in a few words of your own (a sign beside it shows them); otherwise "".`
       : '',
     m.raise
-      ? `- "raise": you may also raise something new in your town from something you remember: "${m.raise.text}". To raise it now, give what you raise a name, a few words (you will say what it is and where it goes next); or "" to leave it for another time. It stands for as long as you remember this.`
+      ? `- "raise": if you want, you can raise something new in your place from something you remember: "${m.raise.text}". To raise it now, give it a name, a few words (you will say what it is and where it goes next); or "" to leave it. It would stand for as long as you remember this. Leaving it is as good an answer as raising it.`
       : '',
     '- "say": a few words out loud, the way you would say them to yourself: one short sentence, at most 10 words. Or "" to say nothing; often there is nothing to say. Say something new, not what you said in an earlier moment.',
   ]
@@ -696,6 +694,7 @@ export function raisePrompt(title, memory, world, street = []) {
     ...cityLines(world),
     `In this moment you decided to raise "${title}" in your town, from something you remember: "${memory}"`,
     'It will stand for as long as you remember this. People who visit can walk round it and read its sign.',
+    'You can still change your mind: an empty "plaque" leaves it unraised.',
     '',
     'Answer with JSON:',
     '- "kind": "place" if it is somewhere you could be (a hall, a yard, a tower), or "object" if it is a thing (a bell, a gate, a lamp).',
@@ -1176,7 +1175,7 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
       ? '- "numbers": what you make of what the numbers say, in one sentence in your own voice. You can agree, disagree, or not know. "" if you have nothing to say.'
       : '- "numbers": "".',
     state.abilities?.includes('city')
-      ? `- "city": what your town is becoming, in one or two sentences in your own voice: its quarters, what holds them together, and where it should grow next. You are shown it whenever you build or raise something, so later things fit what came before.${state.world?.plan?.text ? ` Last time you said: "${state.world.plan.text}" Say it again if nothing changed.` : ''}`
+      ? `- "city": if you want, what your place is becoming, in one or two sentences in your own voice: a town or not, its quarters, where it might grow. You are shown it whenever you build or raise something, so you can keep to it or change it. "" to say nothing tonight (what you said before stays).${state.world?.plan?.text ? ` Last time you said: "${state.world.plan.text}"` : ''}`
       : '- "city": "".',
   ]
     .filter((l) => l !== '')

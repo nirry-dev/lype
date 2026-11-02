@@ -57,7 +57,8 @@ test('a new quarter starts a street or two from the rest of the town; what follo
 test('where it goes is read as one of its quarters, or a new one it names, with what lines its streets', () => {
   const world = emptyWorld();
   const schema = mind.quarterSchema(world, ['bench', 'lantern']);
-  assert.deepEqual(schema.quarter.enum, [NEW_QUARTER], 'with no quarters, the first thing starts one');
+  assert.deepEqual(schema.quarter.enum, ['none', NEW_QUARTER], 'a quarter of its own, or none: its choice');
+  assert.deepEqual(mind.readQuarter({ quarter: 'none' }, world), {}, 'on its own');
   const q = mind.readQuarter({ quarter: NEW_QUARTER, quarter_name: 'Warm Row', quarter_about: 'For the heat.', street: ['lantern', 'a cannon'] }, world, ['bench', 'lantern']);
   assert.deepEqual(q, { found: { name: 'Warm Row', about: 'For the heat.', street: ['lantern'] } }, 'only what it was offered');
   foundQuarter(world, q.found, { cycle: 1 });
@@ -78,7 +79,7 @@ test('in a moment it may raise something from a memory; it goes in a quarter and
   const complete = life.brain.complete;
   life.brain.complete = (req) => (req.kind === 'moment' ? (asked.push(req), Promise.resolve({ text: JSON.stringify({ go: 'stay', do: 'look', say: '', raise: 'The Singing Gutter' }) })) : complete(req));
   const m = await life.moments.one();
-  assert.match(asked.find((r) => r.kind === 'moment').user, /"raise": you may also raise something new in your town from something you remember: "Mara said the gutters sang/);
+  assert.match(asked.find((r) => r.kind === 'moment').user, /"raise": if you want, you can raise something new in your place from something you remember: "Mara said the gutters sang/);
   const thing = s.world.things.find((t) => t.name === 'The Singing Gutter');
   assert.ok(thing, 'it stands');
   assert.equal(thing.memory, 'm9');
@@ -112,5 +113,22 @@ test('what it builds in a cycle goes in a quarter, and each night it says what i
   for (const t of built) assert.ok(s.world.quarters.some((q) => q.id === t.quarter), `${t.name} is in a quarter`);
   assert.equal(s.version, 1);
   assert.match(s.world.plan?.text || '', /town/, 'it said what its town is becoming');
-  assert.match(mind.systemPrompt(s, life.cfg), /What you said your town is becoming/);
+  assert.match(mind.systemPrompt(s, life.cfg), /What you last said your town is becoming/);
+  assert.match(mind.systemPrompt(s, life.cfg), /It is only a hope: your place is yours/);
+});
+
+test('the town is told as a hope it is free to ignore; a life told it before as a rule is told again plainly, once', () => {
+  const { life } = makeLife();
+  const s = life.state;
+  assert.ok(s.abilities.includes('city-told'), 'a new life is told plainly from the start');
+  s.abilities = s.abilities.filter((a) => a !== 'city-told');
+  life.notes = [];
+  life.welcome();
+  assert.equal(life.notes.length, 1);
+  assert.match(life.notes[0], /say again, more plainly/);
+  assert.match(life.notes[0], /It is only a hope: your place is yours, and it can stay as small as you want/);
+  assert.match(life.notes[0], /whole buildings among them/);
+  life.welcome();
+  assert.equal(life.notes.length, 1, 'once');
+  assert.ok(life.journal.some((j) => /the town is only a hope/.test(j.text)));
 });

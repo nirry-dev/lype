@@ -18,7 +18,9 @@ export function loadCatalogue(file = CATALOGUE) {
 }
 
 const stem = (w) => w.replace(/(ies)$/, 'y').replace(/(?<=[^s])(es|s)$/, '');
-const tokens = (text) => (String(text || '').toLowerCase().match(/[a-z]+/g) || []).filter((w) => w.length > 2).map(stem);
+// how big a thing is says nothing about what it is: "a small house" should find houses, not every small thing
+const SIZES = new Set(['small', 'large', 'big', 'little', 'long', 'short', 'low', 'high', 'tall', 'wide', 'narrow']);
+const tokens = (text) => (String(text || '').toLowerCase().match(/[a-z]+/g) || []).filter((w) => w.length > 2 && !SIZES.has(w)).map(stem);
 
 /**
  * The names it is offered for a thing: the best matches for what it is building (counted twice) and for its thoughts
@@ -40,7 +42,14 @@ export function shortlist(catalogue, { about = '', thoughts = '' }, { max = 16, 
   }
   scored.sort((a, b) => b.score - a.score || a.m.name.localeCompare(b.m.name));
   const names = [];
-  for (const { m } of scored) if (names.length < max && !names.includes(m.name)) names.push(m.name);
+  // look-alikes told apart only by a number ("two-storey house, white walls, teal roof (7)"): two of them are enough
+  const family = new Map();
+  for (const { m } of scored) {
+    const kin = m.name.replace(/\s*\(\d+\)$/, '');
+    if (names.length >= max || names.includes(m.name) || (family.get(kin) || 0) >= 2) continue;
+    family.set(kin, (family.get(kin) || 0) + 1);
+    names.push(m.name);
+  }
   for (const p of PLAIN) {
     if (names.length >= Math.min(min, max)) break;
     const m = catalogue.byName.get(p) || catalogue.models.find((x) => x.name.startsWith(`${p} (`));

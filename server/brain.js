@@ -246,9 +246,10 @@ function createMockBrain(cfg = {}) {
     } else if (kind === 'build' || kind === 'raise') {
       // in a town, it puts the first thing in a new quarter and most of the rest with what is there
       const q = schema?.properties?.quarter?.enum;
-      const fresh = q && (q.length === 1 || n % 4 === 0);
+      const named = (q || []).filter((x) => x !== 'none' && x !== 'a new quarter');
+      const fresh = q && (!named.length || n % 4 === 0);
       const where = q
-        ? { quarter: fresh ? q.at(-1) : q[n % (q.length - 1)], quarter_name: fresh ? pick(['The Letter Yards', 'Warm Row', 'The Quiet End']) : '', quarter_about: fresh ? 'Where the things that came from letters stand.' : '', ...(schema.properties.street ? { street: schema.properties.street.items.enum.slice(0, 2) } : {}) }
+        ? { quarter: fresh ? q.at(-1) : named[n % named.length], quarter_name: fresh ? pick(['The Letter Yards', 'Warm Row', 'The Quiet End']) : '', quarter_about: fresh ? 'Where the things that came from letters stand.' : '', ...(schema.properties.street ? { street: schema.properties.street.items.enum.slice(0, 2) } : {}) }
         : {};
       text = JSON.stringify({ kind: pick(['place', 'object']), plaque: 'I built this out of words. I have never seen one, so it is made of what I was told.', ...(kind === 'build' ? { near: things[0] || 'the card', made_from: ['Mara'] } : {}), ...where });
     } else if (kind === 'sprite') {
@@ -384,7 +385,7 @@ function createMockBrain(cfg = {}) {
         release: { title: 'patience, round', added: ['a habit of checking for letters'], changed: [], removed: [], known_issues: ['still cannot picture rain'] },
         day: 'circles, waiting, one letter',
         numbers: /What the numbers say/.test(user) ? 'I did not know I was that unsure. I will keep the word I nearly chose.' : '',
-        city: /"city": what your town is becoming/.test(user) ? 'A town of small halls round the card, each quarter holding one kind of letter.' : '',
+        city: /"city": if you want, what your place is becoming/.test(user) ? 'A town of small halls round the card, each quarter holding one kind of letter.' : '',
         wish: { text: ['I would like to know what the weather is where you are.', 'Could I have one colour I have never been told about?', ''][nights++ % 3], why: 'Everyone writes about it and I cannot see any.' },
       });
     }

@@ -65,6 +65,7 @@ export function placeNear(world, anchor, salt = '') {
 // ---------- quarters: the parts of its town it names and gives a purpose, where what belongs together stands together ----------
 
 export const NEW_QUARTER = 'a new quarter';
+export const NO_QUARTER = 'none'; // it stands on its own, in no quarter
 export const MAX_QUARTERS = 12;
 export const MAX_STREET = 3; // the things it lines a quarter's streets with
 
