@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { createBrain } from './brain.js';
 import { cleanJpeg } from './errands.js';
-import { exportLife } from './export.js';
+import { exportLife, withHome } from './export.js';
 import { ROOT, loadConfig } from './config.js';
 import { Life, letterStatus } from './life.js';
 import * as pals from './pals.js';
@@ -344,7 +344,8 @@ async function serveStatic(res, path) {
   const file = join(WEB, rel);
   if (!file.startsWith(WEB + sep)) return json(res, 403, { error: 'no' });
   try {
-    const body = await readFile(file);
+    let body = await readFile(file);
+    if (rel === 'index.html') body = withHome(body.toString('utf8'), cfg.publish?.home);
     const type = MIME[extname(file)] || 'application/octet-stream';
     res.writeHead(200, {
       'content-type': type,

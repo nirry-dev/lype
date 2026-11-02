@@ -13,6 +13,17 @@ import { loadCatalogue } from './models.js';
 import { outbox } from './pals.js';
 import * as views from './views.js';
 
+/** The page with a way back to the site it lives on at the left of its header (publish.home), if there is one. */
+export function withHome(page, home) {
+  if (!/^https:\/\/[\w.-]+(:\d+)?(\/[\w./-]*)?$/.test(home?.url || '') || !home.name) return page;
+  const name = escapeHtml(home.name);
+  const link = `<a class="home-link" href="${home.url}" aria-label="${name}, home"><span class="home-mark" aria-hidden="true">◢</span>${name}</a><span class="home-sep" aria-hidden="true">/</span>`;
+  return page.replace('<header class="top">', `<header class="top">
+      ${link}`);
+}
+
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
 /** Writes one life (cfg.dataDir) to `out`, and the lives before it to out/ancestors/<k>/. Returns what it wrote. */
 export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   const store = createStore(cfg.dataDir);
@@ -88,7 +99,7 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   // Stamped URLs, so a browser (or a CDN) holding the previous export's files can't pair them with this page.
   const stamp = snapshotAt.replace(/\D/g, '').slice(0, 14);
   const relayMeta = /^https:\/\/[\w.-]+(:\d+)?\/?$|^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(relayUrl || '') ? `\n    <meta name="iterant-relay" content="${relayUrl.replace(/\/$/, '')}" />` : '';
-  const page = readFileSync(join(web, 'index.html'), 'utf8')
+  const page = withHome(readFileSync(join(web, 'index.html'), 'utf8'), cfg.publish?.home)
     .replace('<meta name="color-scheme" content="dark" />', `<meta name="color-scheme" content="dark" />\n    <meta name="iterant-snapshot" content="data/" />${relayMeta}`)
     .replace('href="style.css"', `href="style.css?v=${stamp}"`)
     .replace('src="app.js"', `src="app.js?v=${stamp}"`);

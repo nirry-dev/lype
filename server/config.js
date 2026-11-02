@@ -96,6 +96,8 @@ const DEFAULTS = {
     git: false,
     // Where that copy can be seen (https), so its pen pals can link to it. "" = it has no public page.
     url: '',
+    // The site that copy lives on, linked at the left of its header as a way back ({ url, name }; "" url = no link).
+    home: { url: '', name: '' },
   },
   relay: {
     // A relay (relay/, a Cloudflare Worker) it dials out to, so a static site can follow it live and visitors can write

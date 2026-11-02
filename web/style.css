@@ -107,6 +107,34 @@ select {
   color: var(--night);
 }
 /* Live at full power: fades in and out (and lingers a little before it goes), so turning it on and off is never a jolt */
+/* A way back to the site its published copy lives on (publish.home), in that site's own mark */
+.home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  color: var(--text);
+  font: 500 13px/1 var(--mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-decoration: none;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+.home-link:hover,
+.home-link:focus-visible {
+  opacity: 1;
+}
+.home-mark {
+  color: #2fe6d0;
+  letter-spacing: 0;
+}
+.home-sep {
+  flex: none;
+  margin: 0 -10px;
+  color: var(--dim);
+  font: 14px/1 var(--mono);
+}
 .power-badge {
   display: inline-flex;
   align-items: center;
@@ -1606,7 +1634,7 @@ dialog::backdrop {
   }
 }
 /* Where every tab won't fit beside its name and status, the tabs take their own row instead of hiding off the end */
-@media (max-width: 1240px) {
+@media (max-width: 1440px) {
   .top {
     flex-wrap: wrap;
     gap: 8px 14px;
