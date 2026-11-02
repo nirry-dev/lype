@@ -26,7 +26,7 @@ export const openErrands = (list) => list.filter((e) => e.status === 'open');
  * Post an errand (or hold it for its keeper). Returns the errand, or null if it is one it already has open.
  * Past the limit it lets its oldest open errand go.
  */
-export function addErrand(list, { text, why, cycle, version, at, held = false, reason = '' }) {
+export function addErrand(list, { text, why, cycle, version, at, held = false, reason = '', wish = null }) {
   if (list.some((e) => ['open', 'held'].includes(e.status) && similarity(e.text, text) >= 0.6)) return null;
   const errand = {
     id: `e${list.length + 1}`,
@@ -37,6 +37,7 @@ export function addErrand(list, { text, why, cycle, version, at, held = false, r
     at,
     status: held ? 'held' : 'open',
     ...(held ? { heldBecause: reason } : {}),
+    ...(wish ? { wish } : {}), // the wish it came from: filling it grants the wish
     returns: [],
     filledBy: null,
   };

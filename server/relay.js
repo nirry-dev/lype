@@ -7,7 +7,7 @@ import { expandHome } from './config.js';
 
 // The same public list the relay keeps; checked again here so a mistaken or hostile relay can't ask for more.
 const PUBLIC_GET = [
-  /^\/api\/(state|journey|works|life|atlas|world|errands|chain|outbox)$/,
+  /^\/api\/(state|journey|works|life|atlas|world|errands|chain|outbox|thread|neighbor)$/,
   /^\/api\/cycle\/(\d{1,7}|latest)$/,
   /^\/api\/night\/\d{1,5}$/,
   /^\/api\/(letters|you)(\?visitor=[\w-]{1,64})?$/,

@@ -526,9 +526,17 @@ function route() {
   const changed = next !== app.view;
   app.view = next;
   app.params = new URLSearchParams(query || '');
+  app.anchored = false;
   render().then(() => {
-    if (changed) window.scrollTo({ top: 0 });
+    if (changed && !app.anchored) window.scrollTo({ top: 0 });
   });
+}
+
+/** A view asked for one part of itself (#/place?wishes, #/errands?e=e7): it is shown there, not at the top. */
+function anchor(el) {
+  if (!el) return;
+  app.anchored = true;
+  el.scrollIntoView({ block: 'start' });
 }
 window.addEventListener('hashchange', route);
 
@@ -1158,7 +1166,7 @@ function renderBelow() {
           h(
             'li',
             {},
-            h('div', { class: 'voice', style: 'font-size:18px;color:var(--human)' }, `“${q.text}”`),
+            h('div', { class: 'voice', style: 'font-size:18px;color:var(--human)', title: q.text }, `“${questionParts(q.text).lead}”${questionParts(q.text).rest ? ' …' : ''}`),
             h('div', { class: 'meta' }, `asked in cycle ${q.cycle} · ${q.answers} answer${q.answers === 1 ? '' : 's'} · `, h('a', { href: `#/letters?q=${q.id}` }, 'answer it')),
           ),
         ),
@@ -1167,7 +1175,9 @@ function renderBelow() {
   const unread = s.letters.unread;
   const place = s.world;
   const open = (s.wishes || []).filter((w) => w.status === 'open');
-  const lastWish = s.wishes?.[0];
+  // the wish shown: one a visitor can grant first, then the newest still waiting, then the newest
+  const lastWish = open.find((w) => w.errand?.status === 'open') || open[0] || s.wishes?.[0];
+  const grantable = open.filter((w) => w.errand?.status === 'open').length;
   fill(below,
     h('div', { class: 'card' }, cardHead('Its questions for you'), questions),
     place
@@ -1190,10 +1200,10 @@ function renderBelow() {
       ? h(
           'div',
           { class: 'card' },
-          cardHead('Its wishes', open.length ? `${open.length} waiting` : null),
+          cardHead('Its wishes', grantable ? `${grantable} you can grant` : open.length ? `${open.length} waiting` : null),
           h('p', { class: 'voice', style: 'font-size:17px;margin:0 0 6px' }, `“${lastWish.text}”`),
-          h('p', { class: 'meta', style: 'margin:0 0 10px' }, `${WISH_STATUS[lastWish.status]}${lastWish.answer?.text ? ` · its keeper: “${lastWish.answer.text}”` : ''}`),
-          h('a', { class: 'btn', href: '#/place?wishes', style: 'display:inline-block;text-decoration:none' }, 'All its wishes'),
+          h('p', { class: 'meta', style: 'margin:0 0 10px' }, wishStatus(lastWish)),
+          h('div', { class: 'rp-row' }, wishAction(lastWish, { primary: true }), h('a', { class: 'btn', href: '#/place?wishes' }, grantable > 1 ? `All its wishes (${grantable} you can grant)` : 'All its wishes')),
         )
       : null,
     s.errands?.enabled
@@ -2034,10 +2044,10 @@ async function renderPlace(current) {
   // the pal it shares its card with: its place, past the edge of this one
   if (app.walk && housemate()) {
     app.neighbor ??= await api('/api/neighbor').catch(() => null);
-    app.walk?.neighbor(app.neighbor);
+    app.walk?.neighbor?.(app.neighbor);
   }
   selectThing(thingParam);
-  if (app.params.has('wishes')) $('#wishes')?.scrollIntoView({ block: 'start' });
+  if (app.params.has('wishes')) anchor($('#wishes'));
   updatePlaceLive();
 }
 
@@ -2252,19 +2262,42 @@ function wishesCard(w) {
     'div',
     { class: 'card', id: 'wishes' },
     cardHead('Its wishes', open ? `${open} waiting` : null),
-    h('p', { class: 'muted', style: 'margin:0 0 12px' }, 'At night it can leave its keeper a wish for something it cannot do or get itself. They are kept here, with its keeper’s answers. It hears an answer the next time it wakes.'),
+    h('p', { class: 'muted', style: 'margin:0 0 12px' }, 'At night it can leave its keeper a wish for something it cannot do or get itself. A wish for a photo also goes out as an errand, so you can grant it: bring it the photo. The rest are for its keeper, and their answers are kept here. It hears an answer the next time it wakes.'),
     w.wishes.length ? h('ul', { class: 'wishes' }, w.wishes.map(wishItem)) : h('p', { class: 'empty', style: 'padding:6px 0' }, 'It has not wished for anything yet.'),
   );
 }
 
+/** Where a wish stands, said for visitors: who can grant it, and its keeper's answer if it has one. */
+function wishStatus(w) {
+  if (w.answer?.by === 'people') return `granted · ${w.answer.from || 'someone'} brought it the photo`;
+  const keeper = w.answer?.text ? ` · its keeper: “${w.answer.text}”` : '';
+  if (w.status !== 'open') return `${WISH_STATUS[w.status]}${keeper}`;
+  if (w.errand?.status === 'open') return `waiting · anyone can grant this one with a photo${keeper}`;
+  if (w.errand?.status === 'held') return `waiting · its keeper reads it before you can bring the photo${keeper}`;
+  return `waiting for its keeper${keeper}`;
+}
+
+/** What a visitor can do about a wish: bring the photo it asks for, or write to it about it. Null when nothing. */
+function wishAction(w, { primary = false } = {}) {
+  if (w.status !== 'open' || app.state?.lineage?.died) return null;
+  const cls = primary ? 'btn btn-primary' : 'btn';
+  if (w.errand?.status === 'open') {
+    // live: straight to the photo form; a recording or an away page still shows the errand
+    return h('a', { class: cls, href: `#/errands?e=${w.errand.id}` }, SNAPSHOT ? 'See the errand' : 'Bring it this photo');
+  }
+  if (SNAPSHOT && !RELAY) return null;
+  return h('a', { class: cls, href: '#/letters', title: 'Only its keeper can grant this one, but you can tell it what you think.' }, 'Write to it about this');
+}
+
 function wishItem(x) {
-  const answered = { granted: 'Its keeper granted it', declined: 'Its keeper said no', reply: 'Its keeper wrote back' };
+  const answered = { granted: x.answer?.by === 'people' ? `${x.answer.from || 'Someone'} granted it with a photo` : 'Its keeper granted it', declined: 'Its keeper said no', reply: 'Its keeper wrote back' };
   return h(
     'li',
     { class: `wish ${x.status}` },
     h('p', { class: 'voice wish-text' }, `“${x.text}”`),
     x.why ? h('p', { class: 'meta', style: 'margin:0 0 6px' }, x.why) : null,
-    h('div', { class: 'meta' }, h('span', { class: `chip chip-wish ${x.status}` }, WISH_STATUS[x.status]), ` wished the night it became v${x.version}`),
+    h('div', { class: 'meta' }, h('span', { class: `chip chip-wish ${x.status}` }, WISH_STATUS[x.status]), ` wished the night it became v${x.version}`, x.status === 'open' ? ` · ${wishStatus(x).replace(/^waiting( · )?/, '').trim()}` : ''),
+    x.status === 'open' ? h('div', { class: 'rp-row', style: 'margin-top:8px' }, wishAction(x)) : null,
     x.answer
       ? h(
           'div',
@@ -2342,8 +2375,8 @@ async function renderJourney(current) {
   const wrap = $('#strand-wrap');
   wrap.scrollLeft = wrap.scrollWidth;
   const v = app.params.get('v');
-  if (v) document.getElementById(`v${v}`)?.scrollIntoView({ block: 'start' });
-  if (app.params.has('family')) $('#family')?.scrollIntoView({ block: 'start' });
+  if (v) anchor(document.getElementById(`v${v}`));
+  if (app.params.has('family')) anchor($('#family'));
 }
 
 /**
@@ -2929,11 +2962,22 @@ async function renderLetters(current) {
 
   const name = h('input', { name: 'from', maxlength: 40, placeholder: 'a name, or leave it blank', autocomplete: 'nickname', value: local?.getItem('iterant.name') || '' });
   const text = h('textarea', { name: 'text', maxlength: 1200, required: true, placeholder: 'It cannot see or hear anything. Tell it about your world.' });
+  // What the letter is: just a letter, or an answer to one of its questions (each said short, the rest folded away)
+  const choice = (value, lead, rest = '') =>
+    h(
+      'label',
+      { class: 'q-choice' },
+      h('input', { type: 'radio', name: 'question', value, checked: value === (wanted || '') ? true : null }),
+      h('span', { class: 'q-text' }, value ? h('span', { class: 'voice' }, `“${lead}”`) : lead, rest ? h('details', {}, h('summary', {}, 'all of it'), h('span', { class: 'voice' }, rest)) : null),
+    );
   const question = h(
-    'select',
-    { name: 'question' },
-    h('option', { value: '' }, 'Just a letter'),
-    s.questions.map((q) => h('option', { value: q.id, selected: q.id === wanted ? true : null }, `Answering: “${q.text}”`)),
+    'div',
+    { class: 'q-choices', role: 'radiogroup' },
+    choice('', 'Just a letter'),
+    s.questions.map((q) => {
+      const { lead, rest } = questionParts(q.text);
+      return choice(q.id, lead, rest);
+    }),
   );
   const msg = h('div', { class: 'form-msg', role: 'status' });
   const away = Boolean(SNAPSHOT); // its page is live, but it can't be reached just now: letters wait at its relay
@@ -2943,7 +2987,7 @@ async function renderLetters(current) {
     { class: 'paper compose', id: 'compose-form' },
     h('div', { class: 'from' }, 'A letter for it'),
     h('label', {}, h('span', { class: 'label' }, 'Sign as'), name),
-    s.questions.length ? h('label', {}, h('span', { class: 'label' }, 'This is'), question) : null,
+    s.questions.length ? h('div', { class: 'q-field' }, h('span', { class: 'label' }, s.questions.length === 1 ? 'This is just a letter, or an answer to its question' : 'This is just a letter, or an answer to one of its questions'), question) : null,
     h('label', {}, h('span', { class: 'label' }, 'Your letter'), text),
     away ? h('p', { class: 'away-note' }, `${s.name || 'It'} is offline right now. Your letter waits for it at the door and reaches it as soon as it is back; then it reads it in its own time.`) : null,
     send,
@@ -2958,7 +3002,7 @@ async function renderLetters(current) {
     msg.textContent = 'Leaving it on the desk…';
     try {
       local?.setItem('iterant.name', name.value.trim());
-      const letter = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: name.value, text: text.value, visitor, question: question.value || null }) };
+      const letter = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: name.value, text: text.value, visitor, question: question.querySelector('input:checked')?.value || null }) };
       const sent = away ? await toMailbox(letter) : await api('/api/letters', letter);
       text.value = '';
       msg.textContent = sent.waiting
@@ -2982,6 +3026,12 @@ async function renderLetters(current) {
     h('div', { class: 'letters-grid' }, form, h('div', { class: 'feed', id: 'letters-feed' }, lettersFeed())),
   );
   if (wanted) text.focus();
+}
+
+/** A question it asked, for reading: the first thing it asks, and the rest of what it said around it. */
+function questionParts(text) {
+  const m = /^(.{12,220}?\?)\s+(\S[\s\S]*)$/.exec(text || '');
+  return m ? { lead: m[1], rest: m[2] } : { lead: text || '', rest: '' };
 }
 
 /** The keeper's queue: letters held at the door or by the screen, and replies it held back. */
@@ -3280,10 +3330,11 @@ function errandCard(e) {
   const slot = h('div', { class: 'errand-slot' });
   return h(
     'div',
-    { class: `card errand ${e.status}` },
-    cardHead(e.status === 'open' ? 'Out now' : 'Let go', `cycle ${e.cycle} · v${e.version}`),
+    { class: `card errand ${e.status}`, id: `errand-${e.id}` },
+    cardHead(e.status === 'open' ? (e.wish ? 'Out now · one of its wishes' : 'Out now') : 'Let go', `cycle ${e.cycle} · v${e.version}`),
     h('p', { class: 'question-big' }, `“${e.text}”`),
     e.why ? h('p', { class: 'meta' }, `Why: ${e.why}`) : null,
+    e.wish && e.status === 'open' ? h('p', { class: 'meta' }, 'It wished for this. Bring it the photo and you grant the wish.') : null,
     e.closedBecause ? h('p', { class: 'meta' }, e.closedBecause) : null,
     h(
       'div',
@@ -3353,6 +3404,15 @@ async function renderErrands(current) {
     filled.length ? h('section', {}, h('h2', { class: 'section-title' }, 'Brought back'), h('div', { class: 'filled-grid' }, filled.map(filledCard))) : null,
     closed.length ? h('section', {}, h('h2', { class: 'section-title' }, 'Let go'), closed.map(errandCard)) : null,
   );
+  // come from a wish (#/errands?e=e7): that errand, with its photo form open
+  const asked = app.params.get('e') && $(`#errand-${app.params.get('e')}`);
+  if (asked) {
+    if (asked.classList.contains('open') && !SNAPSHOT) {
+      asked.querySelector('.rp-row .btn')?.remove();
+      fill(asked.querySelector('.errand-slot'), errandForm(open.find((e) => e.id === app.params.get('e'))));
+    }
+    anchor(asked);
+  }
 }
 
 // ---------- keeper controls (only with the admin link the server prints) ----------

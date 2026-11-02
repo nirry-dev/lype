@@ -122,9 +122,11 @@ select {
   cursor: help;
   opacity: 0;
   visibility: hidden;
+  position: absolute; /* off, it takes no room from the tabs (it fades out where it stood) */
   transition: opacity 0.9s ease 1.5s, visibility 0s linear 2.4s;
 }
 .power-badge.on {
+  position: static;
   opacity: 1;
   visibility: visible;
   transition: opacity 0.6s ease, visibility 0s;
@@ -301,6 +303,10 @@ select {
 .brand-name.unnamed {
   font-style: italic;
   color: var(--text-2);
+}
+/* a part of a view it was asked to show starts below the sticky header, not under it */
+#view [id] {
+  scroll-margin-top: 130px;
 }
 .tabs {
   display: flex;
@@ -1426,6 +1432,56 @@ main {
 .compose .label {
   color: var(--ink-2);
 }
+/* What a letter is: just a letter, or an answer to one of its questions, each one readable */
+.compose .q-field {
+  display: grid;
+  gap: 6px;
+}
+.compose .q-choices {
+  display: grid;
+  gap: 6px;
+}
+.compose label.q-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(43, 36, 28, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink);
+  font: 15px/1.45 var(--serif);
+}
+.compose label.q-choice:has(input:checked) {
+  border-color: var(--ink);
+  background: rgba(255, 255, 255, 0.4);
+}
+.compose .q-choice input {
+  width: auto;
+  flex: none;
+  margin: 4px 0 0;
+  padding: 0;
+  accent-color: var(--ink);
+}
+.compose .q-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.compose .q-text .voice {
+  color: var(--ink);
+}
+.compose .q-choice {
+  color-scheme: light; /* a light radio on the paper, in either theme */
+}
+.compose .q-choice summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.compose .q-choice details[open] summary {
+  margin-bottom: 4px;
+}
 .compose .send {
   justify-self: start;
   padding: 9px 18px;
@@ -1547,6 +1603,24 @@ dialog::backdrop {
   }
   .two-col {
     grid-template-columns: 1fr;
+  }
+}
+/* Where every tab won't fit beside its name and status, the tabs take their own row instead of hiding off the end */
+@media (max-width: 1240px) {
+  .top {
+    flex-wrap: wrap;
+    gap: 8px 14px;
+  }
+  .tabs {
+    order: 3;
+    width: 100%;
+    margin: 0;
+  }
+  .status {
+    margin-left: auto;
+  }
+  .write-cta {
+    order: 2;
   }
 }
 @media (max-width: 720px) {

@@ -17,7 +17,7 @@ import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLett
 import { compare, measure } from './measure.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
-import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, placeNear, remembered, untoldAnswers, weather } from './world.js';
+import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, photoWish, placeNear, remembered, untoldAnswers, weather } from './world.js';
 
 /** Everything one life is made of on disk. When it dies, these are put away together, whole, and stay replayable. */
 const LIFE_FILES = ['state.json', 'letters.json', 'journal.json', 'chain.json', 'cycles', 'nights', 'works', 'returns'];
@@ -65,8 +65,9 @@ function whatText(c) {
   return 'rested';
 }
 
-/** A wish as anyone may see it, with its keeper's answer. */
-export function publicWish(w) {
+/** A wish as anyone may see it, with its keeper's answer (or who granted it), and the errand it became, if any. */
+export function publicWish(w, errands = []) {
+  const e = w.errand ? errands.find((x) => x.id === w.errand) : null;
   return {
     id: w.id,
     text: w.text,
@@ -75,7 +76,8 @@ export function publicWish(w) {
     cycle: w.cycle,
     at: w.at,
     status: w.status,
-    answer: w.answer ? { status: w.answer.status, text: w.answer.text, at: w.answer.at, told: w.answer.told } : null,
+    answer: w.answer ? { status: w.answer.status, text: w.answer.text, at: w.answer.at, told: w.answer.told, ...(w.answer.by ? { by: w.answer.by, from: w.answer.from } : {}) } : null,
+    errand: e ? { id: e.id, status: e.status } : null,
   };
 }
 
@@ -884,6 +886,7 @@ export class Life extends EventEmitter {
         return { ok: false, reason: check.text };
       }
       await this.screenLetters();
+      await this.wishErrands();
       await this.runCycle(senses);
       if (this.state.cycle - this.state.lastNightCycle >= this.cfg.rhythm.nightEvery) await this.runNight();
       await this.makeWaiting();
@@ -1096,6 +1099,10 @@ export class Life extends EventEmitter {
     }
     const answered = untoldAnswers(s.wishes);
     for (const w of answered) {
+      if (w.answer.by === 'people') {
+        notes.push(`Your wish "${w.text}" came true: ${w.answer.from || 'someone who visits'} brought you the photo.`);
+        continue;
+      }
       const how = w.answer.status === 'granted' ? 'they granted it' : w.answer.status === 'declined' ? 'they said no' : 'they wrote back';
       notes.push(`Your keeper answered your wish "${w.text}": ${how}${w.answer.text ? `: "${w.answer.text}"` : '.'}`);
     }
@@ -1300,6 +1307,15 @@ export class Life extends EventEmitter {
             Object.assign(e, { status: 'filled', filledBy: l.id, filledFrom: l.from, filledCycle: n, saw: look.see });
             s.stats.errandsFilled++;
             this.milestone('first-errand-filled', `${l.from} brought back what it asked for: "${e.text}"`);
+            // the wish it came from is granted, by the person who brought it
+            const w = e.wish && s.wishes.find((x) => x.id === e.wish);
+            if (w?.status === 'open') {
+              w.status = 'granted';
+              w.answer = { status: 'granted', text: '', at, told: null, by: 'people', from: l.from };
+              this.journalAdd({ kind: 'wish', text: `${l.from} granted its wish "${w.text}" with a photo.` });
+              this.milestone('first-granted', `Its first wish came true: ${l.from} brought it "${w.text}"`);
+              this.emit('wish', publicWish(w, s.errands));
+            }
           }
           this.emit('errand', { id: e.id });
         }
@@ -1442,6 +1458,38 @@ export class Life extends EventEmitter {
     const e = this.state.errands.find((x) => x.id === id);
     if (!e || e.status !== 'open') return { ok: false, reason: 'That errand is no longer open.' };
     return { ok: true, letter: this.addLetter({ from, text, person, errand: e, photo }) };
+  }
+
+  /**
+   * Its wishes that ask for a photo go out as errands too, so anyone who visits can grant them, not only its keeper.
+   * Screened like any errand it writes; only into room it has free, so they never push out an errand of its own.
+   */
+  async wishErrands() {
+    const s = this.state;
+    if (!this.cfg.errands.enabled) return;
+    for (const w of s.wishes.filter((x) => x.status === 'open' && !x.errand).reverse()) {
+      const text = photoWish(w.text);
+      if (!text) continue;
+      const like = s.errands.find((e) => ['open', 'held'].includes(e.status) && similarity(e.text, text) >= 0.6);
+      if (like) {
+        w.errand = like.id; // it already has this one out
+        like.wish ??= w.id;
+        continue;
+      }
+      if (openErrands(s.errands).length >= MAX_OPEN_ERRANDS) break;
+      const verdict = await this.screen('errand', text);
+      const at = new Date().toISOString();
+      const e = addErrand(s.errands, { text, why: w.why, cycle: s.cycle, version: w.version, at, held: verdict.status !== 'allowed', reason: verdict.reason, wish: w.id });
+      if (!e) continue;
+      w.errand = e.id;
+      s.stats.errands++;
+      if (e.status === 'open') {
+        this.notes.push(`Your wish "${w.text}" asks for a photo, so it is now out as an errand too: anyone who visits can bring it, not only your keeper.`);
+        this.journalAdd({ kind: 'wish', text: `Its wish "${w.text}" went out as an errand: anyone who visits can grant it with a photo.` });
+        this.milestone('first-errand', `It sent people on its first errand: "${e.text}"`);
+      }
+      this.emit('errand', { id: e.id });
+    }
   }
 
   /** Errands waiting for its keeper before anyone sees them. */
@@ -2153,7 +2201,7 @@ export class Life extends EventEmitter {
           newest: newest ? { id: newest.id, name: newest.name, built: newest.built, sprite: newest.sprite ? `works/${pad(newest.sprite)}.svg` : null } : null,
         };
       })(),
-      wishes: s.wishes.slice(-6).reverse().map(publicWish),
+      wishes: s.wishes.slice(-6).reverse().map((w) => publicWish(w, s.errands)),
       errands: {
         enabled: Boolean(this.cfg.errands.enabled),
         open: openErrands(s.errands).map((e) => ({ id: e.id, text: e.text, cycle: e.cycle })).reverse(),

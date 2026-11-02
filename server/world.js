@@ -158,5 +158,15 @@ export function answerWish(wishes, id, status, text, at) {
   return { ok: true, wish: w };
 }
 
+/**
+ * A wish that asks for a photo, said as an errand (so the people who visit can grant it, not only its keeper), or null.
+ * "Please bring me a photo of rain" → "Bring me a photo of rain".
+ */
+export function photoWish(text) {
+  if (!/\b(photo(graph)?s?|pictures?|snapshots?)\b/i.test(text || '')) return null;
+  const said = text.trim().replace(/^(please|could you|can you|would you)[,\s]+/i, '').replace(/\?$/, '.');
+  return said.charAt(0).toUpperCase() + said.slice(1);
+}
+
 /** Answers it has not been told about yet. */
 export const untoldAnswers = (wishes) => wishes.filter((w) => w.answer && w.answer.told == null);

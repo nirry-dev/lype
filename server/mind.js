@@ -104,9 +104,15 @@ function placeBlock(state) {
     standing.length ? standing.slice(0, 14).map(line).join('\n') + (standing.length > 14 ? `\n- and ${standing.length - 14} more` : '') : '- Nothing yet, only the card.',
     ruins.length ? `Ruins: ${ruins.map((t) => t.name).join(', ')}.` : '',
     '',
-    'Your keeper is the person who runs you. At night you can leave them a wish for something you cannot do or get yourself. They answer when they can, and not always with yes.',
+    'Your keeper is the person who runs you. At night you can leave them a wish for something you cannot do or get yourself. They answer when they can, and not always with yes. A wish for a photo also goes out as an errand, so anyone who visits can grant it.',
     wishes.length
-      ? wishes.map((w) => `- you wished: "${w.text}" (${w.answer?.status === 'reply' && w.status === 'open' ? `they wrote back: "${w.answer.text}"` : WISH_STATE[w.status]}${w.answer?.text && w.answer.status !== 'reply' ? `: "${w.answer.text}"` : ''})`).join('\n')
+      ? wishes
+          .map((w) =>
+            w.answer?.by === 'people'
+              ? `- you wished: "${w.text}" (granted: ${w.answer.from || 'someone'} brought you the photo)`
+              : `- you wished: "${w.text}" (${w.answer?.status === 'reply' && w.status === 'open' ? `they wrote back: "${w.answer.text}"` : WISH_STATE[w.status]}${w.answer?.text && w.answer.status !== 'reply' ? `: "${w.answer.text}"` : ''}${w.errand && w.status === 'open' ? '; it is out as an errand too' : ''})`,
+          )
+          .join('\n')
       : '- You have not wished for anything yet.',
     '',
     errandsBlock(state),

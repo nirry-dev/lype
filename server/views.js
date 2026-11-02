@@ -87,7 +87,7 @@ export function world(life) {
     })),
     credit: things.some(([, form]) => form?.parts.some((p) => p.model)) ? life.catalogue.credit : null,
     madeBy: things.some(([, form]) => form?.parts.some((p) => p.made)) ? MADE_BY : null,
-    wishes: s.wishes.map(publicWish).reverse(),
+    wishes: s.wishes.map((w) => publicWish(w, s.errands)).reverse(),
   };
 }
 
@@ -113,6 +113,7 @@ export function errands(life) {
       closedBecause: e.closedBecause || null,
       filledBy: e.filledBy,
       filledCycle: e.filledCycle ?? null,
+      wish: e.wish ? life.state.wishes.find((w) => w.id === e.wish)?.text || null : null,
       returns: (returns.get(e.id) || []).reverse(),
     }))
     .reverse();
