@@ -93,13 +93,14 @@ export function furnishings(catalogue) {
 /**
  * The things it is offered to set down beside a thing in a moment: what matches it (and what it last thought) by
  * meaning or words, then a couple from anywhere among the furnishings, so its place does not fill with one kind of thing.
+ * `avoid`: names not to offer this time (what it has already set down enough of).
  */
-export async function aroundOffer(catalogue, meaning, about, { max = 8, salt = '' } = {}) {
-  const pool = furnishings(catalogue);
+export async function aroundOffer(catalogue, meaning, about, { max = 8, salt = '', avoid = new Set() } = {}) {
+  const pool = furnishings(catalogue).filter((m) => !avoid.has(m.name));
   if (!pool.length) return [];
   const names = new Set(pool.map((m) => m.name));
   const meant = await byMeaning(catalogue, meaning, about, { pool, max: max - 2 });
-  const words = shortlist(catalogue, { about }, { max, min: 0 }).filter((n) => names.has(n));
+  const words = shortlist(catalogue, { about }, { max: max * 2, min: 0 }).filter((n) => names.has(n));
   const picked = [...new Set([...meant, ...words])].slice(0, max - 2);
   let x = 0;
   for (const ch of salt) x = (x * 31 + ch.charCodeAt(0)) >>> 0;

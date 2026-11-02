@@ -26,6 +26,8 @@ const NEAR_WAKE = 45000; // no moment this close to a cycle (or a quarter of the
 const FULL_GAP = 1500; // at full power, the pause between one moment and the next
 const COOL_BY = 5; // degrees under its ceiling the card comes back to before it goes on at full power
 const BRING_EVERY = 6; // the least time between one thing it sets down and the next, in its usual moments (~9 minutes)
+const SAME_HERE = 2; // the most of one thing it is offered to set down beside one thing it built
+const SAME_EVERYWHERE = 3; // ... and in its whole place
 const FULL_EVERY = 40; // ... once every place round what it built is taken, and something has to make way (~an hour)
 
 const until = (ms) => (ms < 90000 ? 'in about a minute' : `in about ${Math.round(ms / 60000)} minutes`);
@@ -227,7 +229,13 @@ export class Moments {
     if (last < (room ? BRING_EVERY : FULL_EVERY) * this.every) return [];
     life.catalogue ??= loadCatalogue();
     const here = s.world.things.find((t) => t.id === s.about?.at && !t.ruin) || standing[Math.floor(Math.random() * standing.length)];
-    return aroundOffer(life.catalogue, life.meaning, `${here.name}: ${here.plaque} ${thought}`.slice(0, 600), { salt: `${s.about?.n ?? 0}` });
+    // what it already has enough of is not offered again: twice beside the thing it is by, or SAME_EVERYWHERE times in
+    // its place (its thoughts circle round a few things, and so would what it is offered: a street of one stone)
+    const count = (things) => things.flatMap((t) => (t.around || []).map((a) => a.name)).reduce((m, n) => m.set(n, (m.get(n) || 0) + 1), new Map());
+    const near = count([here]);
+    const all = count(standing);
+    const avoid = new Set([...all.keys()].filter((n) => (near.get(n) || 0) >= SAME_HERE || all.get(n) >= SAME_EVERYWHERE));
+    return aroundOffer(life.catalogue, life.meaning, `${here.name}: ${here.plaque} ${thought}`.slice(0, 600), { salt: `${s.about?.n ?? 0}`, avoid });
   }
 
   /** It sets down what it chose beside the thing it went to (not its card, not a ruin). What to tell, or null. */

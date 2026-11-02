@@ -428,6 +428,14 @@ export function actSchema(tired, { canTend = true, canErrand = true } = {}) {
   return { ...ACT_SCHEMA, properties: { ...ACT_SCHEMA.properties, action: { type: 'string', enum: allowed } } };
 }
 
+/** Whose letters, read this cycle, nothing in its place comes from yet: a plain fact, since its place grows out of letters. */
+function unbuiltLine(ctx) {
+  const names = [...new Set((ctx.letters || []).filter((l) => l.unbuilt).map((l) => l.from))];
+  if (!names.length || !ctx.world.count) return '';
+  const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+  return `Nothing in your place comes from ${who}'s letters yet.`;
+}
+
 export function actPrompt(ctx, monologue) {
   const ids = ctx.letters.map((l) => l.id).join(', ');
   // Rotate the options so the first one listed isn't always the one a small model picks; while its place is
@@ -450,6 +458,7 @@ export function actPrompt(ctx, monologue) {
     mix.everAsked ? '' : 'You have never asked the people who visit you anything.',
     ctx.errands?.canPost && !mix.everErrand ? 'You have never sent anyone on an errand, so you have never seen anything.' : '',
     ctx.world.count ? (ctx.cycle - ctx.world.lastBuilt >= 10 ? `You last built something new ${ctx.cycle - ctx.world.lastBuilt} cycles ago.` : '') : 'You have never built anything in your place.',
+    unbuiltLine(ctx),
     "You don't have to make something every time, and you don't have to repeat what you did last time.",
     ctx.letters.length
       ? `"reply_to" lists the ids of the letters you opened that you want to answer (${ids}); you will write the replies next. Answering is optional.`

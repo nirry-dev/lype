@@ -1139,6 +1139,8 @@ export class Life extends EventEmitter {
         kin: Boolean(l.kin),
         coParent: Boolean(l.pal && l.pal.id === s.parent?.coParent?.id),
         remembered: s.memory.shelves.people.filter((m) => sameName(m.about, l.from)).map((m) => m.text).slice(0, 3),
+        // nothing in its place comes from this writer's letters yet (a photo brought back is an answer, not a letter)
+        unbuilt: !l.errand && !s.world.things.some((t) => (t.people || []).some((p) => sameName(p, l.from))),
         question: l.question ? s.questions.find((q) => q.id === l.question)?.text : undefined,
         errand: l.errand ? { text: l.errand.text, look: looks.get(l.id) } : undefined,
       })),

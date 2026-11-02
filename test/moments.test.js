@@ -273,3 +273,24 @@ test('in a moment it may set down something it borrowed beside what it built, no
   assert.equal(put.slot, removed.slot);
   assert.equal(t.around.length, AROUND);
 });
+
+test('it is not offered more of what it already set down enough of: twice beside one thing, three times in its place', async () => {
+  const { life } = makeLife();
+  things(life, 'The Soft Arch', 'A Bench for Waiting');
+  life.catalogue ??= (await import('../server/models.js')).loadCatalogue();
+  const [arch, bench] = life.state.world.things;
+  const stone = { model: 'nature/stone_smallFlatA', name: 'stone small flat' };
+  arch.around = [{ ...stone, slot: 0 }, { ...stone, slot: 1 }];
+  life.state.about = { n: 1, at: 'T1', doing: 'look', say: '', since: new Date().toISOString() };
+  for (let i = 0; i < 20; i++) {
+    life.state.about.n = i;
+    assert.ok(!(await life.moments.bringable('flat stone floor')).includes('stone small flat'), 'twice beside the arch');
+  }
+  arch.around = [{ ...stone, slot: 0 }];
+  bench.around = [{ ...stone, slot: 0 }, { ...stone, slot: 3 }];
+  life.state.about.at = 'T1';
+  for (let i = 0; i < 20; i++) {
+    life.state.about.n = i;
+    assert.ok(!(await life.moments.bringable('flat stone floor')).includes('stone small flat'), 'three times in its place');
+  }
+});

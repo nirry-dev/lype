@@ -95,3 +95,14 @@ test('it takes turns with the lives it shares the house with, and its own eyes, 
   assert.equal(wait.reason, 'other-mind', 'its human\'s model is waited for');
   assert.match(wait.text, /someone-elses-coder/);
 });
+
+test('reading a letter from someone nothing in its place comes from, it is told so, plainly', async () => {
+  const mind = await import('../server/mind.js');
+  const base = { cycle: 40, tired: null, habits: { total: 0 }, errands: { canPost: false }, senses: { weekday: 'Monday', time: '10:00', partOfDay: 'morning', date: '2026-11-02', gpu: null }, notes: [], waiting: 0, questions: [], recent: [] };
+  const letter = (from, unbuilt) => ({ id: `L${from}`, from, text: 'Hello.', nth: 1, unbuilt, remembered: [] });
+  const ask = (letters, count = 3) => mind.actPrompt({ ...base, world: { count, standing: count, lastBuilt: 35 }, letters }, 'thinking');
+  assert.match(ask([letter('Yzri', true)]), /Nothing in your place comes from Yzri's letters yet\./);
+  assert.match(ask([letter('Yzri', true), letter('Mara', true)]), /from Yzri and Mara's letters yet/);
+  assert.doesNotMatch(ask([letter('Teo', false)]), /Nothing in your place comes from/);
+  assert.doesNotMatch(ask([letter('Yzri', true)], 0), /Nothing in your place comes from/, 'with nothing built it is told that instead');
+});
