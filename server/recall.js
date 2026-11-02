@@ -6,22 +6,31 @@
 // What comes back is steered away from what it already dwells on: nothing it holds on its shelves, nothing it wrote in
 // its diary lately, nothing from its last few cycles, nothing it was reminded of recently, and no two things alike.
 // Letters and what it forgot come back a little more readily than its own musing.
+//
+// The present calls things up by the words they share, and (when a model for meaning is running: meaning.js) by what
+// they are about: a letter about the air tasting of dust can call up an old letter about rain on the roof.
 import { THEME, kin, words } from './memory.js';
 
 const MAX = 3; // things recalled in a cycle
 const RECENT = 8; // its last cycles are not recalled: it has them already
 const REST = 12; // cycles before the same thing can come back
 const MIN = 1.5; // how strongly the present has to call something up
+// By meaning: a thing is called up only when it stands out from everything else this present is near (each letter's
+// own background differs), and is close in its own right. Calibrated on its own history (see README, Meaning).
+const NEAR = 0.66;
+const ABOVE = 0.07; // above the closeness of the tenth-nearest in a hundred
 const KIND_WEIGHT = { letter: 1.5, reply: 1.3, forgotten: 1.3, work: 1, dream: 0.9, diary: 0.8, thought: 0.7, aloud: 0.7 };
 
+const body = (text) => text.replace(/^[^"]*"|"$/g, '');
 const quote = (t, max) => {
   const s = String(t ?? '').replace(/\s+/g, ' ').trim();
   return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
 };
 
 export class Recall {
-  constructor(life) {
+  constructor(life, meaning = null) {
     this.life = life;
+    this.meaning = meaning;
     this.items = [];
     this.ids = new Set();
     this.df = new Map(); // in how many things each word appears
@@ -72,6 +81,35 @@ export class Recall {
     for (const m of list) this.add({ id: `f:${m.id}`, kind: 'forgotten', cycle: m.forgottenAt ?? m.born ?? 0, at: null, text: `Something you no longer remember: "${quote(m.text, 220)}"` });
   }
 
+  /** What the present is, said for the model of meaning: each letter (with who wrote it), and the thing it is by. */
+  queries({ letters = [], place = null }) {
+    return [...letters.map((l) => `${l.from}: ${l.text}`), ...(place ? [`${place.name}: ${place.plaque || ''}`] : [])];
+  }
+
+  /** Read what the model of meaning needs for a cue (everything new since last time). Never throws. */
+  async prepare({ letters = [], place = null, avoid = [] }) {
+    const m = this.meaning;
+    if (!m?.up) return;
+    await m.ensure(this.items.map((it) => it.text), 'document');
+    await m.ensure(this.queries({ letters, place }), 'query');
+    await m.ensure([...avoid, ...this.items.map((it) => body(it.text))]);
+  }
+
+  /** How strongly each thing is called up by meaning (0 for most), from whichever part of the present is nearest. */
+  byMeaning(cueArgs) {
+    const m = this.meaning;
+    const out = new Map();
+    if (!m) return out;
+    for (const q of this.queries(cueArgs)) {
+      const near = this.items.map((it) => [it, m.closeness(q, it.text)]).filter(([, c]) => c != null);
+      if (near.length < 20) continue;
+      const sorted = near.map(([, c]) => c).sort((a, b) => b - a);
+      const bar = Math.max(NEAR, sorted[Math.floor(sorted.length / 10)] + ABOVE);
+      for (const [it, c] of near) if (c >= bar) out.set(it.id, Math.max(out.get(it.id) ?? 0, MIN + (c - bar) * 20));
+    }
+    return out;
+  }
+
   /**
    * What the present calls up: from the letters it is reading (who wrote them weighs most), and the thing it is by.
    * `cycle` is the cycle about to begin; `avoid` is text it already dwells on (its shelves, its recent diary).
@@ -90,7 +128,8 @@ export class Recall {
       add(place.name, 2);
       add(place.plaque, 0.8);
     }
-    if (!want.size) return [];
+    const meant = this.byMeaning({ letters, place });
+    if (!want.size && !meant.size) return [];
     const reading = new Set(letters.map((l) => l.id));
     const N = this.items.length;
     const scored = [];
@@ -101,15 +140,15 @@ export class Recall {
       if (last && cycle - last.cycle < REST) continue;
       let s = 0;
       for (const w of it.words) if (want.has(w)) s += want.get(w) * Math.log(1 + N / this.df.get(w));
+      s = Math.max(s / Math.sqrt(it.words.size), meant.get(it.id) ?? 0);
       if (!s) continue;
-      s = (s / Math.sqrt(it.words.size)) * (KIND_WEIGHT[it.kind] ?? 1) / (1 + (last?.count ?? 0));
+      s = (s * (KIND_WEIGHT[it.kind] ?? 1)) / (1 + (last?.count ?? 0));
       if (s >= MIN) scored.push({ it, s });
     }
     const chosen = [];
     for (const { it } of scored.sort((a, b) => b.s - a.s)) {
       if (chosen.length >= MAX) break;
-      const body = it.text.replace(/^[^"]*"|"$/g, '');
-      if (avoid.some((t) => kin(t, body) >= THEME) || chosen.some((c) => kin(c.text, it.text) >= THEME)) continue;
+      if (avoid.some((t) => kin(t, body(it.text)) >= THEME) || chosen.some((c) => kin(c.text, it.text) >= THEME || kin(body(c.text), body(it.text)) >= THEME)) continue;
       chosen.push(it);
     }
     return chosen.map(({ id, kind, cycle: c, at, text }) => ({ id, kind, cycle: c, at, text }));

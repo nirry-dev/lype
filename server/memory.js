@@ -29,14 +29,19 @@ export function similarity(a, b) {
 const NUMBER = /^(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|point|\d+(?:\.\d+)?)$/;
 export const gist = (text) => new Set([...words(String(text).replace(/-/g, ' '))].filter((w) => !NUMBER.test(w) && w !== 'learned'));
 
-/** How alike two memories are, numbers aside, 0..1. */
+// What it means, when a model for that is running (meaning.js): two memories said in different words can still be one.
+let meaning = null;
+export const useMeaning = (m) => (meaning = m);
+
+/** How alike two memories are, numbers aside, 0..1: by the words they share, or by what they mean, whichever says more. */
 export function kin(a, b) {
   const A = gist(a);
   const B = gist(b);
-  if (!A.size || !B.size) return 0;
   let common = 0;
   for (const w of A) if (B.has(w)) common++;
-  return common / (A.size + B.size - common);
+  const byWords = A.size && B.size ? common / (A.size + B.size - common) : 0;
+  const byMeaning = meaning?.alike(a, b) ?? null;
+  return byMeaning == null ? byWords : Math.max(byWords, byMeaning);
 }
 
 export const TWIN = 0.6; // this alike, a new memory only strengthens the old one
@@ -101,10 +106,11 @@ export function alike(list) {
  * The most striking lines of what it thought aloud (at full power): sentences unlike anything it already holds or
  * anything else picked, and not just a temperature again. At most `max`, as memories it could keep tonight.
  */
+export const sentences = (thoughts) => [...new Set(thoughts.flatMap((t) => String(t).split(/(?<=[.?])\s+/)).map((x) => x.trim()))];
+
 export function striking(thoughts, held, max = 3) {
   const chosen = [];
-  const sentences = [...new Set(thoughts.flatMap((t) => String(t).split(/(?<=[.?])\s+/)).map((x) => x.trim()))];
-  const scored = sentences
+  const scored = sentences(thoughts)
     .filter((x) => x.length >= 25 && x.length <= 200 && ![...words(x.replace(/-/g, ' '))].some((w) => NUMBER.test(w)))
     .map((x) => ({ x, near: Math.max(0, ...held.map((h) => kin(h, x))) }))
     .filter((c) => c.near < THEME)

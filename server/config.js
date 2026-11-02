@@ -57,6 +57,11 @@ const DEFAULTS = {
     shelfSize: 12, // slots per shelf (people / world / moments)
     halfLifeCycles: 36, // a memory's weight halves every N cycles unless something brings it back
   },
+  meaning: {
+    // An embeddings server on the CPU (llama-server --embedding --device none: see README, Meaning). Its memories are
+    // then matched by what they mean as well as by their words, and recall finds things said differently. "" = words only.
+    url: '',
+  },
   self: {
     maxOwnLines: 10,
   },

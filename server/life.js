@@ -7,10 +7,11 @@ import { formSchema, readForm, standing } from '../web/lib/form.js';
 import { loadCatalogue, shortlist } from './models.js';
 import { Maker } from './maker.js';
 import { Moments, clock } from './moments.js';
+import { Meanings } from './meaning.js';
 import { Recall } from './recall.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
 import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
-import { SHELVES, alike, consolidate, emptyMemory, fold, gist, refile, reinforce, similarity, strength, striking, words } from './memory.js';
+import { SHELVES, alike, consolidate, emptyMemory, fold, gist, refile, reinforce, sentences, similarity, strength, striking, useMeaning, words } from './memory.js';
 import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
@@ -170,6 +171,9 @@ export class Life extends EventEmitter {
     this.maker = new Maker(config, store);
     this.moments = new Moments(this); // between its cycles: where it goes in its place, and what it says there
     this.recall = null; // everything it ever thought, read and forgot, for the present to call up (built when first needed)
+    // what its memories mean, from a small model on the CPU: memories said differently can still be one (meaning.js)
+    this.meaning = new Meanings({ url: config.meaning?.url, file: store.path('cache/meanings.jsonl') });
+    useMeaning(this.meaning);
     this.card = null; // who has the graphics card right now: it, a pal it shares the card with, nobody, or someone else
     this.neighbor = store.read('neighbor.json', null); // the place of a pal it shares the card with, as that pal shows it
     this.letters = store.read('letters.json', []);
@@ -917,6 +921,7 @@ export class Life extends EventEmitter {
     // first each memory goes where it belongs, said plainly ("I learned that the arch holds" is "The arch holds")
     for (const k of SHELVES) for (const m of s.memory.shelves[k]) m.text = mind.plainly(m.text);
     this.refiled = refile(s.memory);
+    await this.readMemories();
     if (!SHELVES.some((k) => s.memory.shelves[k].length >= 3)) return [];
     this.setPhase('sorting', 'folding memories that say the same thing');
     try {
@@ -936,6 +941,13 @@ export class Life extends EventEmitter {
       this.journalAdd({ kind: 'falter', text: `It could not look over its memories before sleeping: ${err.message}` });
       return [];
     }
+  }
+
+  /** What its memories (and anything else it is about to weigh against them) mean, read before they are compared. */
+  async readMemories(more = []) {
+    if (!this.meaning.up) return;
+    const m = this.state.memory;
+    await this.meaning.ensure([...SHELVES.flatMap((k) => m.shelves[k].map((x) => x.text)), ...m.today.map((x) => x.text), ...more]);
   }
 
   /** What it thought aloud since a cycle: in the cycles since (as each kept its moments), and since its last cycle. */
@@ -1083,7 +1095,7 @@ export class Life extends EventEmitter {
     }
   }
 
-  context(senses, n, chosen, waiting, looks = new Map()) {
+  context(senses, n, chosen, waiting, looks = new Map(), recallArgs = undefined) {
     const s = this.state;
     const notes = [...this.notes];
     const busy = (this.waits.busy || 0) + (this.waits['other-mind'] || 0);
@@ -1136,7 +1148,7 @@ export class Life extends EventEmitter {
       ),
       tired: this.tiredOf(),
       moments: (s.moments || []).filter((x) => !x.drift),
-      recalled: this.recallFor(n, chosen),
+      recalled: this.recallFor(n, chosen, recallArgs),
       // how the card was at its last cycle, so what changed stands out and what didn't is said once
       before: this.cycles.length ? this.store.read(`cycles/${pad(this.cycles.at(-1).n)}.json`, null)?.senses?.gpu ?? null : null,
     };
@@ -1146,12 +1158,24 @@ export class Life extends EventEmitter {
    * What the present calls up from everything it ever thought, read and forgot: from the letters it is opening and the
    * thing it is standing by, and never what it already dwells on (its shelves, its recent diary).
    */
-  recallFor(n, chosen) {
+  recallFor(n, chosen, args = this.recallArgs(n, chosen)) {
+    return this.recall.cue(args).map((r) => ({ ...r, ago: r.at ? ago(r.at) : null }));
+  }
+
+  /** What a cue is made of (and, when meaning is running, all of it read first). */
+  async prepareRecall(n, chosen) {
+    this.recall ??= new Recall(this, this.meaning).build();
+    const args = this.recallArgs(n, chosen);
+    await this.recall.prepare(args);
+    return args;
+  }
+
+  recallArgs(n, chosen) {
     const s = this.state;
-    this.recall ??= new Recall(this).build();
+    this.recall ??= new Recall(this, this.meaning).build();
     const place = s.about && s.about.at !== 'card' ? s.world.things.find((t) => t.id === s.about.at) : null;
     const avoid = [...SHELVES.flatMap((k) => s.memory.shelves[k].map((m) => m.text)), ...this.cycles.slice(-6).map((c) => c.diary).filter(Boolean)];
-    return this.recall.cue({ letters: chosen, place, cycle: n, avoid, seen: s.recalled || {}, dwell: this.dwelling() }).map((r) => ({ ...r, ago: r.at ? ago(r.at) : null }));
+    return { letters: chosen, place, cycle: n, avoid, seen: s.recalled || {}, dwell: this.dwelling() };
   }
 
   /** The words its recent thoughts are full of: in at least half of its last dozen. */
@@ -1197,7 +1221,8 @@ export class Life extends EventEmitter {
       this.setPhase('looking', `at what ${l.from} brought back`);
       looks.set(l.id, await this.look(l, system));
     }
-    const ctx = this.context(senses, n, chosen, unread.length - chosen.length, looks);
+    const recallArgs = await this.prepareRecall(n, chosen);
+    const ctx = this.context(senses, n, chosen, unread.length - chosen.length, looks, recallArgs);
 
     this.live.reading = chosen.map((l) => ({ id: l.id, from: l.from }));
     this.setPhase(chosen.length ? 'reading' : 'thinking', chosen.length ? `a letter from ${listNames(chosen.map((l) => l.from))}` : '');
@@ -1708,8 +1733,10 @@ export class Life extends EventEmitter {
     try {
       // Before it sleeps, memories that say the same thing are folded into one, in its own words, so they leave room.
       const folded = await this.foldMemories();
+      const thoughtAloud = this.aloudSince(from);
+      await this.readMemories(sentences(thoughtAloud));
       // the most striking of what it thought aloud today may be kept, if they win a place
-      const aloud = striking(this.aloudSince(from), [...SHELVES.flatMap((k) => s.memory.shelves[k].map((x) => x.text)), ...s.memory.today.map((x) => x.text)]);
+      const aloud = striking(thoughtAloud, [...SHELVES.flatMap((k) => s.memory.shelves[k].map((x) => x.text)), ...s.memory.today.map((x) => x.text)]);
       for (const text of aloud) s.memory.today.push({ shelf: 'moments', text, weight: 0.35, cycle: s.cycle, about: '', because: [], aloud: true });
       const consolidation = consolidate(s.memory, s.cycle, cfg.memory);
       consolidation.moved = [...(this.refiled || []), ...consolidation.moved];
