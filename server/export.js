@@ -115,6 +115,7 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   // has ended, only what it borrowed.
   const catalogue = loadCatalogue();
   const used = new Set(life.state.world?.things.flatMap((t) => [...(t.form?.parts || []).map((p) => p.model), ...(t.around || []).map((a) => a.model)].filter(Boolean)) || []);
+  for (const q of life.state.world?.quarters || []) for (const name of q.street || []) used.add(catalogue.byName.get(name)?.id); // what lines its streets
   if (catalogue.models.length) write('models/catalogue.json', readFileSync(join(web, 'models', 'catalogue.json'), 'utf8'));
   for (const m of catalogue.models) {
     if (!allModels && !used.has(m.id)) continue;

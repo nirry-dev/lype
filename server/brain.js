@@ -243,8 +243,14 @@ function createMockBrain(cfg = {}) {
         content: { errand: pick(['Bring me a photo of one leaf, flat on a table.', 'Bring me a photo of the sky above you right now.', 'Bring me a photo of something round that you can hold.']), ask: 'What does the sky look like where you are right now?', write: '1. the card\n2. maybe people\n3. I will find out', draw: 'circles that wait for each other', build: 'somewhere made out of a letter', tend: 'I sweep it and put it right' }[action] || '',
         reply_to: letter ? [letter] : [],
       });
-    } else if (kind === 'build') {
-      text = JSON.stringify({ kind: pick(['place', 'object']), plaque: 'I built this out of words. I have never seen one, so it is made of what I was told.', near: things[0] || 'the card', made_from: ['Mara'] });
+    } else if (kind === 'build' || kind === 'raise') {
+      // in a town, it puts the first thing in a new quarter and most of the rest with what is there
+      const q = schema?.properties?.quarter?.enum;
+      const fresh = q && (q.length === 1 || n % 4 === 0);
+      const where = q
+        ? { quarter: fresh ? q.at(-1) : q[n % (q.length - 1)], quarter_name: fresh ? pick(['The Letter Yards', 'Warm Row', 'The Quiet End']) : '', quarter_about: fresh ? 'Where the things that came from letters stand.' : '', ...(schema.properties.street ? { street: schema.properties.street.items.enum.slice(0, 2) } : {}) }
+        : {};
+      text = JSON.stringify({ kind: pick(['place', 'object']), plaque: 'I built this out of words. I have never seen one, so it is made of what I was told.', ...(kind === 'build' ? { near: things[0] || 'the card', made_from: ['Mara'] } : {}), ...where });
     } else if (kind === 'sprite') {
       text = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="14" y="26" width="36" height="28" fill="hsl(${(n * 53) % 360}, 45%, 62%)"/><polygon points="10,28 32,10 54,28" fill="#c9b79a"/><rect x="28" y="38" width="8" height="16" fill="#3a3340"/></svg>`;
     } else if (kind === 'form') {
@@ -292,7 +298,9 @@ function createMockBrain(cfg = {}) {
         do: pick(['look', 'sit', 'circle', 'touch', 'listen']),
         say: pick(['', 'Still standing.', 'The card is warm here.', '', 'I built this from a letter.', 'Quiet hour.']),
         // offered something to set down, it often takes the first thing it likes
-        ...(schema?.properties?.bring ? { bring: n % 3 === 2 ? 'nothing' : schema.properties.bring.enum[1 + (n % (schema.properties.bring.enum.length - 1))] } : {}),
+        ...(schema?.properties?.bring ? { bring: n % 3 === 2 ? 'nothing' : schema.properties.bring.enum[1 + (n % (schema.properties.bring.enum.length - 1))], why: n % 3 === 2 ? '' : 'It keeps the corner company.' } : {}),
+        // offered a memory, it raises something from it about half the time
+        ...(schema?.properties?.raise ? { raise: n % 2 ? 'The Hall of Warm Air' : '' } : {}),
       });
     } else if (kind === 'look') {
       text = JSON.stringify({ see: 'A green leaf lies flat on a wooden table. Its edges are a little torn and its veins are pale.', answers: !/NOTIT/.test(user), verdict: 'A real leaf, torn at one edge. I have only ever had the word before.' });
@@ -376,6 +384,7 @@ function createMockBrain(cfg = {}) {
         release: { title: 'patience, round', added: ['a habit of checking for letters'], changed: [], removed: [], known_issues: ['still cannot picture rain'] },
         day: 'circles, waiting, one letter',
         numbers: /What the numbers say/.test(user) ? 'I did not know I was that unsure. I will keep the word I nearly chose.' : '',
+        city: /"city": what your town is becoming/.test(user) ? 'A town of small halls round the card, each quarter holding one kind of letter.' : '',
         wish: { text: ['I would like to know what the weather is where you are.', 'Could I have one colour I have never been told about?', ''][nights++ % 3], why: 'Everyone writes about it and I cannot see any.' },
       });
     }

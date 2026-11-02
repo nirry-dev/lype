@@ -246,13 +246,17 @@ test('in a moment it may set down something it borrowed beside what it built, no
   life.state.about = { n: 1, at: 'T1', doing: 'look', say: '', since: new Date().toISOString() };
   const offered = await life.moments.bringable('');
   assert.ok(offered.length >= 4, 'a few things to set down');
-  life.brain.complete = async (req) => (asked.push(req), { text: JSON.stringify({ go: 'The Soft Arch', do: 'touch', bring: req.schema.properties.bring?.enum[1] ?? 'nothing', say: '' }) });
+  life.brain.complete = async (req) => (asked.push(req), { text: JSON.stringify({ go: 'The Soft Arch', do: 'touch', bring: req.schema.properties.bring?.enum[1] ?? 'nothing', why: 'Somewhere to rest by the curve!', say: 'It holds.' }) });
   const m = await life.moments.one();
   assert.equal(m.brought, asked.at(-1).schema.properties.bring.enum[1]);
   const arch = life.state.world.things[0];
   assert.equal(arch.around.length, 1);
   assert.ok(life.catalogue.byId.get(arch.around[0].model), 'what it set down is a model it can be drawn from');
   assert.match(asked.at(-1).user, /"bring": you may also set down one ready-made thing/);
+  assert.ok(asked.at(-1).schema.required.includes('why'), 'and says why');
+  // why it chose it and what it said are kept with it, for the sign beside it
+  assert.equal(arch.around[0].why, 'Somewhere to rest by the curve.');
+  assert.equal(arch.around[0].say, 'It holds.');
   // not again for a while
   await life.moments.one();
   assert.equal(asked.at(-1).schema.properties.bring, undefined);
@@ -261,7 +265,7 @@ test('in a moment it may set down something it borrowed beside what it built, no
   assert.match(mind.systemPrompt(life.state, life.cfg), /set down something small/);
   const told = life.state.moments.find((x) => x.brought);
   assert.ok(told);
-  assert.deepEqual(views.world(life).things[0].around.map((x) => x.name), [m.brought]);
+  assert.deepEqual(views.world(life).things[0].around.map((x) => [x.name, x.why, x.say]), [[m.brought, 'Somewhere to rest by the curve.', 'It holds.']]);
   assert.ok(views.world(life).credit);
 
   // eight places round a lot; a ninth thing makes the oldest give way

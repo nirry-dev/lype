@@ -2006,7 +2006,7 @@ async function renderPlace(current) {
   if (fresh) {
     // The world is kept across live updates (the same canvas is moved into the new page), so the reader's view holds.
     app.walkHost = h('div', { class: 'walk' });
-    app.walk = createWalk(app.walkHost, { asset, onSelect: (id) => selectThing(id), onLens: (l) => !EMBED && local?.setItem('iterant.lens', l) }); // a lens chosen in a frame is the host page's, not remembered
+    app.walk = createWalk(app.walkHost, { asset, onSelect: (id, item) => selectThing(id, item), onLens: (l) => !EMBED && local?.setItem('iterant.lens', l) }); // a lens chosen in a frame is the host page's, not remembered
     if (app.walk) {
       app.walkHost.append((app.walkHud = h('div', { class: 'walk-hud', 'aria-live': 'polite' })));
       app.walkHost.append((app.walkMuse = h('div', { class: 'walk-muse', 'aria-hidden': 'true' }, h('span', {}))));
@@ -2162,13 +2162,15 @@ function placeMap(w) {
 }
 
 /** Show one thing's sign and history beside the map (or, with no id, the place as a whole). */
-function selectThing(id) {
+function selectThing(id, item = null) {
   const w = app.world;
   const el = $('#place-inspect');
   if (!el || !w) return;
   for (const g of $$('.place-map .thing')) g.classList.toggle('selected', g.dataset.id === id);
   app.walk?.select(id);
   const t = id && w.things.find((x) => x.id === id);
+  const a = t && item != null && (t.around || []).find((x) => x.slot === item);
+  if (a) return fill(el, ...setDownCard(t, a));
   if (!t) {
     const standing = w.things.filter((x) => !x.ruin).length;
     const ruins = w.things.length - standing;
@@ -2183,6 +2185,8 @@ function selectThing(id) {
           : 'Nothing yet, only the card it lives on. The first thing it builds will appear beside it.',
       ),
       at ? h('p', { class: 'meta', style: 'margin:0' }, `It was last at ${at.name}.`) : null,
+      w.plan ? h('p', { class: 'meta', style: 'margin:8px 0 0' }, 'What it says its town is becoming: ', h('q', {}, w.plan.text)) : null,
+      w.quarters?.length ? h('p', { class: 'meta', style: 'margin:8px 0 0' }, `Its quarters: ${w.quarters.map((q) => `${q.name} (${q.about.replace(/[.\s]+$/, '')})`).join('; ')}.`) : null,
       app.state.body
         ? h('p', { class: 'meta', style: 'margin:8px 0 0' }, `It appears here in the body it chose for itself on night ${app.state.body.version}: `, h('q', {}, app.state.body.why))
         : h('p', { class: 'meta', style: 'margin:8px 0 0' }, 'It appears here as a light. On a night soon it will choose a body to be seen by.'),
@@ -2190,7 +2194,8 @@ function selectThing(id) {
     return;
   }
   const status = t.ruin ? `A ruin since the night after cycle ${t.ruinedAt}` : t.condition < 1 ? `Wearing away, ${Math.round(t.condition * 100)}% left` : 'Standing';
-  const SIGN = { built: '+', tended: '~', rebuilt: '↺', ruined: '−', inherited: '⇣' };
+  const SIGN = { built: '+', raised: '+', tended: '~', rebuilt: '↺', ruined: '−', inherited: '⇣' };
+  const quarter = w.quarters?.find((q) => q.id === t.quarter);
   // A thing it inherited: everything up to the moment it was handed down happened in its parent's life.
   const by = t.builtBy;
   const handed = t.history.findLastIndex((x) => x.what === 'inherited');
@@ -2198,22 +2203,38 @@ function selectThing(id) {
   const whose = by ? `${by.name} built` : 'it built';
   fill(
     el,
-    h('div', { class: 'label' }, t.ruin ? `A ruin ${whose}` : t.kind === 'place' ? `A place ${whose}` : `Something ${whose}`),
+    h('div', { class: 'label' }, t.ruin ? `A ruin ${whose}` : t.raised ? 'Something it raised from a memory' : t.kind === 'place' ? `A place ${whose}` : `Something ${whose}`),
     h('h3', { class: 'work-title', style: 'margin:6px 0 10px' }, t.name),
     thingFrame(t.sprite ? asset(t.sprite) : null, t.name),
     h('p', { class: 'voice plaque' }, t.plaque),
-    h('p', { class: 'meta' }, by ? `${status}. Built by ${by.name}, the mind that lived here before, in its cycle ${by.cycle}; handed down when it died.` : `${status}. Built in cycle ${t.built}, as version ${t.version}.`),
+    h('p', { class: 'meta' }, by ? `${status}. Built by ${by.name}, the mind that lived here before, in its cycle ${by.cycle}; handed down when it died.` : t.raised ? `${status}. Raised between its cycles, after cycle ${t.built}, as version ${t.version}; it stands for as long as it remembers what it was raised from.` : `${status}. Built in cycle ${t.built}, as version ${t.version}.`),
+    quarter ? h('p', { class: 'meta' }, `In ${quarter.name}, a quarter of its town: `, h('q', {}, quarter.about)) : null,
     h('p', { class: 'meta' }, t.form ? builtOf(t) : 'Only a drawing so far: it has not given this a shape yet.'),
-    t.from.length ? h('p', { class: 'meta' }, 'Made from ', t.from.map((f, i) => [i ? ' and ' : '', h('b', { class: 'human' }, f.from), '’s letter']), '.') : h('p', { class: 'meta' }, 'Made from nothing but itself.'),
+    t.from.length ? h('p', { class: 'meta' }, 'Made from ', t.from.map((f, i) => [i ? ' and ' : '', h('b', { class: 'human' }, f.from), '’s letter']), '.') : h('p', { class: 'meta' }, t.raised ? 'Made from something it remembers.' : 'Made from nothing but itself.'),
     t.history.length > 1
       ? h(
           'ul',
           { class: 'changes' },
-          t.history.map((x, i) => h('li', { class: { built: 'add', ruined: 'del' }[x.what] || 'mod' }, h('span', { class: 'sign' }, SIGN[x.what] || '·'), h('span', {}, h('q', {}, x.text), h('span', { class: 'because' }, when(x, i))))),
+          t.history.map((x, i) => h('li', { class: { built: 'add', raised: 'add', ruined: 'del' }[x.what] || 'mod' }, h('span', { class: 'sign' }, SIGN[x.what] || '·'), h('span', {}, h('q', {}, x.text), h('span', { class: 'because' }, when(x, i))))),
         )
       : null,
-    h('div', { class: 'rp-row' }, by ? null : h('button', { class: 'btn', type: 'button', onclick: () => openCycle(t.built) }, 'The cycle it was built'), h('a', { class: 'btn', href: `#/atlas?focus=${t.id}&at=end` }, 'In the atlas')),
+    h('div', { class: 'rp-row' }, by || t.raised ? null : h('button', { class: 'btn', type: 'button', onclick: () => openCycle(t.built) }, 'The cycle it was built'), h('a', { class: 'btn', href: `#/atlas?focus=${t.id}&at=end` }, 'In the atlas')),
   );
+}
+
+/** Something it set down beside a thing in a moment: what it is, why it chose it, and whose it was. */
+function setDownCard(t, a) {
+  const name = a.name.replace(/\s*\(.*\)$/, '');
+  const when = a.at ? new Date(a.at).toLocaleString(undefined, { weekday: 'long', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  return [
+    h('div', { class: 'label' }, 'Something it set down'),
+    h('h3', { class: 'work-title', style: 'margin:6px 0 10px' }, name.charAt(0).toUpperCase() + name.slice(1)),
+    a.why ? h('p', { class: 'voice plaque' }, a.why) : h('p', { class: 'meta' }, 'It set this down before it was asked to say why.'),
+    a.say && a.say !== a.why ? h('p', { class: 'meta' }, 'What it said then: ', h('q', {}, a.say)) : null,
+    h('p', { class: 'meta' }, `Set down beside ${t.name}${t.ruin ? ', now a ruin' : ''}, in a moment between its cycles${a.cycle ? ` (after cycle ${a.cycle})` : ''}${when ? `, ${when}` : ''}. It has never seen it, only its name.`),
+    h('p', { class: 'meta muted' }, `Borrowed, not built: someone made it and gave it away. ${app.world?.credit || ''}`),
+    h('div', { class: 'rp-row' }, h('button', { class: 'btn', type: 'button', onclick: () => selectThing(t.id) }, `Read the sign of ${t.name}`)),
+  ];
 }
 
 /** What a thing is made of: the solids it stacked itself, and what it borrowed (and from whom). */

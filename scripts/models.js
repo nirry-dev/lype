@@ -24,12 +24,18 @@ const KITS = {
   'survival-kit': { kit: 'camp', words: ['camp', 'outside', 'wild', 'tools', 'work'] },
   'space-kit': { kit: 'space', words: ['space', 'stars', 'sky', 'moon', 'far'] },
   'train-kit': { kit: 'trains', words: ['train', 'travel', 'journey', 'rail'] },
+  // whole buildings, for a town to grow into a city
+  'city-kit-commercial': { kit: 'city', words: ['city', 'shop', 'office', 'tower', 'building'] },
+  'city-kit-suburban': { kit: 'suburb', words: ['house', 'home', 'street', 'garden', 'building'] },
+  'city-kit-industrial': { kit: 'works', words: ['factory', 'work', 'warehouse', 'machine', 'building'] },
 };
 
 const LEAVE_OUT = [
   // pieces of buildings and ground, not things
   /^(wall|roof|road|floor|stairs|cliff|ground|railroad|track|spline|corridor|pipe|platform|terrain|rail|balcony|overhang|paneling|doorway|supports|structure|metal-panel|patch|hole|debris|planks|poles|cabin|bridge_(side|center)|crops_dirt|snow-flat|trainset-rail|brick-wall|stone-wall|iron-fence-border|border-pillar|mast|blade|tower-(base|middle|roof|top)|castle-|monorail_track|rocket_|fountain-(corner|edge|curved)|chimney-(base|top)|crypt-(door|large-door|large-roof|small-roof)|kitchenCabinet(Corner|UpperCorner)|hedge-(curved|large-curved)|fence_(bend|corner|simpleDiagonal)|path|river|lily|stone_(tall|small|large)?[A-Z]?$|train-connector|tree-(trunk|autumn-trunk))/i,
   /^wall/i,
+  // the city kits' far-away copies of their buildings, and their road and ground pieces
+  /^(low-detail|road|tile|driveway|planter-|grass|pavement)/i,
   // figures, and things for hurting
   /^(character|astronaut|alien)|weapon|turret|gun|rifle|blaster|cannon/i,
 ];

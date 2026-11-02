@@ -62,6 +62,51 @@ export function placeNear(world, anchor, salt = '') {
   return null;
 }
 
+// ---------- quarters: the parts of its town it names and gives a purpose, where what belongs together stands together ----------
+
+export const NEW_QUARTER = 'a new quarter';
+export const MAX_QUARTERS = 12;
+export const MAX_STREET = 3; // the things it lines a quarter's streets with
+
+/** One of its quarters, by the name it gave it (ignoring "the" and case). */
+export function findQuarter(world, name) {
+  const n = bare(name);
+  return (n && (world.quarters || []).find((q) => bare(q.name) === n)) || null;
+}
+
+/** It names a new quarter of its town and says what it is for; what lines its streets is chosen with it. */
+export function foundQuarter(world, { name, about, street = [] }, { cycle }) {
+  world.quarters ??= [];
+  world.nextQuarter ??= 1;
+  const q = { id: `q${world.nextQuarter++}`, name, about, founded: cycle, street: street.slice(0, MAX_STREET) };
+  world.quarters.push(q);
+  return q;
+}
+
+/**
+ * Where the next thing in a quarter goes: beside the quarter's newest thing. A quarter with nothing in it yet starts a
+ * street or two away from the rest of the town (three lots from anything, or failing that two), as near the card as
+ * that allows, so each quarter has its own ground.
+ */
+export function quarterSpot(world, quarter, salt = '') {
+  const own = world.things.filter((t) => t.quarter === quarter.id);
+  if (own.length) return placeNear(world, own.reduce((a, b) => (b.built > a.built ? b : a)), salt);
+  const taken = [CARD, ...world.things];
+  const lots = [];
+  for (let x = 0; x < world.w; x++) {
+    for (let y = 0; y < world.h; y++) {
+      if (avenue(x, y, CARD) || taken.some((t) => t.x === x && t.y === y)) continue;
+      const apart = Math.min(...taken.map((t) => Math.max(Math.abs(t.x - x), Math.abs(t.y - y))));
+      lots.push({ x, y, apart, near: Math.hypot(x - CARD.x, y - CARD.y) + hash(`${salt}|${x},${y}`) * 0.5 });
+    }
+  }
+  for (const apart of [3, 2]) {
+    const fit = lots.filter((l) => l.apart === apart).sort((a, b) => a.near - b.near);
+    if (fit.length) return { x: fit[0].x, y: fit[0].y };
+  }
+  return placeNear(world, CARD, salt);
+}
+
 /** Does anything it still remembers touch this thing? A memory from the same letters, about the same people, or naming it. */
 export function remembered(thing, memory) {
   const all = [...Object.values(memory.shelves).flat(), ...memory.today];
@@ -69,6 +114,7 @@ export function remembered(thing, memory) {
   const people = new Set((thing.people || []).map((p) => p.trim().toLowerCase()));
   return all.some(
     (m) =>
+      (thing.memory && m.id === thing.memory) || // the memory it was raised from
       (m.because || []).some((id) => thing.from.includes(id)) ||
       (m.holds || []).includes(thing.id) || // a memory folded from others that held it
       (m.about && people.has(m.about.trim().toLowerCase())) ||
@@ -105,14 +151,14 @@ export const AROUND = 8;
  * stable pick); with every place taken, the one it set down longest ago makes way. Returns what it set down and what
  * it took away. Mutates the thing.
  */
-export function setDown(thing, { model, name }, { at, cycle }) {
+export function setDown(thing, { model, name, why = '', say = '' }, { at, cycle }) {
   thing.around ??= [];
   let removed = null;
   if (thing.around.length >= AROUND) removed = thing.around.shift();
   const taken = new Set(thing.around.map((a) => a.slot));
   const start = Math.floor(hash(`${thing.id}|${model}|${thing.around.length}`) * AROUND);
   const slot = removed && !taken.has(removed.slot) ? removed.slot : [...Array(AROUND).keys()].map((i) => (start + i) % AROUND).find((i) => !taken.has(i));
-  const put = { model, name, slot, at, cycle };
+  const put = { model, name, slot, at, cycle, ...(why ? { why } : {}), ...(say ? { say } : {}) };
   thing.around.push(put);
   return { put, removed };
 }

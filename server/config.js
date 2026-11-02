@@ -38,6 +38,10 @@ const DEFAULTS = {
     // cycles before this one takes it back for its own moments (`courtesy.household` names those lives' models).
     momentTurnMinutes: 6,
     bring: true, // in a moment it may set down a small borrowed thing beside what it built (server/moments.js)
+    // Its place becomes a town: what it builds goes in quarters it names, and each night it says what its town is becoming.
+    city: true,
+    // ... and now and then in a moment it may raise something new there from a memory it holds (server/moments.js).
+    raise: true,
   },
   power: {
     // Full power (server/moments.js): between cycles its moments come one after another and it thinks aloud in each,

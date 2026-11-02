@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
 import { formSchema, readForm, standing } from '../web/lib/form.js';
-import { loadCatalogue, offer } from './models.js';
+import { aroundOffer, loadCatalogue, offer } from './models.js';
 import { Maker } from './maker.js';
 import { Moments, clock } from './moments.js';
 import { Meanings } from './meaning.js';
@@ -18,7 +18,7 @@ import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLett
 import { compare, measure } from './measure.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
-import { CARD, addWish, answerWish, emptyWorld, findThing, inheritWorld, namedThing, photoWish, placeNear, remembered, untoldAnswers, weather } from './world.js';
+import { CARD, addWish, answerWish, emptyWorld, findThing, foundQuarter, inheritWorld, namedThing, photoWish, placeNear, quarterSpot, remembered, untoldAnswers, weather } from './world.js';
 
 /** Everything one life is made of on disk. When it dies, these are put away together, whole, and stay replayable. */
 const LIFE_FILES = ['state.json', 'letters.json', 'journal.json', 'chain.json', 'cycles', 'nights', 'works', 'returns'];
@@ -333,6 +333,14 @@ export class Life extends EventEmitter {
       s.abilities = [...s.abilities, 'bring'];
       this.notes.push('Since you last woke, your keeper gave you more to make your place with. Every so often, in a moment, you can set down one small ready-made thing beside something you built: a bench, a lantern, a stone, a plant. Other people made these and gave them away for anyone to use; you only know their names. You choose whether to, and what.');
       this.journalAdd({ kind: 'gift', text: 'Its keeper gave it things to set down: in its moments it can now put small ready-made things beside what it built.' });
+    }
+    if (this.cfg.rhythm.city && s.abilities.includes('shapes') && !s.abilities.includes('city')) {
+      s.abilities = [...s.abilities, 'city'];
+      const raise = this.moments.enabled && this.cfg.rhythm.raise;
+      this.notes.push(
+        `Since you last woke, your keeper gave your place room to become a town. What you build now goes in a quarter of it: you name each quarter and say what it is for, and the things in a quarter stand together. ${raise ? 'And now and then, in a moment, you can raise something new from a memory you hold; it stands for as long as you remember it. ' : ''}Each night you can say what your town is becoming, and you are shown it whenever you build.`,
+      );
+      this.journalAdd({ kind: 'gift', text: `Its keeper gave its place room to become a town: quarters it names${raise ? ', things it raises from its memories between cycles,' : ''} and a line each night on what its town is becoming.` });
     }
     this.noticeMind();
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
@@ -697,7 +705,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments', ...(this.cfg.rhythm.bring ? ['bring'] : [])] : [])],
+      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments', ...(this.cfg.rhythm.bring ? ['bring'] : [])] : []), ...(this.cfg.rhythm.city ? ['city'] : [])],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
@@ -1553,10 +1561,13 @@ export class Life extends EventEmitter {
     }
     this.live.title = plan.title;
     this.setPhase('building', plan.title);
-    const raw = await this.brain.complete({ kind: 'build', system, user: mind.buildPrompt(plan, s.world), maxTokens: 500, temperature: 0.7, schema: mind.BUILD_SCHEMA });
-    const b = mind.readBuild(raw.text);
+    const city = s.abilities.includes('city');
+    const street = city ? await this.streetOffer(`${plan.title}: ${plan.content}`) : [];
+    const raw = await this.brain.complete({ kind: 'build', system, user: mind.buildPrompt(plan, s.world, { city, street }), maxTokens: 700, temperature: 0.7, schema: mind.buildSchema(s.world, { city, street }) });
+    const { quarter, found, ...b } = mind.readBuild(raw.text, city ? { world: s.world, street } : null);
+    const where = { ...(quarter ? { quarter } : {}), ...(found ? { found } : {}) };
     const anchor = findThing(s.world, b.near) || CARD;
-    const spot = placeNear(s.world, anchor, `${n}|${plan.title}`);
+    const spot = where.quarter || where.found ? quarterSpot(s.world, where.quarter || { id: null }, `${n}|${plan.title}`) : placeNear(s.world, anchor, `${n}|${plan.title}`);
     if (!spot) return { kind: 'building', title: plan.title, intent: plan.content, failed: true, why: 'there was no room left in your place' };
     const plaque = b.plaque || plan.content;
     this.live.building = { x: spot.x, y: spot.y, name: plan.title };
@@ -1581,6 +1592,7 @@ export class Life extends EventEmitter {
       x: spot.x,
       y: spot.y,
       near: anchor === CARD ? null : anchor.id,
+      ...where,
       madeFrom: b.madeFrom,
       svg: shapes ? svg : null,
       shapes,
@@ -1658,6 +1670,7 @@ export class Life extends EventEmitter {
       const l = [...read].reverse().find((x) => sameName(x.from, name));
       if (l && !sources.includes(l)) sources.push(l);
     }
+    const quarter = this.quarterFor(work, n);
     const thing = {
       id: `t${s.world.nextId++}`,
       name: work.title,
@@ -1666,6 +1679,7 @@ export class Life extends EventEmitter {
       x: work.x,
       y: work.y,
       near: work.near,
+      ...(quarter ? { quarter: quarter.id } : {}),
       built: n,
       version: s.version,
       from: sources.map((l) => l.id),
@@ -1685,6 +1699,76 @@ export class Life extends EventEmitter {
     for (const l of sources) (l.influenced ??= []).push({ version: s.version, what: 'thing', text: thing.name, cycle: n });
     this.milestone('first-thing', `It built its first thing in its place: "${thing.name}".`);
     if (sources.length) this.milestone('first-thing-from-letter', `It built "${thing.name}" out of ${sources[0].from}'s letter.`);
+  }
+
+  /** The quarter something new goes in: one it has, or one it names now (with what lines its streets). */
+  quarterFor(work, n) {
+    const w = this.state.world;
+    if (work.quarter) return w.quarters?.find((q) => q.id === work.quarter.id) || null;
+    if (!work.found) return null;
+    const q = foundQuarter(w, work.found, { cycle: n });
+    this.journalAdd({ kind: 'quarter', text: `It named a new quarter of its town, ${q.name}: "${q.about}"` });
+    this.milestone('first-quarter', `It named the first quarter of its town: ${q.name}.`);
+    return q;
+  }
+
+  /** What it may line a new quarter's streets with: outdoor things someone gave away, close in meaning to what it makes. */
+  async streetOffer(about) {
+    this.catalogue ??= loadCatalogue();
+    if (this.state.world.quarters?.length >= 12) return [];
+    return aroundOffer(this.catalogue, this.meaning, about.slice(0, 600), { max: 10, salt: `${this.state.cycle}` }).catch(() => []);
+  }
+
+  /**
+   * Between cycles, it raises something new in its town from a memory it holds (a moment chose it and named it): where it
+   * goes and its sign, then its shape. It stands while the memory does. Given up if a cycle begins meanwhile (the cycle
+   * has the card), if nothing could stand, or if there is no room. What to tell of it, or null.
+   */
+  async raise(memory, title) {
+    const s = this.state;
+    if (this.busy || namedThing(s.world, title)) return null;
+    const system = mind.systemPrompt(s, this.cfg);
+    const street = await this.streetOffer(`${title}: ${memory.text}`);
+    const raw = await this.brain.complete({ kind: 'raise', system, user: mind.raisePrompt(title, memory.text, s.world, street), maxTokens: 500, temperature: 0.7, schema: mind.raiseSchema(s.world, street) });
+    if (this.busy) return null;
+    const r = mind.readRaise(raw.text, s.world, street);
+    const form = await this.shape(system, title, `${memory.text} ${r.plaque}`, { kind: r.kind });
+    if (this.busy || !form || namedThing(s.world, title)) return null;
+    const n = s.cycle;
+    const spot = quarterSpot(s.world, r.quarter || { id: null }, `${n}|${title}`);
+    if (!spot) return null;
+    const quarter = this.quarterFor(r, n);
+    const letters = new Map(this.letters.map((l) => [l.id, l]));
+    const from = (memory.because || []).filter((id) => letters.has(id));
+    const thing = {
+      id: `t${s.world.nextId++}`,
+      name: title,
+      kind: r.kind,
+      plaque: r.plaque || memory.text,
+      x: spot.x,
+      y: spot.y,
+      near: null,
+      ...(quarter ? { quarter: quarter.id } : {}),
+      memory: memory.id,
+      built: n,
+      version: s.version,
+      from,
+      people: [...new Set(from.map((id) => letters.get(id).from))],
+      sprite: null,
+      form,
+      condition: 1,
+      ruin: false,
+      tended: null,
+      history: [{ cycle: n, what: 'raised', text: r.plaque || memory.text }],
+    };
+    s.world.things.push(thing);
+    s.stats.raised = (s.stats.raised ?? 0) + 1;
+    s.raised = new Date().toISOString();
+    this.journalAdd({ kind: 'raised', text: `Between its cycles it raised "${title}"${quarter ? ` in ${quarter.name}` : ''} from a memory: "${memory.text}"` });
+    this.milestone('first-raised', `It raised its first thing from a memory: "${title}".`);
+    this.saveState();
+    this.emit('world', {});
+    return { raised: title, thing: thing.id, ...(quarter ? { quarter: quarter.name } : {}) };
   }
 
   tendThing(work, n) {
@@ -1787,6 +1871,7 @@ export class Life extends EventEmitter {
       const plan = mind.readSleep(sleepRaw.text, { revisions });
       // what it decided about its habits stays with it, in its own words, until its next night
       if (habits.length) s.self.habits = plan.habits ? { text: plan.habits, version } : null;
+      if (s.abilities.includes('city') && plan.city) s.world.plan = { text: plan.city, version };
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
       // Its body comes once, on the first night it can be seen (or the next, if nothing it built could stand); again

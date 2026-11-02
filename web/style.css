@@ -2585,6 +2585,15 @@ a.btn {
 .walk-label.site {
   border: 1px dashed var(--curious);
 }
+/* a quarter's name, on the ground of its town, from above */
+.walk-label.quarter {
+  background: none;
+  color: rgba(255, 246, 228, 0.82);
+  font: 600 10px var(--mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.6);
+}
 .walk > p {
   position: absolute;
   inset: auto 16px 16px;

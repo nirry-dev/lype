@@ -303,6 +303,53 @@ function townScenery(world) {
   return out;
 }
 
+/**
+ * What lines the streets of its quarters: the ready-made things it chose for a quarter when it named it, out at the
+ * street's edge on each side of every lot in that quarter (toward the corners, clear of what it set down beside the
+ * thing), facing the street. Not on every spot, and small, like what it sets down.
+ */
+function streetScenery(world, dimsOf = () => null) {
+  const kits = new Map((world.quarters || []).filter((q) => q.street?.length).map((q) => [q.id, q.street]));
+  const out = [];
+  for (const t of world.things) {
+    const kit = kits.get(t.quarter);
+    if (!kit) continue;
+    const c = [(t.x - world.card.x) * PITCH, (t.y - world.card.y) * PITCH];
+    for (let side = 0; side < 4; side++) {
+      const [sx, sz] = [[0, 1], [1, 0], [0, -1], [-1, 0]][side];
+      for (const end of [-1, 1]) {
+        const key = `${t.id}|street${side}${end}`;
+        if (hash(`${key}k`) > 0.45) continue;
+        const pick = kit[Math.floor(hash(key) * kit.length)];
+        const dims = dimsOf(pick.model);
+        if (!dims) continue;
+        let size = dims.map((v) => v * AROUND_SCALE);
+        const fit = Math.min(1, 0.24 / Math.max(size[0], size[2]), 0.5 / size[1]);
+        size = size.map((v) => v * fit);
+        const off = SPAN / 2 + 0.2;
+        const along = end * SPAN * 0.52;
+        const at = [c[0] + sx * off + (sz ? along : 0), 0, c[1] + sz * off + (sx ? along : 0)];
+        const fade = t.ruin ? 0.75 : 0;
+        out.push({ model: pick.model, at, size, yaw: Math.atan2(sx, sz) + (hash(`${key}y`) - 0.5) * 0.3, color: [1, 1, 1].map((v, k) => lerp(v, GREY[k], fade)) });
+      }
+    }
+  }
+  return out;
+}
+
+/** Where each quarter's name stands, seen from above: over the middle of the lots in it. */
+function quarterMiddles(world) {
+  return (world.quarters || [])
+    .map((q) => {
+      const own = world.things.filter((t) => t.quarter === q.id);
+      if (!own.length) return null;
+      const x = own.reduce((a, t) => a + t.x, 0) / own.length;
+      const y = own.reduce((a, t) => a + t.y, 0) / own.length;
+      return { id: q.id, name: q.name, about: q.about, pos: [(x - world.card.x) * PITCH, 0, (y - world.card.y) * PITCH] };
+    })
+    .filter(Boolean);
+}
+
 /** A drawing as it stands in the world: on a card of paper, greyed if it is a ruin. */
 async function thingTexture(src, svgText, ruin) {
   const [c, g] = canvas2d(256, 256);
@@ -855,7 +902,7 @@ function placedAround(t, dimsOf = () => null) {
     // facing out to the street; fallen over, in a ruin
     const yaw = Math.atan2(sx, sz) + (hash(`${salt}y`) - 0.5) * 0.3;
     const tilt = t.ruin ? (hash(`${salt}t`) > 0.5 ? 1 : -1) * 1.3 : c < 1 ? (hash(`${salt}t`) - 0.5) * (1 - c) * 0.4 : 0;
-    out.push({ p: { shape: 'model', model: a.model, glow: false }, at, size, yaw, tilt, color, glow: false });
+    out.push({ p: { shape: 'model', model: a.model, glow: false }, at, size, yaw, tilt, color, glow: false, slot: a.slot });
   }
   return out;
 }
@@ -1071,6 +1118,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       if (th.form) th.placed = placedParts(th.t, th.form, dimsOf);
       th.around = placedAround(th.t, dimsOf);
     }
+    if (world) street = streetScenery(world, dimsOf);
     dirty = true;
     schedule();
   }
@@ -1086,6 +1134,8 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
   let look = { mood: { lonely: 0.5, warm: 0.5 }, hour: 12, asleep: false, gpu: null };
   let things = []; // { t, pos, tex, label, top }
   let town = []; // trees and lamps it did not build: { x, y, pos, placed }
+  let street = []; // what lines its quarters' streets: { model, at, size, yaw, color }
+  let quarterLabels = []; // its quarters' names, over each quarter: { el, pos }
   let selected = null;
   let site = null; // { x, y, id, name, pos, tex, label, svg, parts: [{ p, at }] }
   const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 12, target: [0, 0.4, 0], goal: null };
@@ -1374,6 +1424,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
         gl.uniform1f(prog.uLight, light);
       }
     }
+
+    // what lines its quarters' streets, as it chose for each
+    for (const q of street) solid('model', q.at, q.size, q.color, { yaw: q.yaw, model: q.model });
 
     // the town round it: trees, and lamps lit at night
     for (const sc of town) {
@@ -2013,6 +2066,13 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       th.label.style.opacity = String(lens === 'above' ? clamp(1.6 - depth / (cam.dist * 2.2), 0.25, 1) : clamp(1.4 - depth / 7, 0, 1));
       th.label.classList.toggle('selected', th === selected);
     }
+    // its quarters' names, on the ground over each, from above only (nearer in, you are in one)
+    for (const q of quarterLabels) {
+      const [x, y, z, depth] = mat.apply(vp, [q.pos[0], 0.05, q.pos[2] + PITCH * 0.55]);
+      const show = lens === 'above' && depth > 0 && z < 1 && Math.abs(x) < 1.05 && Math.abs(y) < 1.05;
+      q.el.hidden = !show;
+      if (show) q.el.style.transform = `translate(${((x + 1) / 2) * w}px, ${((1 - y) / 2) * h}px) translate(-50%, 0)`;
+    }
   }
 
   function label(text, cls = '') {
@@ -2190,6 +2250,27 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       }
       if (d < Infinity && px > x0 && px < x1 && py > y0 - 0.02 && py < y1 + 0.02 && (!best || d < best.d)) best = { th, d };
     }
+    // something it set down beside a thing: small enough that a click on it means it, so it comes before the thing it
+    // stands by (whose box, seen on screen, takes in the ground round it); found a little generously
+    let item = null;
+    for (const th of things) {
+      for (const q of th.around || []) {
+        const r = Math.max(q.size[0], q.size[2]) / 2;
+        let [x0, y0, x1, y1, d] = [Infinity, Infinity, -Infinity, -Infinity, Infinity];
+        for (const [dx, dz] of [[-r, 0], [r, 0], [0, -r], [0, r]]) {
+          for (const y of [0, q.size[1]]) {
+            const [x, yy, , w] = mat.apply(vp, [th.pos[0] + q.at[0] + dx, y, th.pos[2] + q.at[2] + dz]);
+            if (w <= 0) continue;
+            [x0, x1, y0, y1, d] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, yy), Math.max(y1, yy), Math.min(d, w)];
+          }
+        }
+        if (d < Infinity && px > x0 - 0.015 && px < x1 + 0.015 && py > y0 - 0.015 && py < y1 + 0.015 && (!item || d < item.d)) item = { th, d, slot: q.slot };
+      }
+    }
+    if (item) {
+      choose(item.th.t.id, { item: item.slot });
+      return;
+    }
     // at eye level, a click (or a tap) on open ground walks you there
     const ground = !best && lens === 'eyes' && !held && groundAt(px, py);
     if (ground) {
@@ -2200,7 +2281,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     choose(best?.th.t.id ?? null);
   }
 
-  function choose(id, { fly = false } = {}) {
+  function choose(id, { fly = false, item = null } = {}) {
     selected = things.find((th) => th.t.id === id) || null;
     if (selected && fly && lens === 'eyes') {
       // at eye level, you walk up to its sign
@@ -2210,20 +2291,27 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     } else if (selected && fly) cam.goal = [selected.pos[0], 0.4, selected.pos[2]];
     dirty = true;
     schedule();
-    onSelect?.(selected?.t.id ?? null);
+    onSelect?.(selected?.t.id ?? null, selected ? item : null);
   }
 
   // ---------- what it shows ----------
 
   async function show(next, nextLook = {}) {
     const first = !world;
-    const changed = !world || JSON.stringify(next.things) !== JSON.stringify(world.things);
+    const changed = !world || JSON.stringify(next.things) !== JSON.stringify(world.things) || JSON.stringify(next.quarters) !== JSON.stringify(world.quarters);
     world = next;
     look = { ...look, ...nextLook };
     if (changed) {
       if (tex.ground) gl.deleteTexture(tex.ground);
       tex.ground = texture(groundTexture(world, MARGIN));
       town = townScenery(world);
+      street = streetScenery(world, dimsOf);
+      for (const q of quarterLabels) q.el.remove();
+      quarterLabels = quarterMiddles(world).map((q) => {
+        const el = label(q.name, 'quarter');
+        el.title = q.about;
+        return { ...q, el };
+      });
       const keep = new Map(things.map((th) => [th.t.id, th]));
       const fresh = [];
       for (const t of world.things) {

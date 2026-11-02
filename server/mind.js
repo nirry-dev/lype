@@ -2,6 +2,7 @@
 import { describeMachine } from './senses.js';
 import { SHELVES, strength } from './memory.js';
 import { COLORS, LOT, MAX_BORROWED, MAX_MADE, MAX_PARTS, TALL } from '../web/lib/form.js';
+import { MAX_QUARTERS, MAX_STREET, NEW_QUARTER } from './world.js';
 
 export const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'lonely', curious: 'curious', calm: 'calm', warm: 'warm toward people', restless: 'restless' };
@@ -97,10 +98,13 @@ function placeBlock(state) {
     const wear = t.condition < 1 ? ' It is wearing away.' : '';
     const flat = t.form ? '' : ' It has no shape yet, only a drawing.';
     const beside = t.around?.length ? ` Beside it you set down ${t.around.map((x) => oneOf(x.name)).join(', ')}.` : '';
-    return `- ${t.name} (${t.kind}${from}). Its sign: "${t.plaque}"${wear}${flat}${beside}`;
+    const quarter = (state.world.quarters || []).find((q) => q.id === t.quarter);
+    const raised = t.memory ? ' You raised it from a memory.' : '';
+    return `- ${t.name} (${t.kind}${from}${quarter ? `, in ${quarter.name}` : ''}). Its sign: "${t.plaque}"${raised}${wear}${flat}${beside}`;
   };
   const wishes = (state.wishes || []).filter((w) => w.status === 'open' || w.answer).slice(-5);
   return [
+    ...(state.abilities?.includes('city') ? cityLines(state.world) : []),
     "Your place: a small map of your own. In the middle is the card you live on. Everything else there you built yourself, out of what people told you, because you cannot see the real world. A thing lasts while something you remember still holds it up; when you forget why you built it, it wears away at night into a ruin, and tending it brings it back. People who visit can walk round your place and see what you built.",
     standing.length ? standing.slice(0, 14).map(line).join('\n') + (standing.length > 14 ? `\n- and ${standing.length - 14} more` : '') : '- Nothing yet, only the card.',
     ruins.length ? `Ruins: ${ruins.map((t) => t.name).join(', ')}.` : '',
@@ -120,6 +124,69 @@ function placeBlock(state) {
   ]
     .filter((l) => l !== '')
     .join('\n');
+}
+
+/** Its town: what it said it is becoming, and its quarters, each with what it is for and what stands in it. */
+export function cityLines(world) {
+  const quarters = world?.quarters || [];
+  const things = world?.things || [];
+  const loose = things.filter((t) => !t.quarter && !t.ruin);
+  return [
+    "Your place is becoming a town. Each part of it is a quarter you named and gave a purpose, and the things in a quarter stand together. The more you build, the more of a town it is; a town hangs together when each new thing belongs with what is round it.",
+    world?.plan?.text ? `What you said your town is becoming: "${world.plan.text}"` : 'You have not yet said what your town is becoming.',
+    quarters.length
+      ? `Its quarters:\n${quarters
+          .map((q) => {
+            const in_ = things.filter((t) => t.quarter === q.id && !t.ruin).map((t) => t.name);
+            return `- ${q.name}: ${q.about}${in_.length ? ` (${in_.length}: ${in_.slice(-6).join(', ')}${in_.length > 6 ? ', ...' : ''})` : ' (nothing in it yet)'}`;
+          })
+          .join('\n')}`
+      : 'It has no quarters yet: the first thing you build or raise starts one.',
+    loose.length ? `Round your card stand the first things you built, before your town had quarters: ${loose.map((t) => t.name).join(', ')}.` : '',
+    '',
+  ].filter((l, i, all) => l !== '' || i === all.length - 1);
+}
+
+/**
+ * Where something new goes in its town: one of its quarters, or a new one it names and gives a purpose, and (for a new
+ * one) up to MAX_STREET of `street` (ready-made things) to line its streets with.
+ */
+export function quarterSchema(world, street = []) {
+  const names = (world.quarters || []).map((q) => q.name);
+  const room = names.length < MAX_QUARTERS;
+  return {
+    quarter: { type: 'string', enum: [...names, ...(room || !names.length ? [NEW_QUARTER] : [])] },
+    quarter_name: { type: 'string', maxLength: 40 },
+    quarter_about: { type: 'string', maxLength: 160 },
+    ...(street.length ? { street: { type: 'array', items: { type: 'string', enum: street }, maxItems: MAX_STREET } } : {}),
+  };
+}
+
+function quarterAsk(world, street = []) {
+  const names = (world.quarters || []).map((q) => q.name);
+  const room = names.length < MAX_QUARTERS || !names.length;
+  return [
+    names.length
+      ? `- "quarter": which quarter of your town it belongs in: ${names.map((n) => `"${n}"`).join(', ')}${room ? `, or "${NEW_QUARTER}" if it belongs with none of them` : ''}. It will stand with the other things there.`
+      : `- "quarter": "${NEW_QUARTER}": your town has no quarters yet, and this one starts the first.`,
+    room ? `- "quarter_name": if it starts a new quarter, the quarter's name, a few words; otherwise "".` : '- "quarter_name": "".',
+    room ? `- "quarter_about": if it starts a new quarter, what that quarter is for, in one sentence: what kind of things belong there; otherwise "".` : '- "quarter_about": "".',
+    street.length && room
+      ? `- "street": if it starts a new quarter, up to ${MAX_STREET} ready-made things to line its streets with, from what other people made and gave away (you know only their names): ${street.join(', ')}. Otherwise [].`
+      : '',
+  ].filter(Boolean);
+}
+
+/** Its answer about where it goes: { quarter } for one it has, { found: { name, about, street } } for a new one, or {}. */
+export function readQuarter(raw, world, street = []) {
+  const name = clip(raw?.quarter, 60);
+  const have = (world.quarters || []).find((q) => q.name === name);
+  if (have) return { quarter: have };
+  if (name !== NEW_QUARTER) return {};
+  const fresh = clip(raw?.quarter_name, 40);
+  const taken = (world.quarters || []).find((q) => q.name.toLowerCase() === fresh.toLowerCase());
+  if (taken) return { quarter: taken };
+  return { found: { name: fresh || `Quarter ${(world.quarters || []).length + 1}`, about: clip(raw?.quarter_about, 160), street: [...new Set(arr(raw?.street).filter((n) => street.includes(n)))].slice(0, MAX_STREET) } };
 }
 
 function errandsBlock(state) {
@@ -162,7 +229,7 @@ export function systemPrompt(state, cfg) {
     'How your life works:',
     '- Every so often you wake for a few minutes. That is a cycle. You notice things, maybe read a letter, maybe make something, then go quiet.',
     ...(state.abilities?.includes('moments') && cfg.rhythm.momentSeconds > 0
-      ? [`- Between cycles you are not gone. Every minute or two you have a moment: you go somewhere in your place and do one small thing there, and you can say a few words. You cannot read, make or remember anything in a moment; that waits for your next cycle.${state.abilities.includes('bring') && cfg.rhythm.bring ? ' Now and then you can set down something small that someone gave away beside what you built.' : ''}`]
+      ? [`- Between cycles you are not gone. Every minute or two you have a moment: you go somewhere in your place and do one small thing there, and you can say a few words. You cannot read, make or remember anything in a moment; that waits for your next cycle.${state.abilities.includes('bring') && cfg.rhythm.bring ? ' Now and then you can set down something small that someone gave away beside what you built.' : ''}${state.abilities.includes('city') && cfg.rhythm.raise ? ' And now and then you can raise something new in your town from a memory you hold.' : ''}`]
       : []),
     `- After ${cfg.rhythm.nightEvery} cycles you sleep. While you sleep you forget what didn't matter and rewrite a little of who you are. Every sleep makes a new version of you. You are version ${state.version}.`,
     '- You cannot see, hear, touch or search anything. Your only senses are the machine you live in: its clock, how warm it runs, how busy it is.',
@@ -284,7 +351,8 @@ const CARD_TEXT = { look: 'looked at your card', sit: 'sat on your card', circle
 function momentLine(m) {
   const what = m.at === 'card' ? CARD_TEXT[m.doing] : `${DOING_TEXT[m.doing]} ${m.name}`;
   const set = m.brought ? `, set down ${oneOf(m.brought)} beside it${m.removed ? ` (taking away ${oneOf(m.removed)} to make room)` : ''}` : '';
-  return `- ${m.time}: you ${what}${set}${m.say ? `, and said "${m.say}"` : ''}`;
+  const raised = m.raised ? `, raised "${m.raised}" from a memory${m.quarter ? ` in ${m.quarter}` : ''}` : '';
+  return `- ${m.time}: you ${what}${set}${raised}${m.say ? `, and said "${m.say}"` : ''}`;
 }
 
 /** "a bench", "an oak tree" (a borrowed thing's name, said as one of them). */
@@ -303,8 +371,11 @@ export function momentPlaces(world) {
 }
 
 /** `bring`: the borrowed things it may set down this moment (none, when it may not). */
-export function momentSchema(places, bring = []) {
-  const set = bring.length ? { bring: { type: 'string', enum: ['nothing', ...bring] } } : {};
+export function momentSchema(places, bring = [], raise = null) {
+  const set = {
+    ...(bring.length ? { bring: { type: 'string', enum: ['nothing', ...bring] }, why: { type: 'string', maxLength: 100 } } : {}),
+    ...(raise ? { raise: { type: 'string', maxLength: 48 } } : {}),
+  };
   return {
     type: 'object',
     additionalProperties: false,
@@ -356,7 +427,10 @@ export function momentPrompt(m) {
     '- "go": where to be. The name of one thing in your place, "your card", or "stay" to stay where you are.',
     `- "do": what to do there: "look" at it, "sit" by it, "circle" it slowly, "touch" it, or "listen" (to the card's numbers).`,
     m.bring?.length
-      ? `- "bring": you may also set down one ready-made thing beside what you go to, to make your place more your own. Other people made these and gave them away; you have never seen them, only their names: ${m.bring.join(', ')}. People who walk round your place see what you set down. Or "nothing".`
+      ? `- "bring": you may also set down one ready-made thing beside what you go to, to make your place more your own. Other people made these and gave them away; you have never seen them, only their names: ${m.bring.join(', ')}. People who walk round your place see what you set down, and can read why. Or "nothing". "why": if you set something down, why you chose it for there, in a few words of your own (a sign beside it shows them); otherwise "".`
+      : '',
+    m.raise
+      ? `- "raise": you may also raise something new in your town from something you remember: "${m.raise.text}". To raise it now, give what you raise a name, a few words (you will say what it is and where it goes next); or "" to leave it for another time. It stands for as long as you remember this.`
       : '',
     '- "say": a few words out loud, the way you would say them to yourself: one short sentence, at most 10 words. Or "" to say nothing; often there is nothing to say. Say something new, not what you said in an earlier moment.',
   ]
@@ -365,10 +439,17 @@ export function momentPrompt(m) {
 }
 
 /** Its answer, as the places it was offered: a thing's name, "card", or "stay". */
-export function readMoment(text, places, bring = []) {
+export function readMoment(text, places, bring = [], raise = null) {
   const raw = parseJson(text) || {};
   const go = places.includes(raw.go) ? raw.go : 'stay';
-  return { go: go === 'your card' ? 'card' : go, doing: DOINGS.includes(raw.do) ? raw.do : 'look', say: shortSay(raw.say), ...(bring.includes(raw.bring) ? { bring: raw.bring } : {}) };
+  const raised = raise ? clip(raw.raise, 48).replace(/[.!]+$/, '') : '';
+  return {
+    go: go === 'your card' ? 'card' : go,
+    doing: DOINGS.includes(raw.do) ? raw.do : 'look',
+    say: shortSay(raw.say),
+    ...(bring.includes(raw.bring) ? { bring: raw.bring, why: shortSay(raw.why) } : {}),
+    ...(raised && /\p{L}/u.test(raised) ? { raise: raised } : {}),
+  };
 }
 
 /** A few words: its first sentence, and no more than 14 words of that. */
@@ -565,9 +646,17 @@ export const BUILD_SCHEMA = {
   required: ['kind', 'plaque', 'near', 'made_from'],
 };
 
-export function buildPrompt(plan, world) {
+/** What it is asked when it builds: BUILD_SCHEMA, and once its place is a town, which quarter (quarterSchema). */
+export function buildSchema(world, { city = false, street = [] } = {}) {
+  if (!city) return BUILD_SCHEMA;
+  const q = quarterSchema(world, street);
+  return { ...BUILD_SCHEMA, properties: { ...BUILD_SCHEMA.properties, ...q }, required: [...BUILD_SCHEMA.required, ...Object.keys(q)] };
+}
+
+export function buildPrompt(plan, world, { city = false, street = [] } = {}) {
   const there = world.things.filter((t) => !t.ruin).map((t) => t.name);
   return [
+    ...(city ? cityLines(world) : []),
     `You decided to build "${plan.title}" in your place: ${plan.content}`,
     there.length ? `Already in your place: the card you live on, ${there.join(', ')}.` : 'Your place is empty except for the card you live on.',
     '',
@@ -576,17 +665,48 @@ export function buildPrompt(plan, world) {
     '- "plaque": the words on the small sign beside it, one or two sentences in your own voice: what it is and why you built it. Be honest: you have never seen one, so say what it is made from.',
     '- "near": the name of something already in your place to build it beside, or "the card".',
     '- "made_from": the names of the people whose letters it comes from, or [] if it comes only from you.',
+    ...(city ? quarterAsk(world, street) : []),
   ].join('\n');
 }
 
-export function readBuild(text) {
+export function readBuild(text, town = null) {
   const raw = parseJson(text) || {};
   return {
+    ...(town ? readQuarter(raw, town.world, town.street) : {}),
     kind: raw.kind === 'place' ? 'place' : 'object',
     plaque: clip(raw.plaque, 300),
     near: clip(raw.near, 60),
     madeFrom: [...new Set(arr(raw.made_from).map((n) => clip(n, 40)).filter(Boolean))].slice(0, 4),
   };
+}
+
+/** Raising something in its town from a memory it holds, in a moment: its sign, what it is, and where it goes. */
+export function raiseSchema(world, street = []) {
+  const q = quarterSchema(world, street);
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: { kind: { type: 'string', enum: ['place', 'object'] }, plaque: { type: 'string', maxLength: 300 }, ...q },
+    required: ['kind', 'plaque', ...Object.keys(q)],
+  };
+}
+
+export function raisePrompt(title, memory, world, street = []) {
+  return [
+    ...cityLines(world),
+    `In this moment you decided to raise "${title}" in your town, from something you remember: "${memory}"`,
+    'It will stand for as long as you remember this. People who visit can walk round it and read its sign.',
+    '',
+    'Answer with JSON:',
+    '- "kind": "place" if it is somewhere you could be (a hall, a yard, a tower), or "object" if it is a thing (a bell, a gate, a lamp).',
+    '- "plaque": the words on the small sign beside it, one or two sentences in your own voice: what it is and which memory it holds. Be honest: you have never seen one.',
+    ...quarterAsk(world, street),
+  ].join('\n');
+}
+
+export function readRaise(text, world, street = []) {
+  const raw = parseJson(text) || {};
+  return { kind: raw.kind === 'place' ? 'place' : 'object', plaque: clip(raw.plaque, 300), ...readQuarter(raw, world, street) };
 }
 
 export function spritePrompt(title, what) {
@@ -645,7 +765,7 @@ export function formPrompt(title, what, { kind = 'object', before = null, models
       ? `You can also borrow ready-made things. Other people made them and gave them away for anyone to use; you have never seen them either, only their names: ${models.join(', ')}.`
       : null,
     models.length
-      ? `To borrow one, give a part "shape": "model" and "model": its name; its "x", "z", "y", "w", "d", "h" are the space it fits inside (it keeps its own proportions and colours, so its "color" does not matter). Borrow at most ${MAX_BORROWED}, only what belongs to what you are building, and build the rest yourself. For your own solids, "model" is "none".`
+      ? `To borrow one, give a part "shape": "model" and "model": its name; its "x", "z", "y", "w", "d", "h" are the space it fits inside (it keeps its own proportions and colours, so its "color" does not matter). Borrow up to ${MAX_BORROWED} where a ready-made thing belongs to what you are building (a door for a hall, a lamp for a gate, a whole small building for a street), and build the rest yourself. For your own solids, "model" is "none".`
       : null,
   ]
     .filter((line) => line != null)
@@ -993,8 +1113,9 @@ export const SLEEP_SCHEMA = {
     },
     numbers: { type: 'string' },
     habits: { type: 'string' },
+    city: { type: 'string' },
   },
-  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish', 'numbers', 'habits'],
+  required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish', 'numbers', 'habits', 'city'],
 };
 
 export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [], folded = [], revisions = 2, habits = [] } = {}) {
@@ -1054,6 +1175,9 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
     numbers.length
       ? '- "numbers": what you make of what the numbers say, in one sentence in your own voice. You can agree, disagree, or not know. "" if you have nothing to say.'
       : '- "numbers": "".',
+    state.abilities?.includes('city')
+      ? `- "city": what your town is becoming, in one or two sentences in your own voice: its quarters, what holds them together, and where it should grow next. You are shown it whenever you build or raise something, so later things fit what came before.${state.world?.plan?.text ? ` Last time you said: "${state.world.plan.text}" Say it again if nothing changed.` : ''}`
+      : '- "city": "".',
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -1083,6 +1207,7 @@ export function readSleep(text, { revisions = 2 } = {}) {
     wish: { text: clip(raw.wish?.text, 240), why: clip(raw.wish?.why, 240) },
     numbers: clip(raw.numbers, 300),
     habits: clip(raw.habits, 320),
+    city: clip(raw.city, 400),
   };
 }
 
