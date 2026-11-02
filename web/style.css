@@ -552,9 +552,12 @@ main {
   align-items: start;
 }
 .presence-card {
+  padding: 14px 18px 18px;
+}
+/* it stays where it is in Now; in a replay it keeps alongside as you scroll through the life */
+.replay > .presence-card {
   position: sticky;
   top: 82px;
-  padding: 14px 18px 18px;
 }
 .presence {
   display: block;
@@ -1032,7 +1035,7 @@ main {
 .embed main {
   padding: 16px;
 }
-.embed .presence-card {
+.embed .replay > .presence-card {
   top: 16px;
 }
 .embed .replay-controls {
@@ -1638,7 +1641,7 @@ dialog::backdrop {
   .letters-grid {
     grid-template-columns: 1fr;
   }
-  .presence-card,
+  .replay > .presence-card,
   .compose {
     position: static;
   }
