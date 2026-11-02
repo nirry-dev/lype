@@ -2223,6 +2223,10 @@ a.btn {
   max-height: 76vh;
   width: 100%;
 }
+/* Embedded, walking is all the host page shows: the world alone, without what you are looking at or its wishes. */
+.embed .place.walking .place-side {
+  display: none;
+}
 #place-inspect .canvas-frame {
   max-width: 180px;
   margin: 0 0 12px;
