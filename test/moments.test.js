@@ -236,3 +236,40 @@ test('full power that ran out while it was switched off ends when it starts agai
   assert.equal(life.status().power, null);
   assert.match(life.notes.at(-1), /while it was switched off/);
 });
+
+test('in a moment it may set down something it borrowed beside what it built, now and then, and is told it did', async () => {
+  const { setDown, AROUND } = await import('../server/world.js');
+  const views = await import('../server/views.js');
+  const { life, asked } = makeLife();
+  assert.ok(life.state.abilities.includes('bring'));
+  things(life, 'The Soft Arch');
+  life.state.about = { n: 1, at: 'T1', doing: 'look', say: '', since: new Date().toISOString() };
+  const offered = await life.moments.bringable('');
+  assert.ok(offered.length >= 4, 'a few things to set down');
+  life.brain.complete = async (req) => (asked.push(req), { text: JSON.stringify({ go: 'The Soft Arch', do: 'touch', bring: req.schema.properties.bring?.enum[1] ?? 'nothing', say: '' }) });
+  const m = await life.moments.one();
+  assert.equal(m.brought, asked.at(-1).schema.properties.bring.enum[1]);
+  const arch = life.state.world.things[0];
+  assert.equal(arch.around.length, 1);
+  assert.ok(life.catalogue.byId.get(arch.around[0].model), 'what it set down is a model it can be drawn from');
+  assert.match(asked.at(-1).user, /"bring": you may also set down one ready-made thing/);
+  // not again for a while
+  await life.moments.one();
+  assert.equal(asked.at(-1).schema.properties.bring, undefined);
+  assert.equal(arch.around.length, 1);
+  // its next cycle is told, and its place says what stands beside what
+  assert.match(mind.systemPrompt(life.state, life.cfg), /set down something small/);
+  const told = life.state.moments.find((x) => x.brought);
+  assert.ok(told);
+  assert.deepEqual(views.world(life).things[0].around.map((x) => x.name), [m.brought]);
+  assert.ok(views.world(life).credit);
+
+  // eight places round a lot; a ninth thing makes the oldest give way
+  const t = { id: 'T9', around: [] };
+  for (let i = 0; i < AROUND; i++) setDown(t, { model: `m${i}`, name: `n${i}` }, { at: '', cycle: 1 });
+  assert.equal(new Set(t.around.map((x) => x.slot)).size, AROUND);
+  const { removed, put } = setDown(t, { model: 'm9', name: 'n9' }, { at: '', cycle: 2 });
+  assert.equal(removed.name, 'n0');
+  assert.equal(put.slot, removed.slot);
+  assert.equal(t.around.length, AROUND);
+});

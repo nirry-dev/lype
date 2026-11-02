@@ -2438,6 +2438,61 @@ a.btn {
     display: none;
   }
 }
+/* nearer in, it is no longer a small model on a table: no blur */
+.walk:not([data-lens='above']) .walk-focus {
+  display: none;
+}
+/* the grain of the paper it draws on, over all of it */
+.walk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.94 0 0 0 0 0.89 0 0 0 0 0.82 0 0 0 1.4 -0.35'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23p)'/%3E%3C/svg%3E");
+}
+.walk[data-lens='eyes'] .walk-canvas {
+  cursor: crosshair;
+}
+.walk-lens {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(12, 14, 18, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.walk-lens button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 11px;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 12px var(--mono);
+  cursor: pointer;
+}
+.walk-lens button:hover {
+  color: var(--text);
+}
+.walk-lens button[aria-pressed='true'] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--curious) 30%, transparent);
+}
+.walk-lens button:focus-visible {
+  outline: 2px solid var(--curious);
+  outline-offset: 1px;
+}
+@media (max-width: 900px) {
+  .walk-muse {
+    top: 48px;
+  }
+}
 .walk-labels {
   position: absolute;
   inset: 0;

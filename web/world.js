@@ -15,11 +15,21 @@ const meshRef = (p) => (p.shape === MADE ? (p.made ? `made:${p.made}` : null) : 
 import { moodRGB } from './presence.js';
 
 const PAPER = '#efe4d0';
+const INK = [0.1, 0.09, 0.11, 1];
 const ORIGIN_PITCH = 0.52;
 const FOV = 0.6; // narrow, and from a little higher, so its place reads as a small town seen whole
 const SPAN = 0.9; // how wide a lot is, in world units
 const PITCH = 1.4; // how far apart the tiles are: a lot, and a street round it
 const BODY = 0.042; // its body's steps, in world units: a body 24 steps tall stands about as high as a small house's door
+// Three ways to see its place: from above, the whole town at once; following it, low behind it as it goes about; and at
+// eye level, walking its streets yourself, a visitor a little shorter than its doors.
+export const LENSES = ['above', 'follow', 'eyes'];
+const EYE = 0.2; // a visitor's eyes, in world units (a door is 0.3 tall)
+const LENS = {
+  above: { fov: FOV, near: 0.1 },
+  follow: { fov: 0.85, near: 0.04, dist: 2.2, pitch: 0.42, fog: [4.5, 17] },
+  eyes: { fov: 1.1, near: 0.02, fog: [3.5, 17] },
+};
 
 // ---------- small matrix kit (column-major, as WebGL wants) ----------
 
@@ -437,7 +447,23 @@ function mesh(gl, data) {
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
-  return { buf, count: data.length / 8 };
+  return { buf, count: data.length / 8, inward: inward(data) };
+}
+
+/**
+ * Whether a mesh's triangles are wound the other way round from how they face (most of them, going by the normals
+ * they carry). Its ink outline is drawn from its far side, and which side that is depends on it.
+ */
+function inward(data) {
+  let votes = 0;
+  for (let i = 0; i + 23 < data.length; i += 24) {
+    const a = [data[i + 8] - data[i], data[i + 9] - data[i + 1], data[i + 10] - data[i + 2]];
+    const b = [data[i + 16] - data[i], data[i + 17] - data[i + 1], data[i + 18] - data[i + 2]];
+    const n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const d = n[0] * data[i + 5] + n[1] * data[i + 6] + n[2] * data[i + 7];
+    votes += d > 0 ? 1 : d < 0 ? -1 : 0;
+  }
+  return votes < 0;
 }
 
 // ---------- shapes, each standing on the ground in a unit box (x and z from -0.5 to 0.5, y from 0 to 1) ----------
@@ -799,11 +825,42 @@ function placedParts(t, form, dimsOf = () => null) {
 }
 
 /**
+ * What it set down round a thing (borrowed models, by id), each in one of eight places just out on the street round
+ * its lot, two to a side, facing out. Small things stay small: a model is drawn at a quarter of its own size, and never
+ * wider than the street or taller than a door and a half. They wear and fall with the thing they stand beside.
+ */
+const AROUND_SCALE = 0.24;
+function placedAround(t, dimsOf = () => null) {
+  const c = t.ruin ? 0 : t.condition ?? 1;
+  const out = [];
+  for (const a of t.around || []) {
+    const dims = dimsOf(a.model);
+    if (!dims) continue;
+    const side = Math.floor(a.slot / 2) % 4;
+    const along = (a.slot % 2 ? 1 : -1) * SPAN * 0.27;
+    const off = SPAN / 2 + 0.12;
+    const [sx, sz] = [[0, 1], [1, 0], [0, -1], [-1, 0]][side];
+    const at = [sx * off + (sz ? along : 0), 0, sz * off + (sx ? along : 0)];
+    let size = dims.map((v) => v * AROUND_SCALE);
+    const fit = Math.min(1, 0.22 / Math.max(size[0], size[2]), 0.45 / size[1]);
+    size = size.map((v) => v * fit);
+    const salt = `${t.id}|a${a.slot}`;
+    const fade = t.ruin ? 0.75 : (1 - c) * 0.7;
+    const color = [1, 1, 1].map((v, k) => lerp(v, GREY[k], fade) * (t.ruin ? 0.8 : 1));
+    // facing out to the street; fallen over, in a ruin
+    const yaw = Math.atan2(sx, sz) + (hash(`${salt}y`) - 0.5) * 0.3;
+    const tilt = t.ruin ? (hash(`${salt}t`) > 0.5 ? 1 : -1) * 1.3 : c < 1 ? (hash(`${salt}t`) - 0.5) * (1 - c) * 0.4 : 0;
+    out.push({ p: { shape: 'model', model: a.model, glow: false }, at, size, yaw, tilt, color, glow: false });
+  }
+  return out;
+}
+
+/**
  * @param {HTMLElement} host  an element to fill (it gets a canvas, a minimap and a layer of name labels)
  * @param {{ asset: (path: string) => string, onSelect: (id: string | null) => void, models?: string }} opts  `models`: where the
  *   borrowed models' catalogue and meshes are served from (default: models/ beside the page)
  */
-export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/' }) {
+export function createWalk(host, { asset, onSelect, onLens = null, models: modelsAt = 'models/' }) {
   const canvas = document.createElement('canvas');
   canvas.className = 'walk-canvas';
   canvas.tabIndex = 0;
@@ -826,7 +883,30 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   mini.setAttribute('aria-hidden', 'true');
   const focus = document.createElement('div');
   focus.className = 'walk-focus';
-  host.append(canvas, focus, labels, mini);
+  // how to see it: from above, following it, at eye level
+  const lensBar = document.createElement('div');
+  lensBar.className = 'walk-lens';
+  lensBar.setAttribute('role', 'group');
+  lensBar.setAttribute('aria-label', 'How to see its place');
+  for (const [l, text, title] of [
+    ['above', 'Above', 'The whole town from above'],
+    ['follow', 'Follow', 'Low behind it, wherever it goes'],
+    ['eyes', 'Eye level', 'Walk its streets yourself: click the ground or use W A S D to walk, drag to look'],
+  ]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.lens = l;
+    b.textContent = text;
+    b.title = title;
+    b.setAttribute('aria-pressed', String(l === 'above'));
+    b.addEventListener('click', () => {
+      setLens(l);
+      canvas.focus({ preventScroll: true });
+    });
+    lensBar.append(b);
+  }
+  host.append(canvas, focus, labels, mini, lensBar);
+  host.dataset.lens = 'above';
   selfLabel.className = 'walk-label self';
   labels.append(selfLabel, sayLabel, neighborLabel);
 
@@ -976,7 +1056,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   const dimsOf = (ref) => modelFor(ref)?.dims || null;
   /** A model arrived: everything that borrowed it is placed again, now at its true proportions. */
   function refit() {
-    for (const th of things) if (th.form) th.placed = placedParts(th.t, th.form, dimsOf);
+    for (const th of things) {
+      if (th.form) th.placed = placedParts(th.t, th.form, dimsOf);
+      th.around = placedAround(th.t, dimsOf);
+    }
     dirty = true;
     schedule();
   }
@@ -1008,6 +1091,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   let view = null;
   let proj = null;
   let eye = [0, 0, 0];
+  let aim = [0, 0, 0]; // what the eye looks at
+  let lens = 'above';
+  const walker = { x: 0, z: 0, yaw: 0, pitch: 0, stride: 0, goal: null }; // you, at eye level
+  const follow = { yaw: 0, offset: 0, pitch: LENS.follow.pitch, dist: LENS.follow.dist, touched: 0 }; // the camera behind it
 
   // A sky of fixed stars, the same every visit.
   const stars = Array.from({ length: 160 }, (_, i) => {
@@ -1082,10 +1169,30 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     const shaped = m ? m.mesh : meshFor(shape, points);
     if (alpha >= 1) casting.push({ model: placed, mesh: shaped });
     draw(placed, shaped, tex.white, [...color, alpha], { shade: 1, glow, depthWrite: alpha >= 1, colors: m?.colors });
+    if (alpha >= 1 && !glow) inked.push({ at, yaw, tilt, size, mesh: shaped });
+  }
+  /**
+   * Its place drawn the way it draws: every solid outlined in ink, as on paper. Each is drawn once more, a hair larger,
+   * showing only its far side, so only the rim around it shows. Thicker from above, where everything is farther off.
+   */
+  let inked = [];
+  function ink(light) {
+    const w = lens === 'above' ? 0.011 : 0.0055;
+    gl.uniform1f(prog.uLight, Math.max(0.35, light));
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.FRONT);
+    for (const q of inked) {
+      if (Math.min(q.size[0], q.size[2]) < w * 1.5) continue; // too thin to outline: it would be all ink
+      gl.cullFace(q.mesh.inward ? gl.BACK : gl.FRONT);
+      draw(mat.model([q.at[0], q.at[1] - w, q.at[2]], q.yaw, q.tilt, q.size.map((v) => v + 2 * w)), q.mesh, tex.white, INK);
+    }
+    gl.cullFace(gl.BACK);
+    gl.disable(gl.CULL_FACE);
+    inked = [];
   }
   const halo = (at, size, color, alpha) => draw(mat.model(at, 0, 0, [size, 1, size]), meshes.flat, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
   const spark = (at, size, color, alpha) => draw(mat.model(at, facing(), 0, [size, size, 1]), meshes.centered, tex.glow, [...color, alpha], { additive: true, depthWrite: false });
-  const facing = () => Math.atan2(eye[0] - cam.target[0], eye[2] - cam.target[2]);
+  const facing = () => Math.atan2(eye[0] - aim[0], eye[2] - aim[2]);
 
   /** The graphics card it lives on: a board, a shroud, two fans turning with the real card's load, a light along its edge. */
   function drawCard(light, night, mood, t) {
@@ -1133,15 +1240,14 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     host.style.setProperty('--sky-top', `rgb(${sky.top.join(',')})`);
     host.style.setProperty('--sky-low', `rgb(${sky.low.join(',')})`);
 
-    eye = [
-      cam.target[0] + cam.dist * Math.cos(cam.pitch) * Math.sin(cam.yaw),
-      cam.target[1] + cam.dist * Math.sin(cam.pitch),
-      cam.target[2] + cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw),
-    ];
-    proj = mat.perspective(FOV, canvas.width / canvas.height, 0.1, 200);
-    view = mat.lookAt(eye, cam.target);
+    const seen = see(dt);
+    eye = seen.eye;
+    aim = seen.aim;
+    proj = mat.perspective(LENS[lens].fov, canvas.width / canvas.height, LENS[lens].near, 200);
+    view = mat.lookAt(eye, aim);
     // Where the horizon falls on screen, so the sky behind the canvas meets the fogged ground there without a seam.
-    const ahead = [cam.target[0] - Math.sin(cam.yaw) * 150, 0, cam.target[2] - Math.cos(cam.yaw) * 150];
+    const level = Math.hypot(aim[0] - eye[0], aim[2] - eye[2]) || 1;
+    const ahead = [eye[0] + ((aim[0] - eye[0]) / level) * 150, 0, eye[2] + ((aim[2] - eye[2]) / level) * 150];
     const hy = mat.apply(mat.mul(proj, view), ahead)[1];
     host.style.setProperty('--horizon', `${clamp(((1 - hy) / 2) * 100, 0, 100).toFixed(1)}%`);
     const lightVP = lightView(sun.day > 0.05 ? sun.sun : sun.moon);
@@ -1193,18 +1299,19 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     if (night > 0.05) {
       for (const s of stars) {
         const tw = reduced ? 1 : 0.75 + 0.25 * Math.sin(t * 1.3 + s.tw);
-        spark(s.dir.map((v, k) => v * 80 + cam.target[k]), s.size * 1.6, [0.85, 0.9, 1], night * 0.85 * tw);
+        spark(s.dir.map((v, k) => v * 80 + aim[k]), s.size * 1.6, [0.85, 0.9, 1], night * 0.85 * tw);
       }
     }
     const orb = sun.day > 0.05 ? sun.sun : sun.moon;
-    const orbAt = orb.map((v, k) => v * 90 + cam.target[k]);
+    const orbAt = orb.map((v, k) => v * 90 + aim[k]);
     if (orb[1] > -0.1) {
       const tint = sun.day > 0.05 ? [1, 0.86, 0.62] : [0.82, 0.88, 1];
       spark(orbAt, 30, tint, 0.35);
       spark(orbAt, 7, [1, 1, 0.96], sun.day > 0.05 ? 0.95 : 0.75);
     }
-    gl.uniform1f(prog.uFogNear, cam.dist * 0.9);
-    gl.uniform1f(prog.uFogFar, cam.dist * 3.2);
+    const [fogNear, fogFar] = LENS[lens].fog || [cam.dist * 0.9, cam.dist * 3.2];
+    gl.uniform1f(prog.uFogNear, fogNear);
+    gl.uniform1f(prog.uFogFar, fogFar);
 
     // the ground
     gl.uniform1f(prog.uLight, light);
@@ -1217,9 +1324,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     draw(mat.model([gx, 0, gz], 0, 0, [gw * PITCH, 1, gh * PITCH]), meshes.flat, tex.ground, [1, 1, 1, 1]);
     gl.uniform1f(prog.uReceive, 0);
 
-    // pools of light on the ground: its light, you
+    // pools of light on the ground: its light, you (seen from above)
     gl.uniform1f(prog.uLight, 1);
-    halo([cam.target[0], 0.014, cam.target[2]], 0.7, [1, 1, 1], 0.18);
+    if (lens === 'above') halo([cam.target[0], 0.014, cam.target[2]], 0.7, [1, 1, 1], 0.18);
 
     // shadows under what stands
     for (const th of things) {
@@ -1230,9 +1337,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     gl.uniform1f(prog.uLight, light);
     drawCard(light, night, mood, t);
 
-    // what it built, as solids
+    // what it built, as solids, and what it set down round it
     const glows = [];
     for (const th of things) {
+      for (const q of th.around || []) solid('model', [th.pos[0] + q.at[0], q.at[1], th.pos[2] + q.at[2]], q.size, q.color, { yaw: q.yaw, tilt: q.tilt, model: q.p.model });
       if (!th.form || (site && site.id === th.t.id)) continue;
       const lift = th === selected ? 0.03 + (reduced ? 0 : 0.015 * Math.sin(t * 2.4)) : 0;
       for (const q of th.placed) {
@@ -1287,6 +1395,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     // while it builds: its lot marked out, and the parts it has written so far rising into place
     if (site) drawSite(t, light, night, mood, glows);
 
+    ink(light);
+
     // paper: the drawings that have no shape yet, and every sign; back to front so their edges blend
     const cards = [];
     for (const th of things) {
@@ -1330,7 +1440,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       gl.disable(gl.CULL_FACE);
       gl.depthFunc(gl.LESS);
       gl.uniform1f(prog.uLight, 1);
-      spark([creature.pos[0], creature.pos[1] + creature.height * 0.55, creature.pos[2]], creature.height * 1.6 + 0.3, mood, look.asleep ? 0.12 : 0.22);
+      // a little of its light about it: soft, and behind it rather than over it, so its body reads (and its eyes)
+      spark([creature.pos[0], creature.pos[1] + creature.height * 0.55, creature.pos[2]], creature.height * 1.3 + 0.2, mood, look.asleep ? 0.06 : 0.1);
     } else {
       const bob = reduced ? 0 : Math.sin(t * 1.3) * 0.08;
       const size = look.asleep ? 0.75 : 1;
@@ -1338,6 +1449,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       spark([creature.pos[0], creature.pos[1] + bob, creature.pos[2]], 1.1 * size, mood, 0.9);
       spark([creature.pos[0], creature.pos[1] + bob, creature.pos[2]], 0.38 * size, [1, 0.97, 0.9], 1);
     }
+
+    ink(light); // its own body's outline
 
     placeLabels();
     drawMini();
@@ -1394,7 +1507,41 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
   /** Move the camera and its light toward where they are going; true while anything is still moving. */
   function step(dt) {
     let moving = false;
-    if (keys.size) {
+    if (keys.size && lens === 'eyes') {
+      // at eye level: walking pace, turning with Q and E (or the arrows left and right), never through what it built
+      const speed = (keys.has('Shift') ? 2.6 : 1.1) * dt;
+      const fwd = [-Math.sin(walker.yaw), -Math.cos(walker.yaw)];
+      const right = [Math.cos(walker.yaw), -Math.sin(walker.yaw)];
+      let dx = 0;
+      let dz = 0;
+      if (keys.has('w') || keys.has('ArrowUp')) (dx += fwd[0]), (dz += fwd[1]);
+      if (keys.has('s') || keys.has('ArrowDown')) (dx -= fwd[0]), (dz -= fwd[1]);
+      if (keys.has('d')) (dx += right[0]), (dz += right[1]);
+      if (keys.has('a')) (dx -= right[0]), (dz -= right[1]);
+      if (keys.has('q') || keys.has('ArrowLeft')) walker.yaw += 1.8 * dt;
+      if (keys.has('e') || keys.has('ArrowRight')) walker.yaw -= 1.8 * dt;
+      const len = Math.hypot(dx, dz);
+      if (len) stride((dx / len) * speed, (dz / len) * speed);
+      walker.goal = null;
+      moving = true;
+    } else if (walker.goal && lens === 'eyes') {
+      // walking to where you clicked, until you get there or something is in the way
+      const [gx, gz] = walker.goal;
+      const d = Math.hypot(gx - walker.x, gz - walker.z);
+      const step = Math.min(d, 1.1 * dt);
+      const before = walker.stride;
+      if (d > 0.02) stride(((gx - walker.x) / d) * step, ((gz - walker.z) / d) * step);
+      if (d <= 0.02 || walker.stride === before) walker.goal = null;
+      moving = true;
+    } else if (keys.size && lens === 'follow') {
+      // following it, the keys only look round it
+      if (keys.has('q') || keys.has('a') || keys.has('ArrowLeft')) follow.offset += 1.6 * dt;
+      if (keys.has('e') || keys.has('d') || keys.has('ArrowRight')) follow.offset -= 1.6 * dt;
+      if (keys.has('w') || keys.has('ArrowUp')) follow.dist = clamp(follow.dist - 1.5 * dt, 0.9, 5);
+      if (keys.has('s') || keys.has('ArrowDown')) follow.dist = clamp(follow.dist + 1.5 * dt, 0.9, 5);
+      follow.touched = performance.now();
+      moving = true;
+    } else if (keys.size) {
       const speed = (keys.has('Shift') ? 7 : 3.4) * dt;
       const fwd = [-Math.sin(cam.yaw), -Math.cos(cam.yaw)];
       const right = [Math.cos(cam.yaw), -Math.sin(cam.yaw)];
@@ -1476,7 +1623,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       if (creature.goal?.about === a.n && (!creature.visiting || creature.visiting === th)) return creature.goal;
       creature.visiting = th || null;
       creature.arrived = 0;
-      const viewer = [cam.target[0] + Math.sin(cam.yaw) * cam.dist, cam.target[2] + Math.cos(cam.yaw) * cam.dist];
+      const viewer = [eye[0], eye[2]];
       if (!th) return { ...(a.doing === 'sit' ? { spot: [0, 0], face: null, settle: true } : { spot: [0.25, 0.62], face: Math.PI }), about: a.n, doing: a.doing };
       const g = beside(th, viewer, a.doing === 'touch');
       // walking round it: far enough out to clear its corners
@@ -1495,7 +1642,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       if (pick.th) {
         // on the side of it that faces whoever is watching (where the camera is, even before its first frame),
         // so what it built doesn't hide it
-        return beside(pick.th, [cam.target[0] + Math.sin(cam.yaw) * cam.dist, cam.target[2] + Math.cos(cam.yaw) * cam.dist]);
+        return beside(pick.th, [eye[0], eye[2]]);
       }
       const a = Math.random() * Math.PI * 2;
       return { spot: [Math.cos(a) * 0.9, Math.sin(a) * 0.9], face: angleTo([Math.cos(a), Math.sin(a)], [0, 0]) };
@@ -1554,6 +1701,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     const aim = going > 0.0004 ? angleTo([before[0], before[2]], [creature.pos[0], creature.pos[2]]) : goal.face ?? facing();
     creature.heading = reduced ? aim : turn(creature.heading, aim, 1 - Math.exp(-dt * 3));
     const moved = Math.hypot(...sub(before, creature.pos));
+    // how fast it goes along the ground, eased, for its step
+    creature.speed = lerp(creature.speed || 0, going / Math.max(dt, 0.001), 1 - Math.exp(-dt * 6));
     return moved + (Math.abs(aim - creature.heading) > 0.01 ? 0.001 : 0);
   }
 
@@ -1579,9 +1728,17 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     return look.body?.parts?.length ? look.body : null;
   }
 
-  /** Its body where it is: each part around its middle, turned the way it faces, bobbing a little as it floats. */
+  /**
+   * Its body where it is: each part around its middle, turned the way it faces, bobbing a little as it floats. The parts
+   * of a creature it gave itself live: its eyes blink now and then, its wings stir (and beat while it goes), and going
+   * along it hops a little and rocks from side to side, the way small creatures walk.
+   */
   function drawBody(form, t, night, mood, { ghost = false } = {}) {
-    const bob = reduced ? 0 : Math.sin(t * 1.3) * 0.03;
+    const go = reduced ? 0 : clamp((creature.speed || 0) / 0.35, 0, 1);
+    const hop = reduced ? 0 : Math.abs(Math.sin(t * 9)) * 0.035 * go;
+    const bob = reduced ? 0 : Math.sin(t * 1.3) * 0.03 * (1 - go) + hop;
+    const roll = reduced ? 0 : Math.sin(t * 9) * 0.09 * go;
+    const blink = !reduced && t % 3.9 < 0.13 ? 0.12 : 1;
     const [cx, cy, cz] = creature.pos;
     const cos = Math.cos(creature.heading);
     const sin = Math.sin(creature.heading);
@@ -1593,17 +1750,116 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
         const fit = Math.min(size[0] / dims[0], size[1] / dims[1], size[2] / dims[2]);
         size = dims.map((v) => v * fit);
       }
-      const ox = (p.x + p.w / 2 - LOT / 2) * BODY;
+      // rocked about its middle at the ground, as it waddles
+      const lx = (p.x + p.w / 2 - LOT / 2) * BODY;
+      const ly = p.y * BODY;
+      const ox = lx * Math.cos(roll) - ly * Math.sin(roll);
+      const oy = lx * Math.sin(roll) + ly * Math.cos(roll);
       const oz = (p.z + p.d / 2 - LOT / 2) * BODY;
       const rise = form.live && !reduced ? 1 - (1 - clamp((now - creature.born[i]) / 700, 0, 1)) ** 3 : 1;
-      const at = [cx + cos * ox + sin * oz, cy + p.y * BODY + bob - (1 - rise) * 0.2, cz - sin * ox + cos * oz];
+      const at = [cx + cos * ox + sin * oz, cy + oy + bob - (1 - rise) * 0.2, cz - sin * ox + cos * oz];
+      if (p.role === 'eye' && blink < 1) {
+        at[1] += (size[1] * (1 - blink)) / 2;
+        size = [size[0], size[1] * blink, size[2]];
+      }
       const color = isMesh(p.shape) ? [1, 1, 1] : hex(COLORS[p.color] || COLORS.stone);
       const glow = p.glow ? 0.6 + night * 0.4 : form.live ? (1 - rise) * 0.8 : 0;
       const yaw = creature.heading - ((p.turn || 0) * Math.PI) / 180;
-      if (ghost) solid(p.shape, at, size, mood, { yaw, glow: 0.8, alpha: 0.32 * rise, model: meshRef(p), points: p.points });
-      else solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw, glow, alpha: 0.35 + 0.65 * rise, model: meshRef(p), points: p.points });
+      const side = lx < 0 ? -1 : 1;
+      const flap = p.role === 'wing' && !reduced ? side * (Math.sin(t * (go ? 16 : 1.7) + i) * (go ? 0.35 : 0.06)) : 0;
+      const tilt = roll + flap;
+      if (ghost) solid(p.shape, at, size, mood, { yaw, tilt, glow: 0.8, alpha: 0.32 * rise, model: meshRef(p), points: p.points });
+      else solid(p.shape, at, size, look.asleep ? color.map((v) => v * 0.7) : color, { yaw, tilt, glow, alpha: 0.35 + 0.65 * rise, model: meshRef(p), points: p.points });
     });
     return formHeight(form) * LOT * BODY;
+  }
+
+  /** Where the eye is and what it looks at, for the lens in use. */
+  function see(dt) {
+    if (lens === 'eyes') {
+      const bob = reduced ? 0 : Math.sin(walker.stride * 9) * 0.006;
+      const e = [walker.x, EYE + bob, walker.z];
+      const c = Math.cos(walker.pitch);
+      return { eye: e, aim: [e[0] - Math.sin(walker.yaw) * c, e[1] + Math.sin(walker.pitch), e[2] - Math.cos(walker.yaw) * c] };
+    }
+    if (lens === 'follow') {
+      // behind it, a little above: easing round as it turns, and back behind it a while after you look away
+      if (performance.now() - follow.touched > 4000) follow.offset *= Math.exp(-dt * 0.6);
+      const k = reduced ? 1 : 1 - Math.exp(-dt * 1.4);
+      follow.yaw = turn(follow.yaw, creature.heading + Math.PI + follow.offset, k);
+      const c = [creature.pos[0], Math.max(0.12, creature.pos[1] + (creature.height || 0.3) * 0.5), creature.pos[2]];
+      const { dist: d, pitch: p } = follow;
+      return { eye: [c[0] + d * Math.cos(p) * Math.sin(follow.yaw), c[1] + d * Math.sin(p), c[2] + d * Math.cos(p) * Math.cos(follow.yaw)], aim: c };
+    }
+    return {
+      eye: [cam.target[0] + cam.dist * Math.cos(cam.pitch) * Math.sin(cam.yaw), cam.target[1] + cam.dist * Math.sin(cam.pitch), cam.target[2] + cam.dist * Math.cos(cam.pitch) * Math.cos(cam.yaw)],
+      aim: cam.target,
+    };
+  }
+
+  /** Where on the ground a point on the screen (-1..1 each way) falls, at eye level, if it is near enough to walk to. */
+  function groundAt(px, py) {
+    const f = norm(sub(aim, eye));
+    const r = norm(cross(f, [0, 1, 0]));
+    const u = cross(r, f);
+    const k = Math.tan(LENS.eyes.fov / 2);
+    const aspect = canvas.width / canvas.height;
+    const dir = [0, 1, 2].map((i) => f[i] + r[i] * px * k * aspect + u[i] * py * k);
+    if (dir[1] >= -0.01) return null;
+    const t = -eye[1] / dir[1];
+    if (t * Math.hypot(dir[0], dir[2]) > 8) return null;
+    return [eye[0] + dir[0] * t, eye[2] + dir[2] * t];
+  }
+
+  /** Whether a visitor can stand here: not inside what it built, its card, or a tree. */
+  function free(x, z) {
+    const b = bounds();
+    if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) return false;
+    if (Math.abs(x) < 0.62 && Math.abs(z) < 0.52) return false; // the card
+    for (const th of things) if (Math.abs(x - th.pos[0]) < SPAN / 2 + 0.06 && Math.abs(z - th.pos[2]) < SPAN / 2 + 0.06 && (th.form || !th.t.ruin)) return false;
+    for (const sc of town) for (const q of sc.placed) if (Math.hypot(x - sc.pos[0] - q.at[0], z - sc.pos[2] - q.at[2]) < 0.07) return false;
+    return true;
+  }
+  /** The nearest place a visitor can stand to (x, z). */
+  function open(x, z) {
+    if (free(x, z)) return [x, z];
+    for (let r = 0.1; r < 3; r += 0.1) for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) if (free(x + Math.cos(a) * r, z + Math.sin(a) * r)) return [x + Math.cos(a) * r, z + Math.sin(a) * r];
+    return [x, z];
+  }
+  /** A step at eye level, sliding along whatever is in the way. */
+  function stride(dx, dz) {
+    if (free(walker.x + dx, walker.z + dz)) (walker.x += dx), (walker.z += dz);
+    else if (free(walker.x + dx, walker.z)) walker.x += dx;
+    else if (free(walker.x, walker.z + dz)) walker.z += dz;
+    else return;
+    walker.stride += Math.hypot(dx, dz);
+  }
+
+  /** See its place another way. From above you look down where you were; at eye level you stand where you looked. */
+  function setLens(next) {
+    if (!LENSES.includes(next) || next === lens) return;
+    if (next === 'eyes') {
+      const from = lens === 'follow' ? see(0) : { eye: [cam.target[0] + Math.sin(cam.yaw) * 1.6, 0, cam.target[2] + Math.cos(cam.yaw) * 1.6], aim: cam.target };
+      [walker.x, walker.z] = open(from.eye[0], from.eye[2]);
+      walker.yaw = Math.atan2(walker.x - from.aim[0], walker.z - from.aim[2]);
+      walker.pitch = 0;
+    } else if (next === 'follow') {
+      follow.yaw = creature.heading + Math.PI;
+      follow.offset = 0;
+    } else if (lens === 'eyes') {
+      cam.goal = [walker.x - Math.sin(walker.yaw) * 1.2, 0.4, walker.z - Math.cos(walker.yaw) * 1.2];
+      cam.yaw = walker.yaw;
+    } else if (lens === 'follow') {
+      cam.goal = [creature.pos[0], 0.4, creature.pos[2]];
+      cam.yaw = follow.yaw;
+    }
+    lens = next;
+    keys.clear();
+    host.dataset.lens = lens;
+    for (const b of lensBar.children) b.setAttribute('aria-pressed', String(b.dataset.lens === lens));
+    onLens?.(lens);
+    dirty = true;
+    schedule();
   }
 
   function walk(dx, dz) {
@@ -1666,9 +1922,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     g.arc(lx, ly, 2.6, 0, Math.PI * 2);
     g.fill();
     // you, and which way you are looking
-    const yx = (cam.target[0] / PITCH + world.card.x + 0.5) * cell;
-    const yy = (cam.target[2] / PITCH + world.card.y + 0.5) * cell;
-    const a = Math.atan2(-Math.cos(cam.yaw), -Math.sin(cam.yaw));
+    const you = lens === 'above' ? cam.target : eye;
+    const yx = (you[0] / PITCH + world.card.x + 0.5) * cell;
+    const yy = (you[2] / PITCH + world.card.y + 0.5) * cell;
+    const a = Math.atan2(aim[2] - eye[2], aim[0] - eye[0]);
     g.fillStyle = 'rgba(255,255,255,0.18)';
     g.beginPath();
     g.moveTo(yx, yy);
@@ -1688,7 +1945,10 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     const x = ((e.clientX - r.left) / cell - 1 - 0.5 - world.card.x) * PITCH;
     const z = ((e.clientY - r.top) / cell - 1 - 0.5 - world.card.y) * PITCH;
     const b = bounds();
-    cam.goal = [clamp(x, b.x0, b.x1), 0.4, clamp(z, b.z0, b.z1)];
+    if (lens === 'eyes') [walker.x, walker.z] = open(clamp(x, b.x0, b.x1), clamp(z, b.z0, b.z1));
+    else if (lens === 'follow') setLens('above');
+    if (lens === 'above') cam.goal = [clamp(x, b.x0, b.x1), 0.4, clamp(z, b.z0, b.z1)];
+    dirty = true;
     schedule();
   });
 
@@ -1730,7 +1990,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       th.label.hidden = !show;
       if (!show) continue;
       th.label.style.transform = `translate(${((x + 1) / 2) * w}px, ${((1 - y) / 2) * h}px) translate(-50%, -100%)`;
-      th.label.style.opacity = String(clamp(1.6 - depth / (cam.dist * 2.2), 0.25, 1));
+      th.label.style.opacity = String(lens === 'above' ? clamp(1.6 - depth / (cam.dist * 2.2), 0.25, 1) : clamp(1.4 - depth / 7, 0, 1));
       th.label.classList.toggle('selected', th === selected);
     }
   }
@@ -1758,7 +2018,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     pointers.set(e.pointerId, [e.clientX, e.clientY]);
     if (pointers.size === 2) {
       const d = pinchDist();
-      if (drag.pinch) cam.dist = clamp((cam.dist * drag.pinch) / d, 3, 32);
+      if (drag.pinch && lens === 'follow') follow.dist = clamp((follow.dist * drag.pinch) / d, 0.9, 5);
+      else if (drag.pinch && lens === 'above') cam.dist = clamp((cam.dist * drag.pinch) / d, 3, 32);
       drag.pinch = d;
       drag.moved += 10;
     } else {
@@ -1768,6 +2029,13 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       if (drag.pan) {
         const s = cam.dist / canvas.clientHeight;
         walk(-(dx * Math.cos(cam.yaw) + dy * Math.sin(cam.yaw)) * s * 1.2, (dx * Math.sin(cam.yaw) - dy * Math.cos(cam.yaw)) * s * 1.2);
+      } else if (lens === 'eyes') {
+        walker.yaw += dx * 0.005;
+        walker.pitch = clamp(walker.pitch + dy * 0.004, -0.6, 0.7);
+      } else if (lens === 'follow') {
+        follow.offset -= dx * 0.008;
+        follow.pitch = clamp(follow.pitch + dy * 0.005, 0.05, 1.2);
+        follow.touched = performance.now();
       } else {
         cam.yaw -= dx * 0.008;
         cam.pitch = clamp(cam.pitch + dy * 0.006, 0.12, 1.35);
@@ -1791,7 +2059,9 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
     'wheel',
     (e) => {
       e.preventDefault();
-      cam.dist = clamp(cam.dist * Math.exp(e.deltaY * 0.0012), 3, 32);
+      if (lens === 'eyes') stride(Math.sin(walker.yaw) * e.deltaY * 0.002, Math.cos(walker.yaw) * e.deltaY * 0.002);
+      else if (lens === 'follow') follow.dist = clamp(follow.dist * Math.exp(e.deltaY * 0.0012), 0.9, 5);
+      else cam.dist = clamp(cam.dist * Math.exp(e.deltaY * 0.0012), 3, 32);
       dirty = true;
       schedule();
     },
@@ -1851,12 +2121,24 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       }
       if (d < Infinity && px > x0 && px < x1 && py > y0 - 0.02 && py < y1 + 0.02 && (!best || d < best.d)) best = { th, d };
     }
+    // at eye level, a click (or a tap) on open ground walks you there
+    const ground = !best && lens === 'eyes' && groundAt(px, py);
+    if (ground) {
+      walker.goal = open(...ground);
+      schedule();
+      return;
+    }
     choose(best?.th.t.id ?? null);
   }
 
   function choose(id, { fly = false } = {}) {
     selected = things.find((th) => th.t.id === id) || null;
-    if (selected && fly) cam.goal = [selected.pos[0], 0.4, selected.pos[2]];
+    if (selected && fly && lens === 'eyes') {
+      // at eye level, you walk up to its sign
+      [walker.x, walker.z] = open(selected.pos[0] + SPAN * 0.3, selected.pos[2] + SPAN * 0.5 + 0.75);
+      walker.yaw = Math.atan2(walker.x - selected.pos[0], walker.z - selected.pos[2]);
+      walker.pitch = 0.08;
+    } else if (selected && fly) cam.goal = [selected.pos[0], 0.4, selected.pos[2]];
     dirty = true;
     schedule();
     onSelect?.(selected?.t.id ?? null);
@@ -1882,6 +2164,7 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
         th.pos = toWorld(t);
         th.form = t.form?.parts?.length ? t.form : null;
         th.placed = th.form ? placedParts(t, th.form, dimsOf) : [];
+        th.around = placedAround(t, dimsOf);
         th.top = th.form ? (t.ruin ? 0.35 : formHeight(th.form)) : 0.85;
         th.label.textContent = t.name;
         th.label.classList.toggle('ruin', Boolean(t.ruin));
@@ -2020,6 +2303,8 @@ export function createWalk(host, { asset, onSelect, models: modelsAt = 'models/'
       schedule();
     },
     focus: (id) => choose(id, { fly: true }),
+    /** See its place from above, following it, or at eye level (LENSES). */
+    lens: (l) => setLens(l),
     destroy,
   };
 }

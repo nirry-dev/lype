@@ -49,5 +49,66 @@ export function shortlist(catalogue, { about = '', thoughts = '' }, { max = 16, 
   return names;
 }
 
+/** A model as a text to find by meaning: its name and the kind of things it came with ("bench: town, village, street"). */
+export const docOf = (catalogue, m) => `${m.name}: ${m.id.split('/')[0]}, ${(catalogue.kits[m.id.split('/')[0]] || []).slice(0, 3).join(', ')}`;
+
+// By meaning, every model sits at 0.4-0.5 from anything it builds; the few that touch it stand out above that crowd
+// (the soft arch: stones, stone bridges and curved fences at 0.58-0.6, where its middle is 0.48). Calibrated on its place.
+const ABOVE = 0.06;
+
+/**
+ * The best matches by meaning for `about` among `pool` (all models when none), ordered: those well above that query's
+ * crowd (its 90th percentile + ABOVE). Empty when the meaning model is off or can't be reached.
+ */
+export async function byMeaning(catalogue, meaning, about, { pool = catalogue.models, max = 8 } = {}) {
+  if (!meaning?.up || !about || !pool.length) return [];
+  const docs = pool.map((m) => docOf(catalogue, m));
+  if (!(await meaning.ensure(docs, 'document')) || !(await meaning.ensure([about], 'query'))) return [];
+  const scored = pool.map((m, i) => ({ m, c: meaning.closeness(about, docs[i]) ?? 0 })).sort((a, b) => b.c - a.c);
+  const bar = scored[Math.floor(scored.length * 0.1)].c + ABOVE;
+  return scored.filter((x) => x.c >= Math.min(bar, scored[0].c)).slice(0, max).map((x) => x.m.name);
+}
+
+/** The shortlist (see shortlist), with what matches by meaning put in among what matches by words. */
+export async function offer(catalogue, meaning, ctx, { max = 16, min = 8 } = {}) {
+  const meant = await byMeaning(catalogue, meaning, ctx.about, { max: Math.ceil(max / 2) });
+  const words = shortlist(catalogue, ctx, { max, min }); // the plain things that make up its numbers come last, and go first
+  return [...new Set([...words.slice(0, max - meant.length), ...meant, ...words])].slice(0, max);
+}
+
+// What it can set down beside what it built, in a moment: small things that stand outdoors, from the kits for a town,
+// its gardens, a camp and a graveyard, and the furniture that also stands outside. Never anything bigger than a cart.
+const OUTSIDE = new Set(['town', 'nature', 'camp', 'graveyard']);
+const OUTDOOR_FURNITURE = /^(bench|plant|potted plant|lounge chair)\b/;
+
+export function furnishings(catalogue) {
+  catalogue.furnishings ??= catalogue.models.filter((m) => {
+    const kit = m.id.split('/')[0];
+    if (Math.max(...m.dims) > 1.8 || /\b(chimney|wall|floor|roof|stairs|bridge|path|ground|platform|tent|ceiling|desk|bed|bedroll)\b/.test(m.name)) return false;
+    return OUTSIDE.has(kit) || (kit === 'furniture' && OUTDOOR_FURNITURE.test(m.name));
+  });
+  return catalogue.furnishings;
+}
+
+/**
+ * The things it is offered to set down beside a thing in a moment: what matches it (and what it last thought) by
+ * meaning or words, then a couple from anywhere among the furnishings, so its place does not fill with one kind of thing.
+ */
+export async function aroundOffer(catalogue, meaning, about, { max = 8, salt = '' } = {}) {
+  const pool = furnishings(catalogue);
+  if (!pool.length) return [];
+  const names = new Set(pool.map((m) => m.name));
+  const meant = await byMeaning(catalogue, meaning, about, { pool, max: max - 2 });
+  const words = shortlist(catalogue, { about }, { max, min: 0 }).filter((n) => names.has(n));
+  const picked = [...new Set([...meant, ...words])].slice(0, max - 2);
+  let x = 0;
+  for (const ch of salt) x = (x * 31 + ch.charCodeAt(0)) >>> 0;
+  for (let i = 0; picked.length < max && i < pool.length; i++) {
+    const m = pool[(x + i * 7919) % pool.length];
+    if (!picked.includes(m.name)) picked.push(m.name);
+  }
+  return picked;
+}
+
 /** The names of what a shape borrowed, for its sign and its page. */
 export const borrowed = (catalogue, form) => [...new Set((form?.parts || []).filter((p) => p.shape === 'model').map((p) => catalogue.byId.get(p.model)?.name || p.model))];

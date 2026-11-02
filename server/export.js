@@ -114,7 +114,7 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   // The things it can borrow: all of them for a life that may still borrow more while people watch; for a life that
   // has ended, only what it borrowed.
   const catalogue = loadCatalogue();
-  const used = new Set(life.state.world?.things.flatMap((t) => (t.form?.parts || []).map((p) => p.model).filter(Boolean)) || []);
+  const used = new Set(life.state.world?.things.flatMap((t) => [...(t.form?.parts || []).map((p) => p.model), ...(t.around || []).map((a) => a.model)].filter(Boolean)) || []);
   if (catalogue.models.length) write('models/catalogue.json', readFileSync(join(web, 'models', 'catalogue.json'), 'utf8'));
   for (const m of catalogue.models) {
     if (!allModels && !used.has(m.id)) continue;

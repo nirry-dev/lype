@@ -10,9 +10,14 @@
 // begun with a short thought it thinks aloud, streamed to whoever is watching. Its own work on the card no longer
 // counts against it, and it takes the card back from its household at once. If the card gets too hot it slows to its
 // usual moments until the card has cooled.
+//
+// In a moment it may also set down one ready-made thing someone gave away (a bench, a lantern, a stone) beside
+// something it built, so its place fills in slowly with things it chose, between the things it builds.
 import { repeats, understand } from './memory.js';
 import * as mind from './mind.js';
+import { aroundOffer, loadCatalogue } from './models.js';
 import { readSenses } from './senses.js';
+import { AROUND, setDown } from './world.js';
 
 const KEPT = 24; // moments kept between cycles (it is told the last few)
 const DRIFT_AFTER = 4 * 60000; // with no moment for this long, its body moves on by itself
@@ -20,6 +25,8 @@ const STUCK = 3; // moments in a row in one place, after which it is asked to go
 const NEAR_WAKE = 45000; // no moment this close to a cycle (or a quarter of the time between them, when that is shorter)
 const FULL_GAP = 1500; // at full power, the pause between one moment and the next
 const COOL_BY = 5; // degrees under its ceiling the card comes back to before it goes on at full power
+const BRING_EVERY = 6; // the least time between one thing it sets down and the next, in its usual moments (~9 minutes)
+const FULL_EVERY = 40; // ... once every place round what it built is taken, and something has to make way (~an hour)
 
 const until = (ms) => (ms < 90000 ? 'in about a minute' : `in about ${Math.round(ms / 60000)} minutes`);
 const since = (iso, now = Date.now()) => {
@@ -175,6 +182,7 @@ export class Moments {
       waiting: life.letters.filter((l) => !l.readAt && ['allowed', 'pending'].includes(l.screen?.status ?? 'allowed')).length,
       power: power ? { until: clock(new Date(power.until)), cooling: Boolean(power.cooling) } : null,
       before: this.lastGpu ?? null, // how the card was at its last moment
+      bring: await this.bringable(lastCycle?.diary || ''),
     };
     this.lastGpu = senses.gpu;
     const system = mind.systemPrompt(s, life.cfg);
@@ -187,20 +195,52 @@ export class Moments {
         ctx.mused = mind.cleanProse(res.text, 500);
         if (life.busy) return null;
       }
-      const raw = await life.brain.complete({ kind: 'moment', system, user: mind.momentPrompt(ctx), maxTokens: 90, temperature: 0.9, schema: mind.momentSchema(places) });
+      const raw = await life.brain.complete({ kind: 'moment', system, user: mind.momentPrompt(ctx), maxTokens: ctx.bring.length ? 120 : 90, temperature: 0.9, schema: mind.momentSchema(places, ctx.bring) });
       // the cycle may have begun while it thought: the cycle has the body now
       if (life.busy) return null;
-      const read = mind.readMoment(raw.text, places);
+      const read = mind.readMoment(raw.text, places, ctx.bring);
       // what it already said lately, said again in other words, is left unsaid ("The curve holds" after "The curve is
       // still holding": by meaning, rewordings of one thought sit at 0.92 and up, something new below 0.9)
       const lately = told.slice(-6).map((m) => m.say).filter(Boolean);
       if (read.say) await understand([read.say, ...lately]);
       if (read.say && lately.some((said) => repeats(read.say, said, { words: 0.4, meant: 0.92 }))) read.say = '';
       const at = read.go === 'stay' ? (s.about?.at ?? 'card') : read.go === 'card' ? 'card' : s.world.things.find((t) => t.name === read.go)?.id ?? 'card';
-      return this.record({ at, doing: read.doing, say: read.say, time: senses.time, thought: ctx.mused });
+      const set = read.bring ? this.setDown(at, read.bring) : null;
+      return this.record({ at, doing: read.doing, say: read.say, time: senses.time, thought: ctx.mused, ...set });
     } finally {
       this.musing = null;
     }
+  }
+
+  /**
+   * What it may set down this moment, if anything: a few borrowed things that suit where it is and what it last thought
+   * (by meaning). Offered at most every BRING_EVERY, and while every place round what it built is taken, only every
+   * FULL_EVERY, so its place fills slowly and then changes slowly.
+   */
+  async bringable(thought) {
+    const life = this.life;
+    const s = life.state;
+    const standing = s.world.things.filter((t) => !t.ruin);
+    if (!standing.length || !life.cfg.rhythm.bring) return [];
+    const last = s.brought ? Date.now() - Date.parse(s.brought) : Infinity;
+    const room = standing.some((t) => (t.around?.length ?? 0) < AROUND);
+    if (last < (room ? BRING_EVERY : FULL_EVERY) * this.every) return [];
+    life.catalogue ??= loadCatalogue();
+    const here = s.world.things.find((t) => t.id === s.about?.at && !t.ruin) || standing[Math.floor(Math.random() * standing.length)];
+    return aroundOffer(life.catalogue, life.meaning, `${here.name}: ${here.plaque} ${thought}`.slice(0, 600), { salt: `${s.about?.n ?? 0}` });
+  }
+
+  /** It sets down what it chose beside the thing it went to (not its card, not a ruin). What to tell, or null. */
+  setDown(at, name) {
+    const life = this.life;
+    const thing = life.state.world.things.find((t) => t.id === at && !t.ruin);
+    const model = life.catalogue?.byName.get(name);
+    if (!thing || !model) return null;
+    const { removed } = setDown(thing, { model: model.id, name }, { at: new Date().toISOString(), cycle: life.state.cycle });
+    life.state.brought = new Date().toISOString();
+    life.state.stats.brought = (life.state.stats.brought ?? 0) + 1;
+    life.milestone('first-brought', `It set down something it borrowed beside ${thing.name}: ${name}.`);
+    return { brought: name, removed: removed?.name || null };
   }
 
   /** Its body moving on by itself while it can't think: to something it built (newer and more tended more often). */
@@ -219,7 +259,7 @@ export class Moments {
   record(m) {
     const s = this.life.state;
     const n = (s.about?.n ?? 0) + 1;
-    s.about = { n, at: m.at, doing: m.doing, say: m.say, since: new Date().toISOString(), ...(m.thought ? { thought: m.thought } : {}), ...(m.drift ? { drift: true } : {}) };
+    s.about = { n, at: m.at, doing: m.doing, say: m.say, since: new Date().toISOString(), ...(m.thought ? { thought: m.thought } : {}), ...(m.drift ? { drift: true } : {}), ...(m.brought ? { brought: m.brought, ...(m.removed ? { removed: m.removed } : {}) } : {}) };
     s.moments = [...(s.moments || []), { ...this.where(s.about), time: m.time }].slice(-KEPT);
     if (!m.drift) {
       s.stats.moments = (s.stats.moments ?? 0) + 1;
@@ -233,7 +273,15 @@ export class Moments {
   /** A moment with the name of where it was, for telling it later (a thing it built may since have been renamed or gone). */
   where(about) {
     const thing = about.at !== 'card' && this.life.state.world.things.find((t) => t.id === about.at);
-    return { at: thing ? thing.id : 'card', name: thing?.name ?? '', doing: about.doing, say: about.say, ...(about.thought ? { thought: about.thought } : {}), ...(about.drift ? { drift: true } : {}) };
+    return {
+      at: thing ? thing.id : 'card',
+      name: thing?.name ?? '',
+      doing: about.doing,
+      say: about.say,
+      ...(about.thought ? { thought: about.thought } : {}),
+      ...(about.drift ? { drift: true } : {}),
+      ...(about.brought ? { brought: about.brought, ...(about.removed ? { removed: about.removed } : {}) } : {}),
+    };
   }
 
   /** After a cycle its body is where the cycle left it: by what it built or tended, or at its card. */

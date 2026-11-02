@@ -281,6 +281,11 @@ async function api(req, res, url) {
       const result = life.setPower(body.on === true, { hours: body.hours, why: 'its keeper turned it off' });
       return json(res, result.ok ? 200 : 409, result.ok ? result : { error: result.reason });
     }
+    if (action === 'body') {
+      // Its keeper asks whether it wants to choose again how it is seen ({ "text": "..." }); it answers at night.
+      const result = life.askAboutBody(tidy((await readBody(req)).text, 500));
+      return json(res, result.ok ? 200 : 409, result.ok ? result : { error: result.reason });
+    }
     if (action === 'pause') return life.pause(), json(res, 200, life.status());
     if (action === 'resume') return life.resume(), json(res, 200, life.status());
     return json(res, 404, { error: 'unknown action' });

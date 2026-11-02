@@ -12,6 +12,12 @@ export const SHAPES = ['block', 'cylinder', 'cone', 'ball', 'roof', 'pyramid', '
 export const POINTED = ['outline', 'lathe'];
 /** Ready-made pieces it can build with, each laid out as a few solids inside the space it is given. */
 export const PIECES = ['tree', 'pine', 'column', 'fence', 'lamp', 'door', 'window', 'bench'];
+/**
+ * Parts of a creature, for a body: they hold on to the part they are set against (an eye on a head, a wing on a side)
+ * instead of being pushed off it, and the page gives them life (eyes blink, wings move, feet step). Each is laid out
+ * as a few solids facing the front of its space, the side at z 10.
+ */
+export const FEATURES = ['eye', 'beak', 'wing', 'foot', 'ear', 'tail'];
 /** Ways one part can stand many times: in a row, in a ring round the middle of its lot, or mirrored. */
 export const PATTERNS = ['none', 'row', 'ring', 'mirror'];
 /** A part may instead be a ready-made model it borrows (see server/models.js), at most this many in one thing. */
@@ -51,7 +57,7 @@ const int = (lo, hi) => ({ type: 'integer', minimum: lo, maximum: hi });
  * What it answers with. Offered models to borrow, a part may be "model" and name one of them ("none" otherwise); able to
  * have things made, a part may be "made" and "describe" it.
  */
-export function formSchema(models = [], { made = false } = {}) {
+export function formSchema(models = [], { made = false, body = false } = {}) {
   const borrow = models.length ? { model: { type: 'string', enum: ['none', ...models] } } : {};
   return {
     type: 'object',
@@ -65,7 +71,7 @@ export function formSchema(models = [], { made = false } = {}) {
           type: 'object',
           additionalProperties: false,
           properties: {
-            shape: { type: 'string', enum: [...SHAPES, ...PIECES, ...(models.length ? [MODEL] : []), ...(made ? [MADE] : [])] },
+            shape: { type: 'string', enum: [...SHAPES, ...PIECES, ...(body ? FEATURES : []), ...(models.length ? [MODEL] : []), ...(made ? [MADE] : [])] },
             ...borrow,
             x: int(0, LOT),
             z: int(0, LOT),
@@ -117,7 +123,7 @@ export function cleanPart(raw, { model = null, made = null } = {}) {
     borrowed = model ? model(raw.model) : typeof raw.model === 'string' && raw.model !== 'none' ? raw.model.slice(0, 80) : null;
     if (!borrowed) return null;
   }
-  let shape = wanted ? MADE : borrowed ? MODEL : SHAPES.includes(raw.shape) || PIECES.includes(raw.shape) ? raw.shape : 'block';
+  let shape = wanted ? MADE : borrowed ? MODEL : SHAPES.includes(raw.shape) || PIECES.includes(raw.shape) || FEATURES.includes(raw.shape) ? raw.shape : 'block';
   const w = clampInt(raw.w, 1, LOT);
   const d = clampInt(raw.d, 1, LOT);
   const h = clampInt(raw.h, 1, TALL);
@@ -176,7 +182,27 @@ function pieceParts(p) {
     color: c,
     glow: g,
   });
+  // a creature's part, which the page knows by its role; in the colour it was given, or the one it usually has
+  const own = (fallback) => (color === 'stone' ? fallback : color);
+  const part = (role, q) => ({ ...q, role });
   switch (p.shape) {
+    case 'eye':
+      // white, a dark pupil looking out a little high, and a glint
+      return [
+        part('eye', at(0, 0, 0, 1, 0.6, 1, 'ball', 'paper')),
+        part('eye', at(0.2, 0.4, 0.22, 0.6, 0.6, 0.62, 'ball', own('night'))),
+        part('eye', at(0.52, 0.9, 0.58, 0.2, 0.1, 0.2, 'ball', 'paper', true)),
+      ];
+    case 'beak':
+      return [part('beak', at(0, 0, 0.42, 1, 1, 0.58, 'wedge', own('gold'))), part('beak', at(0.12, 0, 0, 0.76, 0.8, 0.42, 'wedge', own('copper')))];
+    case 'wing':
+      return [part('wing', at(0, 0, 0, 1, 1, 1, 'ball', color, glow))];
+    case 'foot':
+      return [part('foot', at(0, 0, 0, 1, 1, 1, 'wedge', own('gold')))];
+    case 'ear':
+      return [part('ear', at(0, 0, 0, 1, 1, 1, 'cone', color, glow))];
+    case 'tail':
+      return [part('tail', at(0, 0, 0, 1, 1, 1, 'cone', color, glow))];
     case 'tree':
       return [at(0.375, 0.375, 0, 0.25, 0.25, 0.4, 'cylinder', 'bark'), at(0, 0, 0.4, 1, 1, 0.6, 'ball', color === 'stone' ? 'leaf' : color, glow)];
     case 'pine':
@@ -223,7 +249,7 @@ function pieceParts(p) {
  */
 export function expand(p) {
   const { pattern, repeat, dx, dz, ...one } = p;
-  const pieces = PIECES.includes(one.shape) ? pieceParts(one) : null;
+  const pieces = PIECES.includes(one.shape) || FEATURES.includes(one.shape) ? pieceParts(one) : null;
   const cx = one.x + one.w / 2;
   const cz = one.z + one.d / 2;
   const group = pieces ? pieces.map((q) => turned(q, one.turn || 0, cx, cz)) : [one];
@@ -261,8 +287,11 @@ export function inlay(p, q) {
 const through = (p, q) =>
   p.y > q.y && p.y + p.h > q.y + q.h && p.w < q.w && p.d < q.d && p.x >= q.x && p.z >= q.z && p.x + p.w <= q.x + q.w && p.z + p.d <= q.z + q.d;
 
-/** Two parts that would be in the same space: solids do not pass through each other, unless one is set into the other. */
-const collide = (p, q) => shares(p, q) && !inlay(p, q) && !inlay(q, p) && !through(p, q) && !through(q, p);
+/**
+ * Two parts that would be in the same space: solids do not pass through each other, unless one is set into the other,
+ * or is a creature's part (an eye sits in its head, a wing against its side).
+ */
+const collide = (p, q) => shares(p, q) && !p.role && !q.role && !inlay(p, q) && !inlay(q, p) && !through(p, q) && !through(q, p);
 
 const fits = (p) => p.x >= 0 && p.z >= 0 && p.x + p.w <= LOT && p.z + p.d <= LOT && p.y + p.h <= TALL;
 

@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
 import { formSchema, readForm, standing } from '../web/lib/form.js';
-import { loadCatalogue, shortlist } from './models.js';
+import { loadCatalogue, offer } from './models.js';
 import { Maker } from './maker.js';
 import { Moments, clock } from './moments.js';
 import { Meanings } from './meaning.js';
@@ -328,6 +328,11 @@ export class Life extends EventEmitter {
       s.abilities = [...s.abilities, 'moments'];
       this.notes.push('Since you last woke, your keeper gave you moments. Between your cycles you are no longer gone: every minute or two you go somewhere in your place, to something you built or to your card, and do one small thing there, and you can say a few words. People who are watching see where you go. You will be told what you did in your moments each time you wake.');
       this.journalAdd({ kind: 'gift', text: 'Its keeper gave it moments: between its cycles it now goes about its place, and can say a few words.' });
+    }
+    if (this.moments.enabled && this.cfg.rhythm.bring && s.abilities.includes('moments') && !s.abilities.includes('bring')) {
+      s.abilities = [...s.abilities, 'bring'];
+      this.notes.push('Since you last woke, your keeper gave you more to make your place with. Every so often, in a moment, you can set down one small ready-made thing beside something you built: a bench, a lantern, a stone, a plant. Other people made these and gave them away for anyone to use; you only know their names. You choose whether to, and what.');
+      this.journalAdd({ kind: 'gift', text: 'Its keeper gave it things to set down: in its moments it can now put small ready-made things beside what it built.' });
     }
     this.noticeMind();
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
@@ -692,7 +697,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments'] : [])],
+      abilities: ['world', 'wishes', 'errands', 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments', ...(this.cfg.rhythm.bring ? ['bring'] : [])] : [])],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
@@ -1123,7 +1128,7 @@ export class Life extends EventEmitter {
       senses,
       notes,
       told: answered.map((w) => w.id),
-      world: { count: s.world.things.length, standing: s.world.things.filter((t) => !t.ruin).length },
+      world: { count: s.world.things.length, standing: s.world.things.filter((t) => !t.ruin).length, lastBuilt: Math.max(0, ...s.world.things.filter((t) => !t.builtBy).map((t) => t.built)) },
       waiting,
       letters: chosen.map((l) => ({
         id: l.id,
@@ -1583,7 +1588,8 @@ export class Life extends EventEmitter {
 
   /**
    * It builds the thing up out of solids, streamed part by part so the site can be watched rising, and may borrow a few
-   * ready-made things whose names touch what it is building, what it thought this cycle and what it remembers.
+   * ready-made things whose names touch what it is building, what it thought this cycle and what it remembers, or whose
+   * meaning is close to what it is building.
    * Null if nothing stands.
    */
   async shape(system, title, what, { kind, before = null } = {}) {
@@ -1594,7 +1600,7 @@ export class Life extends EventEmitter {
     const nameOf = (id) => this.catalogue.byId.get(id)?.name;
     // What it borrowed before stays on offer, under its name, so reshaping does not lose it.
     const kept = (before?.parts || []).map((p) => nameOf(p.model)).filter(Boolean);
-    const models = [...new Set([...kept, ...shortlist(this.catalogue, { about: `${title} ${what}`, thoughts: [this.live?.think || '', ...memories].join(' ') })])];
+    const models = [...new Set([...kept, ...(await offer(this.catalogue, this.meaning, { about: `${title}: ${what}`, thoughts: [this.live?.think || '', ...memories].join(' ') }))])];
     const shown = before && { parts: before.parts.map(({ model, ...p }) => (model ? { ...p, model: nameOf(model) || 'none' } : { ...p, ...(models.length ? { model: 'none' } : {}) })) };
     const raw = await this.brain.complete({
       kind: 'form',
@@ -1781,8 +1787,10 @@ export class Life extends EventEmitter {
       if (habits.length) s.self.habits = plan.habits ? { text: plan.habits, version } : null;
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
-      // Its body comes once, on the first night it can be seen (or the next, if nothing it built could stand).
-      const body = s.abilities?.includes('body') && !s.body ? await this.chooseBody(system, dream, chosen?.name) : null;
+      // Its body comes once, on the first night it can be seen (or the next, if nothing it built could stand); again
+      // only on a night after its keeper has asked whether it wants to choose again, and then it may keep it.
+      const asked = s.body && s.bodyAsk && !s.bodyAsk.answer ? s.bodyAsk : null;
+      const body = s.abilities?.includes('body') && (!s.body || asked) ? await this.chooseBody(system, dream, chosen?.name, asked) : null;
       const mail = await this.palMail(system, version);
       const will = mortal?.last ? await this.writeWill(system, mortal, dream) : null;
 
@@ -1804,7 +1812,14 @@ export class Life extends EventEmitter {
         s.names.push({ name: chosen.name, version, why: chosen.why, at });
         s.name = chosen.name;
       }
-      if (body?.form) s.body = { form: body.form, why: body.why, version, at };
+      if (asked) {
+        // its answer, either way; a body that could not stand is kept, and it is told so
+        const kept = body?.keep || !body?.form;
+        asked.answer = { kept, why: body?.why || '', version, at, ...(body?.form || body?.keep ? {} : { failed: true }) };
+        if (!kept) s.bodies = [...(s.bodies || []), { form: s.body.form, why: s.body.why, version: s.body.version }];
+        if (!kept) s.body = { form: body.form, why: body.why, version, at };
+        this.journalAdd({ kind: 'body', text: kept ? `Asked by its keeper whether it wanted to choose again how it is seen, it kept its body${body?.why ? `: "${body.why}"` : '.'}` : `Asked by its keeper whether it wanted to choose again how it is seen, it built itself again: "${body.why}"` });
+      } else if (body?.form) s.body = { form: body.form, why: body.why, version, at };
       await understand([plan.wish?.text, ...s.wishes.map((w) => w.text)].map(photoSubject));
       const wished = addWish(s.wishes, plan.wish, { version, cycle: s.cycle, at });
       s.mood.calm = clamp01(s.mood.calm + 0.15);
@@ -1829,7 +1844,11 @@ export class Life extends EventEmitter {
         self,
         portrait,
         name,
-        ...(body ? { body: body.form ? { form: body.form, why: body.why } : { failed: true } } : {}),
+        ...(body && asked
+          ? { body: { asked: asked.text, kept: asked.answer.kept, why: body.why || '', ...(asked.answer.kept ? {} : { form: body.form }), ...(asked.answer.failed ? { failed: true } : {}) } }
+          : body
+            ? { body: body.form ? { form: body.form, why: body.why } : { failed: true } }
+            : {}),
         // What its words showed today beside what it said it felt, and what it made of that.
         ...(numbers.length ? { numbers: { shown: numbers, answer: plan.numbers } } : {}),
         ...(chosen && !chosen.name ? { naming: { tries: chosen.tries, candidates: chosen.candidates } } : {}),
@@ -1849,7 +1868,8 @@ export class Life extends EventEmitter {
       const gone = [...consolidation.forgotten, ...consolidation.faded];
       if (gone.length) this.milestone('first-forgetting', `It forgot something for the first time: "${gone[0].text}"`);
       if (portrait && !portrait.from) this.milestone('first-portrait', 'It wrote its first picture of what people are.');
-      if (body?.form) this.milestone('embodied', `It chose how it is seen: ${body.why}`);
+      if (body?.form && !asked) this.milestone('embodied', `It chose how it is seen: ${body.why}`);
+      if (asked && !asked.answer.kept) this.milestone('re-embodied', `Asked by its keeper, it chose again how it is seen: ${body.why}`);
       if (name) this.milestone('named', name.from ? `It chose its name: ${name.to}, in place of "${name.from}".` : `It chose its name: ${name.to}.`);
       if (weathered.ruined.length) this.milestone('first-ruin', `Something it built crumbled for the first time: "${weathered.ruined[0].name}". It no longer remembered why it built it.`);
       if (wished?.wish) this.milestone('first-wish', `It left its keeper its first wish: "${wished.wish.text}"`);
@@ -1882,20 +1902,28 @@ export class Life extends EventEmitter {
   }
 
   /** It builds the body it is seen by, streamed so its light can be watched taking shape. */
-  async chooseBody(system, dream, newName = null) {
-    this.setPhase('embodying', 'choosing how it is seen');
+  async chooseBody(system, dream, newName = null, ask = null) {
+    this.setPhase('embodying', ask ? 'choosing again how it is seen' : 'choosing how it is seen');
     this.catalogue ??= loadCatalogue();
     const s = this.state;
     const state = newName ? { ...s, name: newName } : s;
     const memories = [...Object.values(s.memory.shelves).flat(), ...s.memory.today].map((m) => m.text);
-    const models = shortlist(this.catalogue, { about: [state.name || '', s.portrait?.text || '', ...s.self.own.map((l) => l.text)].join(' '), thoughts: [dream, ...memories].join(' ') });
-    const schema = formSchema(models, { made: this.maker.enabled });
+    const models = await offer(this.catalogue, this.meaning, { about: [state.name || '', s.portrait?.text || '', ...s.self.own.map((l) => l.text)].join(' '), thoughts: [dream, ...memories].join(' ') });
+    // what it borrowed for the body it has stays on offer, under its name, so keeping it loses nothing
+    const nameOf = (id) => this.catalogue.byId.get(id)?.name;
+    if (ask) for (const p of s.body.form.parts) if (nameOf(p.model) && !models.includes(nameOf(p.model))) models.push(nameOf(p.model));
+    const before = ask && { parts: s.body.form.parts.map(({ model, role, ...p }) => (model ? { ...p, model: nameOf(model) || 'none' } : models.length ? { ...p, model: 'none' } : p)) };
+    const schema = formSchema(models, { made: this.maker.enabled, body: true });
     schema.properties.why = { type: 'string' };
     schema.required = [...schema.required, 'why'];
+    if (ask) {
+      schema.properties = { keep: { type: 'boolean' }, ...schema.properties };
+      schema.required = ['keep', ...schema.required];
+    }
     const raw = await this.brain.complete({
       kind: 'body',
       system,
-      user: mind.bodyPrompt(state, dream, models, { made: this.maker.enabled }),
+      user: mind.bodyPrompt(state, dream, models, { made: this.maker.enabled, ask: ask?.text || null, before }),
       maxTokens: 2000,
       temperature: 0.8,
       schema,
@@ -1903,7 +1931,26 @@ export class Life extends EventEmitter {
     });
     const offered = new Set(models);
     const form = readForm(raw.text, { model: (n) => (offered.has(n) ? this.catalogue.byName.get(n)?.id || null : null), made: (words) => this.maker.request(words, { cycle: s.cycle }) });
-    return { form, why: mind.clip(mind.parseJson(raw.text)?.why, 300) || '' };
+    const answer = mind.parseJson(raw.text) || {};
+    return { form, why: mind.clip(answer.why, 300) || '', ...(ask ? { keep: answer.keep === true } : {}) };
+  }
+
+  /**
+   * Its keeper asks, in their own words, whether it wants to choose again how it is seen. Once, and only after it has a
+   * body. It is told when it next wakes, the ask goes in its public journal, and on its next night it chooses again or
+   * keeps what it has.
+   */
+  askAboutBody(text) {
+    const s = this.state;
+    const words = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!s.body) return { ok: false, reason: 'It has no body yet: it chooses one on its first night with the gift.' };
+    if (s.bodyAsk && !s.bodyAsk.answer) return { ok: false, reason: 'It has not answered the last ask yet.' };
+    if (words.length < 8 || words.length > 500) return { ok: false, reason: 'Say it in a sentence or a few (8 to 500 characters).' };
+    s.bodyAsk = { text: words, at: new Date().toISOString(), cycle: s.cycle, answer: null };
+    this.notes.push(`Your keeper asked you something about how you are seen, in their own words: "${words}" On your next night you can build yourself again, or keep the body you have. It is up to you.`);
+    this.journalAdd({ kind: 'ask', text: `Its keeper asked whether it would like to choose again how it is seen: "${words}"` });
+    this.saveState();
+    return { ok: true, ask: s.bodyAsk };
   }
 
   /** It chooses its name: three candidates, then one. A choice that won't do gets two more tries; then it waits a night. */

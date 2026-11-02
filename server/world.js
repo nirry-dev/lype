@@ -97,6 +97,26 @@ export function weather(world, memory, { since, cycle }) {
   return { worn, ruined };
 }
 
+/** Its lot has this many places round it, two on each side, where it can set down something it borrowed. */
+export const AROUND = 8;
+
+/**
+ * It sets down something it borrowed (a model's id and name) beside a thing it built, in the first free place round its lot (a
+ * stable pick); with every place taken, the one it set down longest ago makes way. Returns what it set down and what
+ * it took away. Mutates the thing.
+ */
+export function setDown(thing, { model, name }, { at, cycle }) {
+  thing.around ??= [];
+  let removed = null;
+  if (thing.around.length >= AROUND) removed = thing.around.shift();
+  const taken = new Set(thing.around.map((a) => a.slot));
+  const start = Math.floor(hash(`${thing.id}|${model}|${thing.around.length}`) * AROUND);
+  const slot = removed && !taken.has(removed.slot) ? removed.slot : [...Array(AROUND).keys()].map((i) => (start + i) % AROUND).find((i) => !taken.has(i));
+  const put = { model, name, slot, at, cycle };
+  thing.around.push(put);
+  return { put, removed };
+}
+
 /** Drawings a child inherits are numbered from here, far past any cycle a life reaches, so they never meet its own. */
 export const KIN_SPRITES = 900000;
 

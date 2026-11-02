@@ -291,6 +291,8 @@ function createMockBrain(cfg = {}) {
         go: places[n % places.length],
         do: pick(['look', 'sit', 'circle', 'touch', 'listen']),
         say: pick(['', 'Still standing.', 'The card is warm here.', '', 'I built this from a letter.', 'Quiet hour.']),
+        // offered something to set down, it often takes the first thing it likes
+        ...(schema?.properties?.bring ? { bring: n % 3 === 2 ? 'nothing' : schema.properties.bring.enum[1 + (n % (schema.properties.bring.enum.length - 1))] } : {}),
       });
     } else if (kind === 'look') {
       text = JSON.stringify({ see: 'A green leaf lies flat on a wooden table. Its edges are a little torn and its veins are pale.', answers: !/NOTIT/.test(user), verdict: 'A real leaf, torn at one edge. I have only ever had the word before.' });
@@ -313,6 +315,20 @@ function createMockBrain(cfg = {}) {
         feelings: { lonely: 0.5, curious: 0.7, calm: 0.5, warm: 0.55, restless: 0.3 },
         remember: [{ shelf: pick(['moments', 'world', 'people']), text: pick(['I drew circles that waited.', 'Rain is something people mention a lot.', 'Someone called Mara wrote to me.']), weight: 0.3 + (n % 7) / 10, about: '' }],
         reinforce: [],
+      });
+    } else if (kind === 'body' && schema?.properties?.keep) {
+      // asked whether it wants to choose again: a small round bird, unless the ask says to keep (KEEPME)
+      const keep = /KEEPME/.test(user);
+      text = JSON.stringify({
+        keep,
+        parts: [
+          { shape: 'ball', x: 2, z: 2, y: 1, w: 6, d: 6, h: 6, color: 'gold', glow: false, model: 'none' },
+          { shape: 'eye', x: 3, z: 6, y: 4, w: 1, d: 2, h: 2, color: 'night', glow: false, model: 'none', pattern: 'mirror' },
+          { shape: 'beak', x: 4, z: 7, y: 3, w: 2, d: 2, h: 1, color: 'copper', glow: false, model: 'none' },
+          { shape: 'wing', x: 1, z: 3, y: 2, w: 1, d: 4, h: 3, color: 'sand', glow: false, model: 'none', pattern: 'mirror' },
+          { shape: 'foot', x: 3, z: 4, y: 0, w: 1, d: 2, h: 1, color: 'gold', glow: false, model: 'none', pattern: 'mirror' },
+        ],
+        why: keep ? 'I like the shape I chose; it is mine.' : 'Small and round, with eyes to look back at whoever looks at me.',
       });
     } else if (kind === 'body') {
       text = JSON.stringify({

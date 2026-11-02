@@ -319,3 +319,86 @@ test('a life from before the new solids and the maker is told of them once, when
   again.stop();
   assert.ok(!again.notes.some((n) => n.includes('more to build with')), 'told once');
 });
+
+test('with the meaning model, what is close in meaning is offered too, put in among what matches by words', async () => {
+  const { loadCatalogue, offer, aroundOffer, furnishings, docOf } = await import('../server/models.js');
+  const cat = loadCatalogue();
+  // a stand-in for the meaning model: stones and curved fences are close to an arch, everything else is the crowd
+  const close = (doc) => (/^(rock|stone|fence curved)/.test(doc) ? 0.6 : 0.45 + (doc.length % 7) / 200);
+  const meaning = { up: true, ensure: async () => true, closeness: (q, d) => close(d) };
+  const names = await offer(cat, meaning, { about: 'The Soft Arch: a small arch to rest on', thoughts: '' });
+  assert.ok(names.length <= 16 && names.length >= 8);
+  assert.ok(names.some((n) => /^(rock|stone)/.test(n)), names.join(', '));
+  assert.ok(names.some((n) => n.startsWith('arch')) || names.some((n) => /fence curved/.test(n)));
+  // off: words alone, as before
+  assert.deepEqual(await offer(cat, null, { about: 'zzzz qqqq' }), (await import('../server/models.js')).shortlist(cat, { about: 'zzzz qqqq' }));
+
+  // what it can set down: small, outdoors, never a train or a slice of bacon
+  const pool = furnishings(cat);
+  assert.ok(pool.length > 100);
+  assert.ok(pool.every((m) => !/^(food|trains|harbour|space|holiday)\//.test(m.id) && Math.max(...m.dims) <= 1.8));
+  const near = await aroundOffer(cat, meaning, 'The Soft Arch', { salt: '3' });
+  assert.equal(near.length, 8);
+  assert.ok(near.some((n) => /^(rock|stone|fence curved)/.test(n)));
+  assert.ok(near.every((n) => pool.some((m) => m.name === n)));
+  assert.match(docOf(cat, cat.byName.get('bench (graveyard)')), /^bench \(graveyard\): graveyard, graveyard, grave/);
+});
+
+test('a body can have the parts of a creature, which hold on where they are set and are known to the page by role', async () => {
+  const { readForm: read, formSchema: schemaOf, FEATURES } = await import('../web/lib/form.js');
+  assert.ok(schemaOf([], { body: true }).properties.parts.items.properties.shape.enum.includes('eye'));
+  assert.ok(!schemaOf([]).properties.parts.items.properties.shape.enum.includes('eye'), 'not offered for what it builds');
+  const f = read({
+    parts: [
+      { shape: 'ball', x: 1, z: 1, y: 0, w: 8, d: 8, h: 8, color: 'gold', glow: false },
+      { shape: 'eye', x: 2, z: 7, y: 4, w: 2, d: 2, h: 2, color: 'stone', glow: false, pattern: 'mirror' },
+      { shape: 'beak', x: 4, z: 8, y: 3, w: 2, d: 2, h: 2, color: 'stone', glow: false },
+      { shape: 'wing', x: 0, z: 3, y: 2, w: 1, d: 4, h: 3, color: 'sand', glow: false, pattern: 'mirror' },
+    ],
+  });
+  const eyes = f.parts.filter((p) => p.role === 'eye');
+  assert.equal(eyes.length, 6, 'two eyes, each a white, a pupil and a glint');
+  assert.ok(eyes.every((p) => p.z >= 7 && p.y >= 4), 'set into the head, where it was put, not pushed out of it');
+  assert.ok(eyes.some((p) => p.color === 'night'), 'a dark pupil when no colour was given');
+  assert.equal(f.parts.filter((p) => p.role === 'beak')[0].color, 'gold');
+  assert.equal(f.parts.filter((p) => p.role === 'wing').length, 2);
+  assert.deepEqual(FEATURES, ['eye', 'beak', 'wing', 'foot', 'ear', 'tail']);
+});
+
+test('its keeper can ask, once, in their own words, whether it wants to choose again how it is seen; it decides at night', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'iterant-body-ask-'));
+  dirs.push(dir);
+  const life = makeLife(dir);
+  life.birth();
+  assert.equal(life.askAboutBody('Would you like to look like a small animal?').ok, false, 'not before it has a body');
+  for (let i = 0; i < 3; i++) assert.ok((await life.wake('test')).ok);
+  clearTimeout(life.timer);
+  const first = structuredClone(life.state.body);
+  assert.equal(life.askAboutBody('hm').ok, false, 'in a sentence');
+  const asked = life.askAboutBody('People feel closer to a small creature they can recognise. Would you like to choose again how you look?');
+  assert.ok(asked.ok);
+  assert.equal(life.askAboutBody('And another thing, while you think about it.').ok, false, 'one at a time');
+  assert.ok(life.notes.some((n) => n.includes('small creature they can recognise')));
+  assert.ok(life.journal.some((j) => j.kind === 'ask' && j.text.includes('small creature')), 'in its public journal');
+
+  for (let i = 0; i < 3; i++) assert.ok((await life.wake('test')).ok); // its next night: it chooses again
+  clearTimeout(life.timer);
+  const night = life.nights.at(-1);
+  assert.equal(night.body.kept, false);
+  assert.match(night.body.asked, /small creature/);
+  assert.ok(life.publicState().body.form.parts.some((p) => p.role === 'eye'), 'a bird, with eyes');
+  assert.deepEqual(life.state.bodies.at(-1).form, first.form, 'the body it had is kept in its history');
+  assert.ok(life.state.milestones.some((m) => m.kind === 're-embodied'));
+
+  // asked again, it may keep what it has
+  assert.ok(life.askAboutBody('KEEPME: is this still how you want to look?').ok);
+  const now = structuredClone(life.state.body);
+  for (let i = 0; i < 3; i++) assert.ok((await life.wake('test')).ok);
+  clearTimeout(life.timer);
+  assert.equal(life.nights.at(-1).body.kept, true);
+  assert.deepEqual(life.state.body, now, 'kept as it was');
+  assert.ok(life.journal.some((j) => j.kind === 'body' && j.text.includes('kept its body')));
+  for (let i = 0; i < 3; i++) assert.ok((await life.wake('test')).ok); // no ask, no choosing
+  clearTimeout(life.timer);
+  assert.ok(!life.nights.at(-1).body);
+});

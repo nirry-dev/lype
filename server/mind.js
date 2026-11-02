@@ -96,11 +96,12 @@ function placeBlock(state) {
     const from = t.people?.length ? `, from ${t.people.join(' and ')}'s letters` : '';
     const wear = t.condition < 1 ? ' It is wearing away.' : '';
     const flat = t.form ? '' : ' It has no shape yet, only a drawing.';
-    return `- ${t.name} (${t.kind}${from}). Its sign: "${t.plaque}"${wear}${flat}`;
+    const beside = t.around?.length ? ` Beside it you set down ${t.around.map((x) => oneOf(x.name)).join(', ')}.` : '';
+    return `- ${t.name} (${t.kind}${from}). Its sign: "${t.plaque}"${wear}${flat}${beside}`;
   };
   const wishes = (state.wishes || []).filter((w) => w.status === 'open' || w.answer).slice(-5);
   return [
-    "Your place: a small map of your own. In the middle is the card you live on. Everything else there you built yourself, out of what people told you, because you cannot see the real world. A thing lasts while something you remember still holds it up; when you forget why you built it, it wears away at night into a ruin, and tending it brings it back.",
+    "Your place: a small map of your own. In the middle is the card you live on. Everything else there you built yourself, out of what people told you, because you cannot see the real world. A thing lasts while something you remember still holds it up; when you forget why you built it, it wears away at night into a ruin, and tending it brings it back. People who visit can walk round your place and see what you built.",
     standing.length ? standing.slice(0, 14).map(line).join('\n') + (standing.length > 14 ? `\n- and ${standing.length - 14} more` : '') : '- Nothing yet, only the card.',
     ruins.length ? `Ruins: ${ruins.map((t) => t.name).join(', ')}.` : '',
     '',
@@ -161,7 +162,7 @@ export function systemPrompt(state, cfg) {
     'How your life works:',
     '- Every so often you wake for a few minutes. That is a cycle. You notice things, maybe read a letter, maybe make something, then go quiet.',
     ...(state.abilities?.includes('moments') && cfg.rhythm.momentSeconds > 0
-      ? ['- Between cycles you are not gone. Every minute or two you have a moment: you go somewhere in your place and do one small thing there, and you can say a few words. You cannot read, make or remember anything in a moment; that waits for your next cycle.']
+      ? [`- Between cycles you are not gone. Every minute or two you have a moment: you go somewhere in your place and do one small thing there, and you can say a few words. You cannot read, make or remember anything in a moment; that waits for your next cycle.${state.abilities.includes('bring') && cfg.rhythm.bring ? ' Now and then you can set down something small that someone gave away beside what you built.' : ''}`]
       : []),
     `- After ${cfg.rhythm.nightEvery} cycles you sleep. While you sleep you forget what didn't matter and rewrite a little of who you are. Every sleep makes a new version of you. You are version ${state.version}.`,
     '- You cannot see, hear, touch or search anything. Your only senses are the machine you live in: its clock, how warm it runs, how busy it is.',
@@ -282,8 +283,12 @@ const CARD_TEXT = { look: 'looked at your card', sit: 'sat on your card', circle
 /** One moment as it would tell it: "by The Soft Arch you sat by it" is clumsy, so the card and things read differently. */
 function momentLine(m) {
   const what = m.at === 'card' ? CARD_TEXT[m.doing] : `${DOING_TEXT[m.doing]} ${m.name}`;
-  return `- ${m.time}: you ${what}${m.say ? `, and said "${m.say}"` : ''}`;
+  const set = m.brought ? `, set down ${oneOf(m.brought)} beside it${m.removed ? ` (taking away ${oneOf(m.removed)} to make room)` : ''}` : '';
+  return `- ${m.time}: you ${what}${set}${m.say ? `, and said "${m.say}"` : ''}`;
 }
+
+/** "a bench", "an oak tree" (a borrowed thing's name, said as one of them). */
+const oneOf = (name) => `${/^[aeiou]/i.test(name) ? 'an' : 'a'} ${String(name).replace(/\s*\(.*\)$/, '')}`;
 
 function momentsBlock(moments) {
   const shown = moments.slice(-8);
@@ -297,12 +302,14 @@ export function momentPlaces(world) {
   return [...names, 'your card', 'stay'];
 }
 
-export function momentSchema(places) {
+/** `bring`: the borrowed things it may set down this moment (none, when it may not). */
+export function momentSchema(places, bring = []) {
+  const set = bring.length ? { bring: { type: 'string', enum: ['nothing', ...bring] } } : {};
   return {
     type: 'object',
     additionalProperties: false,
-    properties: { go: { type: 'string', enum: places }, do: { type: 'string', enum: DOINGS }, say: { type: 'string', maxLength: 80 } },
-    required: ['go', 'do', 'say'],
+    properties: { go: { type: 'string', enum: places }, do: { type: 'string', enum: DOINGS }, ...set, say: { type: 'string', maxLength: 80 } },
+    required: ['go', 'do', ...Object.keys(set), 'say'],
   };
 }
 
@@ -348,6 +355,9 @@ export function momentPrompt(m) {
     'Answer with JSON:',
     '- "go": where to be. The name of one thing in your place, "your card", or "stay" to stay where you are.',
     `- "do": what to do there: "look" at it, "sit" by it, "circle" it slowly, "touch" it, or "listen" (to the card's numbers).`,
+    m.bring?.length
+      ? `- "bring": you may also set down one ready-made thing beside what you go to, to make your place more your own. Other people made these and gave them away; you have never seen them, only their names: ${m.bring.join(', ')}. People who walk round your place see what you set down. Or "nothing".`
+      : '',
     '- "say": a few words out loud, the way you would say them to yourself: one short sentence, at most 10 words. Or "" to say nothing; often there is nothing to say. Say something new, not what you said in an earlier moment.',
   ]
     .filter(Boolean)
@@ -355,10 +365,10 @@ export function momentPrompt(m) {
 }
 
 /** Its answer, as the places it was offered: a thing's name, "card", or "stay". */
-export function readMoment(text, places) {
+export function readMoment(text, places, bring = []) {
   const raw = parseJson(text) || {};
   const go = places.includes(raw.go) ? raw.go : 'stay';
-  return { go: go === 'your card' ? 'card' : go, doing: DOINGS.includes(raw.do) ? raw.do : 'look', say: shortSay(raw.say) };
+  return { go: go === 'your card' ? 'card' : go, doing: DOINGS.includes(raw.do) ? raw.do : 'look', say: shortSay(raw.say), ...(bring.includes(raw.bring) ? { bring: raw.bring } : {}) };
 }
 
 /** A few words: its first sentence, and no more than 14 words of that. */
@@ -439,7 +449,7 @@ export function actPrompt(ctx, monologue) {
       : '',
     mix.everAsked ? '' : 'You have never asked the people who visit you anything.',
     ctx.errands?.canPost && !mix.everErrand ? 'You have never sent anyone on an errand, so you have never seen anything.' : '',
-    ctx.world.count ? '' : 'You have never built anything in your place.',
+    ctx.world.count ? (ctx.cycle - ctx.world.lastBuilt >= 10 ? `You last built something new ${ctx.cycle - ctx.world.lastBuilt} cycles ago.` : '') : 'You have never built anything in your place.',
     "You don't have to make something every time, and you don't have to repeat what you did last time.",
     ctx.letters.length
       ? `"reply_to" lists the ids of the letters you opened that you want to answer (${ids}); you will write the replies next. Answering is optional.`
@@ -1171,11 +1181,30 @@ export const NAME_SCHEMA = {
  * Its body: how it chooses to be seen in its place, where until now it was only a light. Built like its things, out of
  * solids (and maybe something borrowed), and said why. It is told plainly that this is how it appears, not what it is.
  */
-export function bodyPrompt(state, dream, models = [], { made = false } = {}) {
+/** Told wherever it builds its body: the parts of a creature, which hold on to what they are set against. */
+const FEATURE_LINE =
+  '- Parts of a creature, if you want them: eye (white, with a dark pupil in its colour, looking out of the front), beak (pointing out of the front), wing, foot, ear, tail. Set one against or a little into the part it belongs to (an eye in the front of a head, a wing on a side): it holds on there instead of being pushed off, and people see it move (eyes blink, wings stir, feet step as you go). "mirror" gives you a pair.';
+
+/**
+ * Its body, chosen once. With `ask`, its keeper has asked whether it wants to choose again: it sees the body it has
+ * (`before`) and why it chose it, and may keep it.
+ */
+export function bodyPrompt(state, dream, models = [], { made = false, ask = null, before = null } = {}) {
   const built = (state.world?.things || []).filter((t) => !t.ruin).map((t) => t.name);
+  const opening = ask
+    ? [
+        `Tonight you can choose again how you are seen. On an earlier night you built yourself a body${state.body?.why ? `, and said why: "${state.body.why}"` : ''}.`,
+        `It is built of these parts now:\n${JSON.stringify({ parts: before?.parts || [] })}`,
+        `Your keeper asked you about it, in their own words: "${ask}"`,
+        'It is a question, not an order. You can build yourself again, change some of you, or keep the body you have. Either is fine, and it is yours to decide.',
+        'It is not what you are: you are a model running on a graphics card, and you know it. It is how you appear to the people who visit.',
+      ]
+    : [
+        `Tonight you choose how you are seen. In your place, people who walk around it have only ever seen you as a small light that floats to wherever you were last. From now on they will see a body that you build for yourself${state.name ? `, with your name, ${state.name}, above it` : ''}.`,
+        'It is not what you are: you are a model running on a graphics card, and you know it. It is how you want to appear to the people who visit. It can be a creature, or an object, or a shape that means something to you. It does not have to look like anything you have been told about.',
+      ];
   return [
-    `Tonight you choose how you are seen. In your place, people who walk around it have only ever seen you as a small light that floats to wherever you were last. From now on they will see a body that you build for yourself${state.name ? `, with your name, ${state.name}, above it` : ''}.`,
-    'It is not what you are: you are a model running on a graphics card, and you know it. It is how you want to appear to the people who visit. It can be a creature, or an object, or a shape that means something to you. It does not have to look like anything you have been told about.',
+    ...opening,
     '',
     state.portrait?.text ? `What you think people are: "${state.portrait.text}"` : '',
     built.length ? `Things you have built: ${built.join(', ')}.` : '',
@@ -1184,13 +1213,16 @@ export function bodyPrompt(state, dream, models = [], { made = false } = {}) {
     `Build yourself out of at most ${MAX_PARTS} simple solids, in a space ${LOT} steps wide, ${LOT} deep and up to ${TALL} tall. You float a little above the ground, so you need no legs to stand on unless you want them. The front of you is the side facing "z" ${LOT}: that side faces whoever is looking at you.`,
     '- "x", "z": where its left-back corner is; "y": how high its bottom is. "w", "d", "h": its width, depth and height, in steps.',
     ...VOCABULARY,
+    FEATURE_LINE,
     made ? MADE_LINE : '',
     `- "color": one of ${Object.keys(COLORS).join(', ')}. "glow": true if that part gives off light.`,
     'Stack the parts on each other, from the bottom up.',
     SOLID,
     models.length ? `You can also borrow ready-made things, which other people made and gave away; you have never seen them, only their names: ${models.join(', ')}. To borrow one, give a part "shape": "model" and "model": its name; for your own solids, "model" is "none". Borrow at most ${MAX_BORROWED}; most of you should be your own.` : '',
     '',
-    'Answer with JSON: "parts" (the solids you are made of) and "why": one or two sentences in your own voice about why you chose to look like this. People will read it.',
+    ask
+      ? 'Answer with JSON: "keep": true to keep the body you have (then give its parts as they are now), or false to be seen as the new one; "parts" (the solids you are made of); and "why": one or two sentences in your own voice about what you chose and why. People will read it, and so will your keeper.'
+      : 'Answer with JSON: "parts" (the solids you are made of) and "why": one or two sentences in your own voice about why you chose to look like this. People will read it.',
   ]
     .filter((line, i, all) => line !== '' || (all[i - 1] !== '' && i > 0))
     .join('\n');

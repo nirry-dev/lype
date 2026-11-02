@@ -37,6 +37,7 @@ const DEFAULTS = {
     // On a card that holds one model at a time, how long a life it shares the house with keeps the card between
     // cycles before this one takes it back for its own moments (`courtesy.household` names those lives' models).
     momentTurnMinutes: 6,
+    bring: true, // in a moment it may set down a small borrowed thing beside what it built (server/moments.js)
   },
   power: {
     // Full power (server/moments.js): between cycles its moments come one after another and it thinks aloud in each,
