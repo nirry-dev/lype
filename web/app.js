@@ -164,7 +164,8 @@ let SNAPSHOT = document.querySelector('meta[name="iterant-snapshot"]')?.getAttri
 const RELAY = document.querySelector('meta[name="iterant-relay"]')?.getAttribute('content') ?? null;
 let BASE = '';
 // Framed inside another page (?embed): no header or keeper bar; the host page supplies the context.
-if (new URLSearchParams(location.search).has('embed')) document.documentElement.classList.add('embed');
+const EMBED = new URLSearchParams(location.search).has('embed');
+if (EMBED) document.documentElement.classList.add('embed');
 
 function snapshotFile(path) {
   const route = path.replace(/^\/?api\//, '').split('?')[0];
@@ -2005,7 +2006,7 @@ async function renderPlace(current) {
   if (fresh) {
     // The world is kept across live updates (the same canvas is moved into the new page), so the reader's view holds.
     app.walkHost = h('div', { class: 'walk' });
-    app.walk = createWalk(app.walkHost, { asset, onSelect: (id) => selectThing(id), onLens: (l) => local?.setItem('iterant.lens', l) });
+    app.walk = createWalk(app.walkHost, { asset, onSelect: (id) => selectThing(id), onLens: (l) => !EMBED && local?.setItem('iterant.lens', l) }); // a lens chosen in a frame is the host page's, not remembered
     if (app.walk) {
       app.walkHost.append((app.walkHud = h('div', { class: 'walk-hud', 'aria-live': 'polite' })));
       app.walkHost.append((app.walkMuse = h('div', { class: 'walk-muse', 'aria-hidden': 'true' }, h('span', {}))));
@@ -2043,7 +2044,7 @@ async function renderPlace(current) {
   );
   await app.walk?.show(w, walkLook());
   // first seen following it (or as the reader last chose, or as the link says): from above is one click away
-  if (fresh) app.walk?.lens(app.params.get('lens') || local?.getItem('iterant.lens') || 'follow');
+  if (fresh) app.walk?.lens(app.params.get('lens') || local?.getItem('iterant.lens') || 'eyes');
   // the pal it shares its card with: its place, past the edge of this one
   if (app.walk && housemate()) {
     app.neighbor ??= await api('/api/neighbor').catch(() => null);
