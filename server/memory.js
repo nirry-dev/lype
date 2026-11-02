@@ -29,9 +29,25 @@ export function similarity(a, b) {
 const NUMBER = /^(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|point|\d+(?:\.\d+)?)$/;
 export const gist = (text) => new Set([...words(String(text).replace(/-/g, ' '))].filter((w) => !NUMBER.test(w) && w !== 'learned'));
 
+import { cosine } from './meaning.js';
+
 // What it means, when a model for that is running (meaning.js): two memories said in different words can still be one.
 let meaning = null;
 export const useMeaning = (m) => (meaning = m);
+
+/** Read what these texts mean, if a model for meaning is running, so the checks here can use it. Never throws. */
+export const understand = (texts) => (meaning?.up ? meaning.ensure(texts.filter(Boolean)) : Promise.resolve(false));
+
+/**
+ * Whether `a` says again what `b` said: by its words (overlap at `words`), or by what it means (closeness at `meant`,
+ * raw, calibrated per use: see where it is called). Meaning counts only for texts already read (`understand`).
+ */
+export function repeats(a, b, { words: w = 0.6, meant = 0.93 } = {}) {
+  if (similarity(a, b) >= w) return true;
+  const A = meaning?.get(a);
+  const B = A && meaning.get(b);
+  return Boolean(B) && cosine(A, B) >= meant;
+}
 
 /** How alike two memories are, numbers aside, 0..1: by the words they share, or by what they mean, whichever says more. */
 export function kin(a, b) {

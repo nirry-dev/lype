@@ -10,8 +10,8 @@ import { Moments, clock } from './moments.js';
 import { Meanings } from './meaning.js';
 import { Recall } from './recall.js';
 import { cleanSvg } from '../web/lib/svgclean.js';
-import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands } from './errands.js';
-import { SHELVES, alike, consolidate, emptyMemory, fold, gist, refile, reinforce, sentences, similarity, strength, striking, useMeaning, words } from './memory.js';
+import { MAX_OPEN_ERRANDS, addErrand, decideErrand, errandReason, openErrands, photoSubject, sameAsk } from './errands.js';
+import { SHELVES, alike, consolidate, emptyMemory, fold, gist, refile, reinforce, sentences, similarity, strength, striking, understand, useMeaning, words } from './memory.js';
 import * as mind from './mind.js';
 import { ruleReason, screenWithModel } from './moderation.js';
 import { PAL_MODES, fetchPalJson, palLimits, palUrlOk, readOutbox, verifyPalLetter } from './pals.js';
@@ -1255,7 +1255,9 @@ export class Life extends EventEmitter {
       work = { kind: 'question', text: plan.content };
     } else if (plan.action === 'errand') {
       this.setPhase('sending', plan.content);
-      const duplicate = s.errands.some((e) => ['open', 'held'].includes(e.status) && similarity(e.text, plan.content) >= 0.6);
+      const out = s.errands.filter((e) => ['open', 'held'].includes(e.status));
+      await understand([plan.content, ...out.map((e) => e.text)].map(photoSubject));
+      const duplicate = out.some((e) => sameAsk(e.text, plan.content));
       const verdict = duplicate ? null : await this.screen('errand', plan.content);
       work = { kind: 'errand', text: plan.content, ...(duplicate ? { duplicate: true } : verdict.status !== 'allowed' ? { held: true, reason: verdict.reason } : {}) };
     } else if (plan.action === 'build') {
@@ -1492,10 +1494,11 @@ export class Life extends EventEmitter {
   async wishErrands() {
     const s = this.state;
     if (!this.cfg.errands.enabled) return;
+    await understand([...s.wishes.filter((x) => x.status === 'open').map((x) => x.text), ...s.errands.map((e) => e.text)].map(photoSubject));
     for (const w of s.wishes.filter((x) => x.status === 'open' && !x.errand).reverse()) {
       const text = photoWish(w.text);
       if (!text) continue;
-      const like = s.errands.find((e) => ['open', 'held'].includes(e.status) && similarity(e.text, text) >= 0.6);
+      const like = s.errands.find((e) => ['open', 'held'].includes(e.status) && sameAsk(e.text, text));
       if (like) {
         w.errand = like.id; // it already has this one out
         like.wish ??= w.id;
@@ -1802,6 +1805,7 @@ export class Life extends EventEmitter {
         s.name = chosen.name;
       }
       if (body?.form) s.body = { form: body.form, why: body.why, version, at };
+      await understand([plan.wish?.text, ...s.wishes.map((w) => w.text)].map(photoSubject));
       const wished = addWish(s.wishes, plan.wish, { version, cycle: s.cycle, at });
       s.mood.calm = clamp01(s.mood.calm + 0.15);
       s.mood.restless = clamp01(s.mood.restless - 0.15);

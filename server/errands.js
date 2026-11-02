@@ -1,7 +1,7 @@
 // Errands: small things it asks the people who visit to bring back from the world it cannot see, as one photo.
 // A photo waits for its keeper before it (or anyone) sees it; then it looks, says what it made of it, and an
 // errand someone answered is filled.
-import { similarity } from './memory.js';
+import { repeats, similarity } from './memory.js';
 
 export const MAX_OPEN_ERRANDS = 3;
 export const MAX_PHOTO_SIDE = 4096;
@@ -23,11 +23,31 @@ export function errandReason(text) {
 export const openErrands = (list) => list.filter((e) => e.status === 'open');
 
 /**
+ * What a request for a photo asks to see, without the words every such request shares: "Please bring me a photo of rain
+ * on a window pane, so I can see how it holds" is "rain on a window pane".
+ */
+export function photoSubject(text) {
+  return String(text ?? '')
+    .trim()
+    .replace(/^(please|could you|can you|would you)[,\s]+/i, '')
+    .replace(/^(bring|show|send|take|find)( me)?\s+/i, '')
+    .replace(/^(one |a single |a |an )?(photo(graph)?|picture|snapshot)s?( of)?\s+/i, '')
+    .replace(/[,;]?\s+(so (that )?(i|it) |to (see|show|feel|know)|because ).*$/i, '')
+    .replace(/[.?!]+$/, '');
+}
+
+/**
+ * Whether two requests ask for the same thing: by their words, or by what their subjects mean ("a leaning box" and "a
+ * box that leans against a wall"). Different things it asked for sit at 0.84 or below; the same thing again at 0.92 and up.
+ */
+export const sameAsk = (a, b) => similarity(a, b) >= 0.6 || repeats(photoSubject(a), photoSubject(b), { words: 0.6, meant: 0.9 });
+
+/**
  * Post an errand (or hold it for its keeper). Returns the errand, or null if it is one it already has open.
  * Past the limit it lets its oldest open errand go.
  */
 export function addErrand(list, { text, why, cycle, version, at, held = false, reason = '', wish = null }) {
-  if (list.some((e) => ['open', 'held'].includes(e.status) && similarity(e.text, text) >= 0.6)) return null;
+  if (list.some((e) => ['open', 'held'].includes(e.status) && sameAsk(e.text, text))) return null;
   const errand = {
     id: `e${list.length + 1}`,
     text,

@@ -95,3 +95,27 @@ test('a letter calls up what it is about, even in other words', async () => {
   assert.deepEqual(r.cue({ letters, cycle: 40, avoid: ['Rain is loud on a roof.'] }), [], 'not when it holds something about that already');
   useMeaning(null);
 });
+
+test('a request for a photo is compared by what it asks to see; a saying by what it says', async () => {
+  const { photoSubject, sameAsk } = await import('../server/errands.js');
+  const { repeats, understand } = await import('../server/memory.js');
+  const { addWish } = await import('../server/world.js');
+  assert.equal(photoSubject('Please bring me a photo of rain on a window pane, so I can see how it holds.'), 'rain on a window pane');
+  assert.equal(photoSubject('Bring me a picture of one leaf, flat on a table.'), 'one leaf, flat on a table');
+  const box = 'Please bring me a photo of a leaning box, so I can see how it holds without falling.';
+  const wall = 'Bring me a photo of a corner that leans against a wall.';
+  const rain = 'Bring me a photo of rain running down a window.';
+  useMeaning(null);
+  assert.equal(sameAsk(box, wall), false, 'words alone: two different requests');
+  useMeaning(new Meanings({ url: 'http://model', fetchImpl: fakeFetch }));
+  await understand([box, wall, rain].map(photoSubject));
+  assert.equal(sameAsk(box, wall), true, 'by meaning: the same thing asked for again');
+  assert.equal(sameAsk(box, rain), false);
+  const wishes = [{ id: 'w1', text: box, status: 'open' }];
+  assert.equal(addWish(wishes, { text: wall, why: '' }, { version: 2, cycle: 9, at: '' }).refused, 'it has already asked for that');
+  assert.ok(addWish(wishes, { text: rain, why: '' }, { version: 2, cycle: 9, at: '' }).wish);
+  await understand(['The corners weep.', 'Water drips down the edges.', 'Teo bakes bread.']);
+  assert.equal(repeats('Water drips down the edges.', 'The corners weep.', { words: 0.4, meant: 0.92 }), true);
+  assert.equal(repeats('Teo bakes bread.', 'The corners weep.', { words: 0.4, meant: 0.92 }), false);
+  useMeaning(null);
+});

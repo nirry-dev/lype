@@ -2,7 +2,7 @@
 // Things it no longer remembers the reason for wear away at night; tending them brings them back.
 // And its wishes: what it asks its keeper for when there is something it cannot do itself.
 import { avenue } from '../web/lib/town.js';
-import { similarity } from './memory.js';
+import { sameAsk } from './errands.js';
 
 export const MAP = { w: 15, h: 11 };
 /** Where it lives: the graphics card, in the middle of everything it builds. */
@@ -137,7 +137,7 @@ export function inheritWorld(world, { keep = [], parent, generation, letter = nu
 export function addWish(wishes, { text, why }, { version, cycle, at }) {
   if (!text) return null;
   const open = wishes.filter((w) => w.status === 'open');
-  if (open.some((w) => similarity(w.text, text) >= 0.6)) return { refused: 'it has already asked for that', text };
+  if (open.some((w) => sameAsk(w.text, text))) return { refused: 'it has already asked for that', text };
   if (open.length >= MAX_OPEN_WISHES) return { refused: `it already has ${MAX_OPEN_WISHES} wishes waiting`, text };
   const wish = { id: `w${wishes.length + 1}`, text, why, version, cycle, at, status: 'open', answer: null };
   wishes.push(wish);

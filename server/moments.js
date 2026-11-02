@@ -10,7 +10,7 @@
 // begun with a short thought it thinks aloud, streamed to whoever is watching. Its own work on the card no longer
 // counts against it, and it takes the card back from its household at once. If the card gets too hot it slows to its
 // usual moments until the card has cooled.
-import { similarity } from './memory.js';
+import { repeats, understand } from './memory.js';
 import * as mind from './mind.js';
 import { readSenses } from './senses.js';
 
@@ -191,8 +191,11 @@ export class Moments {
       // the cycle may have begun while it thought: the cycle has the body now
       if (life.busy) return null;
       const read = mind.readMoment(raw.text, places);
-      // what it already said lately, said again in other words, is left unsaid
-      if (read.say && told.slice(-6).some((m) => m.say && similarity(m.say, read.say) >= 0.4)) read.say = '';
+      // what it already said lately, said again in other words, is left unsaid ("The curve holds" after "The curve is
+      // still holding": by meaning, rewordings of one thought sit at 0.92 and up, something new below 0.9)
+      const lately = told.slice(-6).map((m) => m.say).filter(Boolean);
+      if (read.say) await understand([read.say, ...lately]);
+      if (read.say && lately.some((said) => repeats(read.say, said, { words: 0.4, meant: 0.92 }))) read.say = '';
       const at = read.go === 'stay' ? (s.about?.at ?? 'card') : read.go === 'card' ? 'card' : s.world.things.find((t) => t.name === read.go)?.id ?? 'card';
       return this.record({ at, doing: read.doing, say: read.say, time: senses.time, thought: ctx.mused });
     } finally {
