@@ -1767,9 +1767,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     const ahead = d > 0.01 ? [creature.pos[0] + ((gx - x) / d) * 0.3, creature.pos[2] + ((gz - z) / d) * 0.3] : [creature.pos[0], creature.pos[2]];
     const want = goal.settle ? 0.26 : Math.max(clearance(creature.pos[0], creature.pos[2]), clearance(...ahead)) + hover;
     creature.pos[1] = reduced ? want : lerp(creature.pos[1], want, 1 - Math.exp(-dt * 3));
-    // facing: where it is going while it goes; once there, what it came to look at (or you)
+    // facing: where it is going while it goes; once there, what it came to look at (or you). Following it, the eye is
+    // always behind it, so turning to you would turn it round and round after the eye: it stays as it is instead.
     const going = Math.hypot(creature.pos[0] - before[0], creature.pos[2] - before[2]);
-    const aim = going > 0.0004 ? angleTo([before[0], before[2]], [creature.pos[0], creature.pos[2]]) : goal.face ?? facing();
+    const aim = going > 0.0004 ? angleTo([before[0], before[2]], [creature.pos[0], creature.pos[2]]) : goal.face ?? (lens === 'follow' ? creature.heading : facing());
     creature.heading = reduced ? aim : turn(creature.heading, aim, 1 - Math.exp(-dt * 3));
     const moved = Math.hypot(...sub(before, creature.pos));
     // how fast it goes along the ground, eased, for its step
