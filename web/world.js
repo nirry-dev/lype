@@ -20,6 +20,7 @@ const ORIGIN_PITCH = 0.52;
 const FOV = 0.6; // narrow, and from a little higher, so its place reads as a small town seen whole
 const SPAN = 0.9; // how wide a lot is, in world units
 const PITCH = 1.4; // how far apart the tiles are: a lot, and a street round it
+const WANDER = 14000; // with no moment to go by, how long it stays with each thing it wanders to (ms, by the clock)
 const BODY = 0.042; // its body's steps, in world units: a body 24 steps tall stands about as high as a small house's door
 // Three ways to see its place: from above, the whole town at once; following it, low behind it as it goes about; and at
 // eye level, walking its streets yourself, a visitor a little shorter than its doors.
@@ -1648,14 +1649,19 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
 
   const angleTo = (from, to) => Math.atan2(to[0] - from[0], to[1] - from[1]);
   const turn = (a, b, k) => a + (((((b - a) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * k;
-  /** A spot beside a thing, on its side facing `toward`, and the way to face to look at it. */
-  function beside(th, toward = [0, 0], close = false) {
+  /**
+   * A spot beside a thing, on its side facing `toward`, and the way to face to look at it. With a `seed` (a string
+   * everyone watching shares), the side is chosen by it instead, so everyone sees it on the same side.
+   */
+  function beside(th, toward = [0, 0], close = false, seed = null) {
     // far enough out that all of its body stands clear of the lot, not only its middle (just clear of it, to touch it)
     const out = SPAN / 2 + reach() + (close ? 0.03 : 0.08);
-    // the sides of its lot, nearest to `toward` first; open ground before a side where something else stands
+    // the sides of its lot, nearest to `toward` (or in the seed's order) first; open ground before a side where
+    // something else stands
+    const away = (spot, dir) => (seed == null ? Math.hypot(spot[0] - toward[0], spot[1] - toward[1]) : hash(`${seed}|${dir}`));
     const sides = [[0, 1], [0, -1], [1, 0], [-1, 0]]
       .map((dir) => ({ dir, spot: [th.pos[0] + dir[0] * out, th.pos[2] + dir[1] * out] }))
-      .sort((a, b) => Math.hypot(a.spot[0] - toward[0], a.spot[1] - toward[1]) - Math.hypot(b.spot[0] - toward[0], b.spot[1] - toward[1]));
+      .sort((a, b) => away(a.spot, a.dir) - away(b.spot, b.dir));
     const { spot } = sides.find((s) => !clearance(...s.spot)) || sides[0];
     return { spot, face: angleTo(spot, [th.pos[0], th.pos[2]]) };
   }
@@ -1694,29 +1700,31 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       if (creature.goal?.about === a.n && (!creature.visiting || creature.visiting === th)) return creature.goal;
       creature.visiting = th || null;
       creature.arrived = 0;
-      const viewer = [eye[0], eye[2]];
       if (!th) return { ...(a.doing === 'sit' ? { spot: [0, 0], face: null, settle: true } : { spot: [0.25, 0.62], face: Math.PI }), about: a.n, doing: a.doing };
-      const g = beside(th, viewer, a.doing === 'touch');
-      // walking round it: far enough out to clear its corners
-      const orbit = a.doing === 'circle' && !reduced ? { c: [th.pos[0], th.pos[2]], r: (SPAN / 2) * Math.SQRT2 + reach() + 0.06 } : null;
+      // the side of it it went to, the same for everyone watching (by the moment, not by where each viewer stands)
+      const g = beside(th, [0, 0], a.doing === 'touch', `${th.t.id}|${a.n}`);
+      // walking round it: far enough out to clear its corners, from that side, and as far round as the time since the
+      // moment began has taken it, so everyone sees it at the same point
+      const orbit =
+        a.doing === 'circle' && !reduced
+          ? { c: [th.pos[0], th.pos[2]], r: (SPAN / 2) * Math.SQRT2 + reach() + 0.06, from: Math.atan2(g.spot[1] - th.pos[2], g.spot[0] - th.pos[0]), since: Date.parse(a.since) || Date.now() }
+          : null;
       return { ...g, about: a.n, doing: a.doing, orbit, sit: a.doing === 'sit' };
     }
-    // resting: wander
+    // resting with no moment to go by: it wanders from one thing it built to the next, a new one every WANDER of the
+    // clock, picked by the clock, so everyone watching sees it go to the same place at the same time
     const standing = things.filter((th) => !th.t.ruin);
-    if (!creature.goal || (creature.arrived && now > creature.next) || (creature.visiting && !standing.includes(creature.visiting))) {
+    const slot = Math.floor(Date.now() / WANDER);
+    if (!creature.goal || creature.goal.slot !== slot || (creature.visiting && !standing.includes(creature.visiting))) {
       const newest = Math.max(1, ...standing.map((th) => th.t.tended ?? th.t.built ?? 0));
-      const choices = [...standing.filter((th) => th !== creature.visiting).map((th) => ({ th, w: 1 + (2 * (th.t.tended ?? th.t.built ?? 0)) / newest })), { th: null, w: 0.8 }];
-      let r = Math.random() * choices.reduce((a, c) => a + c.w, 0);
+      const choices = [...standing.map((th) => ({ th, w: 1 + (2 * (th.t.tended ?? th.t.built ?? 0)) / newest })), { th: null, w: 0.8 }];
+      let r = hash(`wander|${slot}`) * choices.reduce((a, c) => a + c.w, 0);
       const pick = choices.find((c) => (r -= c.w) <= 0) || choices.at(-1);
       creature.visiting = pick.th;
       creature.arrived = 0;
-      if (pick.th) {
-        // on the side of it that faces whoever is watching (where the camera is, even before its first frame),
-        // so what it built doesn't hide it
-        return beside(pick.th, [eye[0], eye[2]]);
-      }
-      const a = Math.random() * Math.PI * 2;
-      return { spot: [Math.cos(a) * 0.9, Math.sin(a) * 0.9], face: angleTo([Math.cos(a), Math.sin(a)], [0, 0]) };
+      if (pick.th) return { ...beside(pick.th, [0, 0], false, `${pick.th.t.id}|${slot}`), slot };
+      const a = hash(`wander|${slot}|a`) * Math.PI * 2;
+      return { spot: [Math.cos(a) * 0.9, Math.sin(a) * 0.9], face: angleTo([Math.cos(a), Math.sin(a)], [0, 0]), slot };
     }
     return creature.goal;
   }
@@ -1735,10 +1743,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     const now = performance.now();
     const goal = decide(now);
     if (goal !== creature.goal) creature.goal = goal;
-    if (goal.orbit && creature.arrived) {
-      // once there, it goes slowly round what it came to
-      const { c, r } = goal.orbit;
-      const a = Math.atan2(creature.pos[2] - c[1], creature.pos[0] - c[0]) + dt * 0.3;
+    if (goal.orbit) {
+      // it goes slowly round what it came to, as far round as the time since its moment began (it catches up, walking)
+      const { c, r, from, since } = goal.orbit;
+      const a = from + (Math.max(0, Date.now() - since) / 1000) * 0.3;
       goal.spot = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
       goal.face = angleTo(goal.spot, c);
     }
@@ -1759,7 +1767,6 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     const left = Math.hypot(gx - creature.pos[0], gz - creature.pos[2]);
     if (left < 0.03 && !creature.arrived) {
       creature.arrived = now;
-      creature.next = now + 6000 + Math.random() * 7000; // it stays a while with what it visits
       if (said && !said.until && said.n === goal.about) speak(now);
     }
     // float: just off the ground, higher over whatever it passes, resting on the card at night, lower when it sits
@@ -2343,9 +2350,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       if (selected) selected = things.find((th) => th.t.id === selected.t.id) || null;
     }
     if (first) {
-      // it starts where it was last (beside that thing, or at its card)
-      const at = things.find((th) => th.t.id === world.at);
-      const start = at ? beside(at, [0, 0]).spot : [0.25, 0.62];
+      // it starts where it is now, as everyone else watching sees it (a newcomer doesn't watch it walk there)
+      const goal = things.length ? decide(performance.now()) : null;
+      creature.goal = goal;
+      const start = goal?.spot || [0.25, 0.62];
       creature.pos = [start[0], 0.6, start[1]];
       const xs = world.things.map((t) => Math.abs(t.x - world.card.x));
       const zs = world.things.map((t) => Math.abs(t.y - world.card.y));
