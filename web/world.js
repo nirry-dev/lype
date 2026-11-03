@@ -1729,6 +1729,12 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     return creature.goal;
   }
 
+  /** Which way it faces with nothing to look at: toward the thing it was last at, or out the card's front. */
+  function restingFace() {
+    const last = things.find((th) => th.t.id === world?.at);
+    return last ? angleTo([creature.pos[0], creature.pos[2]], [last.pos[0], last.pos[2]]) : Math.PI;
+  }
+
   /** How high it has to float here to pass over what stands below it. */
   function clearance(x, z) {
     const r = reach(); // all of its body, not only its middle
@@ -1774,10 +1780,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     const ahead = d > 0.01 ? [creature.pos[0] + ((gx - x) / d) * 0.3, creature.pos[2] + ((gz - z) / d) * 0.3] : [creature.pos[0], creature.pos[2]];
     const want = goal.settle ? 0.26 : Math.max(clearance(creature.pos[0], creature.pos[2]), clearance(...ahead)) + hover;
     creature.pos[1] = reduced ? want : lerp(creature.pos[1], want, 1 - Math.exp(-dt * 3));
-    // facing: where it is going while it goes; once there, what it came to look at (or you). Following it, the eye is
-    // always behind it, so turning to you would turn it round and round after the eye: it stays as it is instead.
+    // facing: where it is going while it goes; once there, what it came to look at. With nothing to look at (sitting
+    // on its card, or asleep), toward where it last was: the same for everyone watching, whoever and wherever they are.
     const going = Math.hypot(creature.pos[0] - before[0], creature.pos[2] - before[2]);
-    const aim = going > 0.0004 ? angleTo([before[0], before[2]], [creature.pos[0], creature.pos[2]]) : goal.face ?? (lens === 'follow' ? creature.heading : facing());
+    const aim = going > 0.0004 ? angleTo([before[0], before[2]], [creature.pos[0], creature.pos[2]]) : goal.face ?? restingFace();
     creature.heading = reduced ? aim : turn(creature.heading, aim, 1 - Math.exp(-dt * 3));
     const moved = Math.hypot(...sub(before, creature.pos));
     // how fast it goes along the ground, eased, for its step
@@ -2355,6 +2361,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       creature.goal = goal;
       const start = goal?.spot || [0.25, 0.62];
       creature.pos = [start[0], 0.6, start[1]];
+      creature.heading = goal?.face ?? restingFace();
       const xs = world.things.map((t) => Math.abs(t.x - world.card.x));
       const zs = world.things.map((t) => Math.abs(t.y - world.card.y));
       cam.dist = clamp(6 + Math.max(0, ...xs, ...zs) * PITCH * 2.2, 8, 22);
