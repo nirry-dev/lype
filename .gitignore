@@ -15,3 +15,6 @@ relay/.wrangler/
 
 # Kenney kits as downloaded and unzipped (scripts/models.js reads them; web/models holds what it builds)
 assets/
+
+# Its eyes on its own place: the windowless browser's own folder (server/sight.js)
+.cache/

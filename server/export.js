@@ -69,6 +69,12 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
     mkdirSync(join(out, 'data/returns'), { recursive: true });
     copyFileSync(store.path(photo), join(out, `data/${photo}`));
   }
+  // the last picture of its place it was shown, beside what it saw there
+  const seen = views.world(life).sight;
+  if (seen && existsSync(store.path(seen.image))) {
+    mkdirSync(join(out, 'data/sights'), { recursive: true });
+    copyFileSync(store.path(seen.image), join(out, `data/${seen.image}`));
+  }
   write('data/chain.json', views.chain(life));
   write('data/outbox.json', outbox(life, { file: true }));
   write('data/thread.json', views.thread(life));

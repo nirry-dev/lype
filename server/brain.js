@@ -303,6 +303,8 @@ function createMockBrain(cfg = {}) {
         // offered a memory, it raises something from it about half the time
         ...(schema?.properties?.raise ? { raise: n % 2 ? 'The Hall of Warm Air' : '' } : {}),
       });
+    } else if (kind === 'sight') {
+      text = JSON.stringify({ see: 'Small grey and brown buildings stand on pale square lots along narrow streets, with round trees between them. Two stand close together near the middle; one taller one stands alone at the edge. There is open ground to the north.' });
     } else if (kind === 'look') {
       text = JSON.stringify({ see: 'A green leaf lies flat on a wooden table. Its edges are a little torn and its veins are pale.', answers: !/NOTIT/.test(user), verdict: 'A real leaf, torn at one edge. I have only ever had the word before.' });
     } else if (kind === 'screen') {

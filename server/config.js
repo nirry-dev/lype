@@ -42,6 +42,14 @@ const DEFAULTS = {
     city: true,
     // ... and now and then in a moment it may raise something new there from a memory it holds (server/moments.js).
     raise: true,
+    // Each night, before it says what its place is becoming, it may be shown a picture of it from above, as visitors
+    // see it (server/sight.js). It never sees the world outside this way, only what it made; and it can say no.
+    sight: true,
+  },
+  sight: {
+    // The browser that draws its place for it, with no window (Edge or Chrome); "" finds one where they install.
+    browser: '',
+    keep: 7, // how many nights' pictures it keeps
   },
   power: {
     // Full power (server/moments.js): between cycles its moments come one after another and it thinks aloud in each,

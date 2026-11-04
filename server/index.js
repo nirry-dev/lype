@@ -336,6 +336,19 @@ async function serveWork(res, path) {
   }
 }
 
+/** The last picture of its place it was shown (server/sight.js): its own place, public like the place itself. */
+async function serveSight(res, path) {
+  const sight = life.state?.world?.sight;
+  if (!sight || sight.withheld || path !== `/${sight.file}`) return json(res, 404, { error: 'not found' });
+  try {
+    const body = await readFile(store.path(sight.file));
+    res.writeHead(200, { 'content-type': 'image/jpeg', 'content-security-policy': "default-src 'none'", 'x-content-type-options': 'nosniff', 'cache-control': 'public, max-age=86400' });
+    res.end(body);
+  } catch {
+    json(res, 404, { error: 'not found' });
+  }
+}
+
 /** A photo someone brought back: public once its keeper allowed it; before that, only to its keeper. */
 async function servePhoto(res, url) {
   const m = /^\/returns\/(L\d+)\.jpg$/.exec(url.pathname);
@@ -386,6 +399,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname.startsWith('/works/')) return await serveWork(res, url.pathname);
     if (url.pathname.startsWith('/made/')) return await serveMade(res, url.pathname);
     if (url.pathname.startsWith('/returns/')) return await servePhoto(res, url);
+    if (url.pathname.startsWith('/sights/')) return await serveSight(res, url.pathname);
     if (url.pathname.startsWith('/ancestors/')) return await serveAncestor(res, url.pathname);
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
     return await serveStatic(res, url.pathname);

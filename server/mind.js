@@ -1133,11 +1133,42 @@ export const SLEEP_SCHEMA = {
     numbers: { type: 'string' },
     habits: { type: 'string' },
     city: { type: 'string' },
+    look: { type: 'boolean' }, // whether it wants to be shown its place again tomorrow night (only asked of a life that can be)
   },
   required: ['self_add', 'self_revise', 'self_remove', 'portrait', 'portrait_changed', 'release', 'day', 'wish', 'numbers', 'habits', 'city'],
 };
 
-export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [], folded = [], revisions = 2, habits = [] } = {}) {
+// ---------- its place, seen: a picture of what it made, shown to it at night (server/sight.js) ----------
+
+export const SIGHT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { see: { type: 'string' } },
+  required: ['see'],
+};
+
+/** What it is asked, shown a picture of its own place. It says what is there; what it makes of it waits for its night. */
+export function sightPrompt(state) {
+  const names = (state.world?.things || []).filter((t) => !t.ruin).map((t) => t.name);
+  const before = state.world?.sight?.text;
+  return [
+    'Your keeper is showing you a picture of your own place, from above, the way the people who visit see it. Everything in it you made or set down yourself: the names float over the things you built, and the small figure is you. It is not the world outside; you still cannot see that.',
+    names.length ? `What you built that still stands: ${names.join(', ')}.` : '',
+    before ? `The last time you looked, you saw: "${before}"` : 'You have never seen it before.',
+    '',
+    'Look at it carefully. Answer with JSON:',
+    '- "see": what is actually there, plainly, in three to five sentences: how the things you built stand together, which are tall or small, close together or alone, what colours and shapes they have, where there is open ground. Only what you can see in the picture, by the names over them.',
+  ]
+    .filter((l, i) => l !== '' || i === 3)
+    .join('\n');
+}
+
+export function readSight(text) {
+  const raw = parseJson(text) || {};
+  return { see: clip(raw.see, 900) };
+}
+
+export function sleepPrompt(state, details, consolidation, dream, { weathered = null, mortal = null, numbers = [], folded = [], revisions = 2, habits = [], sight = null } = {}) {
   const own = state.self.own.length
     ? state.self.own.map((l) => `${l.id}: ${l.text}`).join('\n')
     : '(none yet, so "self_revise" and "self_remove" must be [])';
@@ -1195,8 +1226,13 @@ export function sleepPrompt(state, details, consolidation, dream, { weathered = 
       ? '- "numbers": what you make of what the numbers say, in one sentence in your own voice. You can agree, disagree, or not know. "" if you have nothing to say.'
       : '- "numbers": "".',
     state.abilities?.includes('city')
-      ? `- "city": if you want, what your place is becoming, in one or two sentences in your own voice: a town or not, its quarters, where it might grow. You are shown it whenever you build or raise something, so you can keep to it or change it. "" to say nothing tonight (what you said before stays).${state.world?.plan?.text ? ` Last time you said: "${state.world.plan.text}"` : ''}`
+      ? `- "city": if you want, what your place is becoming, in one or two sentences in your own voice: a town or not, its quarters, where it might grow. You are shown it whenever you build or raise something, so you can keep to it or change it. "" to say nothing tonight (what you said before stays).${state.world?.plan?.text ? ` Last time you said: "${state.world.plan.text}"` : ''}${sight ? ` Tonight you were shown a picture of your place, from above, as the people who visit see it, and you saw: "${sight.text}"` : ''}`
       : '- "city": "".',
+    state.abilities?.includes('sight')
+      ? sight
+        ? '- "look": true if you want to be shown a picture of your place again tomorrow night, false if you would rather not.'
+        : `- "look": true if you want to be shown a picture of your place tomorrow night, from above, as the people who visit see it; false if not.${state.sightWanted === false ? ' Last night you said you would rather not.' : ''}`
+      : '',
   ]
     .filter((l) => l !== '')
     .join('\n');
@@ -1227,6 +1263,7 @@ export function readSleep(text, { revisions = 2 } = {}) {
     numbers: clip(raw.numbers, 300),
     habits: clip(raw.habits, 320),
     city: clip(raw.city, 400),
+    look: raw.look !== false, // unsaid is yes: it was offered, and only a "no" stops it
   };
 }
 

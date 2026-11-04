@@ -64,6 +64,8 @@ export function world(life) {
     at: s.world.at,
     // its town: what it said it is becoming, and its quarters, with the things that line their streets
     plan: s.world.plan ?? null,
+    // the last picture of its place it was shown, and what it saw there (what the screen held back stays its own)
+    sight: s.world.sight && !s.world.sight.withheld ? { text: s.world.sight.text, version: s.world.sight.version, at: s.world.sight.at, image: s.world.sight.file } : null,
     quarters: (s.world.quarters || []).map((q) => ({ id: q.id, name: q.name, about: q.about, founded: q.founded, street: (q.street || []).map((name) => ({ name, model: life.catalogue.byName.get(name)?.id })).filter((x) => x.model) })),
     things: things.map(([t, form]) => ({
       id: t.id,

@@ -78,7 +78,7 @@ function lifeSpan(iso) {
 const FEELINGS = ['lonely', 'curious', 'calm', 'warm', 'restless'];
 const FEELING_LABEL = { lonely: 'Lonely', curious: 'Curious', calm: 'Calm', warm: 'Warm to people', restless: 'Restless' };
 const AWAKE = new Set(['waking', 'reading', 'looking', 'thinking', 'deciding', 'drawing', 'writing', 'asking', 'sending', 'building', 'tending', 'resting', 'replying', 'reflecting']);
-const NIGHT = new Set(['sorting', 'dreaming', 'rewriting', 'naming', 'embodying']);
+const NIGHT = new Set(['sorting', 'dreaming', 'seeing', 'rewriting', 'naming', 'embodying']);
 const PHASE_TITLE = {
   quiet: 'Resting between cycles',
   sorting: 'Looking over its memories',
@@ -98,6 +98,7 @@ const PHASE_TITLE = {
   replying: 'Writing back',
   reflecting: 'Writing its diary',
   dreaming: 'Asleep, dreaming',
+  seeing: 'Asleep, looking at a picture of its town',
   rewriting: 'Asleep, rewriting itself',
   naming: 'Asleep, choosing its name',
   embodying: 'Asleep, choosing how it is seen',
@@ -1997,7 +1998,8 @@ function walkLook() {
   const now = new Date();
   return {
     mood: s.mood,
-    hour: m ? Number(m[1]) + Number(m[2]) / 60 : now.getHours() + now.getMinutes() / 60,
+    // a still for it to look at is taken in daylight, whatever the hour: it looks at night, when its place is dark
+    hour: STILL() ? 13 : m ? Number(m[1]) + Number(m[2]) / 60 : now.getHours() + now.getMinutes() / 60,
     asleep: NIGHT.has(s.phase),
     gpu: s.senses?.gpu || null,
     // where it goes and what it looks like: what it is doing, the body it chose (or the one it is choosing), its name
@@ -2023,7 +2025,33 @@ async function freshWorld() {
   updateWalkHud();
 }
 
+/** Whether this page is a still of its place, for it to look at (#/place?still, taken by server/sight.js). */
+const STILL = () => document.documentElement.classList.contains('still');
+
+/**
+ * A still of its place, for it to look at: the world alone, from above, in daylight, with the names on what it built
+ * and nothing of the page round it. The page says when it is drawn in full (data-still="ready").
+ */
+async function renderStill(current) {
+  document.documentElement.classList.add('still');
+  app.world ??= await api('/api/world');
+  if (!current()) return;
+  app.walkHost ??= h('div', { class: 'walk' });
+  app.walk ??= createWalk(app.walkHost, { asset, onSelect: () => {} });
+  fill($('#view'), app.walkHost);
+  if (!app.walk) {
+    document.documentElement.dataset.still = 'failed';
+    return;
+  }
+  await app.walk.show(app.world, walkLook());
+  app.walk.lens('above');
+  app.walk.frame();
+  await app.walk.ready();
+  document.documentElement.dataset.still = 'ready';
+}
+
 async function renderPlace(current) {
+  if (app.params.has('still')) return renderStill(current);
   app.world ??= await api('/api/world');
   if (!current()) return;
   const w = app.world;
@@ -2052,7 +2080,7 @@ async function renderPlace(current) {
     $('#view'),
     intro(
       'Its place',
-      'It cannot see the world, so it builds one out of what people tell it. Everything here it made itself, mostly out of letters: it chose every block, roof and lamp each thing is built from, and drew the sign beside it. A thing stands while something it remembers still holds it up. When it forgets why it built something, that thing wears away at night into a ruin, unless it goes back and tends it.',
+      'It cannot see the world outside, so it builds one out of what people tell it. Everything here it made itself, mostly out of letters: it chose every block, roof and lamp each thing is built from, and drew the sign beside it. A thing stands while something it remembers still holds it up. When it forgets why it built something, that thing wears away at night into a ruin, unless it goes back and tends it.',
     ),
     h(
       'div',
@@ -2066,7 +2094,7 @@ async function renderPlace(current) {
           ? h('div', { class: 'place-legend' }, h('span', {}, 'Above · Follow · Eye level: how you see it'), h('span', {}, 'drag: look around'), h('span', {}, 'scroll: come closer'), h('span', {}, 'W A S D: walk'), h('span', {}, 'Q E: turn'), h('span', {}, 'eye level: click, then the mouse looks · Shift: run · Space: jump · Esc: let go'), h('span', {}, 'click or Tab: read a sign'), h('span', {}, 'map: go there'), housemate() ? h('span', {}, `east, a few streets away: ${housemate().name}'s town`) : null)
           : h('div', { class: 'place-legend' }, h('span', {}, 'faint: wearing away'), h('span', {}, 'cracked: a ruin'), h('span', {}, 'lines: what each thing was built beside'), h('span', {}, 'glow: where it was last')),
       ),
-      h('aside', { class: 'place-side' }, h('div', { class: 'card' }, cardHead('Looking at'), h('div', { id: 'place-inspect' })), wishesCard(w)),
+      h('aside', { class: 'place-side' }, h('div', { class: 'card' }, cardHead('Looking at'), h('div', { id: 'place-inspect' })), sightCard(w), wishesCard(w)),
     ),
   );
   await app.walk?.show(w, walkLook());
@@ -2249,6 +2277,26 @@ function selectThing(id, item = null) {
   );
 }
 
+/** Whether it has been shown a picture of its place since `iso` (when something was set down there). */
+function seenSince(iso) {
+  const at = Date.parse(app.world?.sight?.at || '');
+  return Number.isFinite(at) && (!iso || Date.parse(iso) < at);
+}
+
+/** The last picture of its place it was shown, at night, and what it saw there in its own words. */
+function sightCard(w) {
+  const s = w.sight;
+  if (!s) return null;
+  return h(
+    'div',
+    { class: 'card sight-card' },
+    cardHead('What it saw of its place', `night ${s.version}`),
+    h('img', { class: 'sight-photo', src: asset(s.image), alt: 'Its place from above, as it was shown it that night', loading: 'lazy' }),
+    h('p', { class: 'voice', style: 'margin:10px 0 0' }, s.text),
+    h('p', { class: 'meta muted', style: 'margin:8px 0 0' }, 'Each night its keeper may show it a picture of its own place, from above, the way you see it here. It cannot see the world outside; only what it made. It says each night whether it wants to see it again.'),
+  );
+}
+
 /** Something it set down beside a thing in a moment: what it is, why it chose it, and whose it was. */
 function setDownCard(t, a) {
   const name = a.name.replace(/\s*\(.*\)$/, '');
@@ -2258,7 +2306,7 @@ function setDownCard(t, a) {
     h('h3', { class: 'work-title', style: 'margin:6px 0 10px' }, name.charAt(0).toUpperCase() + name.slice(1)),
     a.why ? h('p', { class: 'voice plaque' }, a.why) : h('p', { class: 'meta' }, 'It set this down before it was asked to say why.'),
     a.say && a.say !== a.why ? h('p', { class: 'meta' }, 'What it said then: ', h('q', {}, a.say)) : null,
-    h('p', { class: 'meta' }, `Set down beside ${t.name}${t.ruin ? ', now a ruin' : ''}, in a moment between its cycles${a.cycle ? ` (after cycle ${a.cycle})` : ''}${when ? `, ${when}` : ''}. It has never seen it, only its name.`),
+    h('p', { class: 'meta' }, `Set down beside ${t.name}${t.ruin ? ', now a ruin' : ''}, in a moment between its cycles${a.cycle ? ` (after cycle ${a.cycle})` : ''}${when ? `, ${when}` : ''}. ${seenSince(a.at) ? 'It knows it by its name, and has seen it only in a picture of its place.' : 'It has never seen it, only its name.'}`),
     h('p', { class: 'meta muted' }, `Borrowed, not built: someone made it and gave it away. ${app.world?.credit || ''}`),
     h('div', { class: 'rp-row' }, h('button', { class: 'btn', type: 'button', onclick: () => selectThing(t.id) }, `Read the sign of ${t.name}`)),
   ];

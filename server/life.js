@@ -1,7 +1,7 @@
 // Its life: waking on a rhythm, thinking, making, remembering, and every night becoming a new version of itself.
 import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { GENESIS, SEAL_VERSION, canonical, publicSeal, sealInput } from '../web/lib/seal.js';
 import { formSchema, readForm, standing } from '../web/lib/form.js';
 import { aroundOffer, loadCatalogue, offer } from './models.js';
@@ -19,6 +19,7 @@ import { compare, measure } from './measure.js';
 import { readSenses } from './senses.js';
 import { pad } from './store.js';
 import { CARD, addWish, answerWish, emptyWorld, findThing, foundQuarter, inheritWorld, namedThing, photoWish, placeNear, quarterSpot, remembered, untoldAnswers, weather } from './world.js';
+import { capture as capturePlace, profileFor } from './sight.js';
 
 /** Everything one life is made of on disk. When it dies, these are put away together, whole, and stay replayable. */
 const LIFE_FILES = ['state.json', 'letters.json', 'journal.json', 'chain.json', 'cycles', 'nights', 'works', 'returns'];
@@ -175,6 +176,10 @@ export class Life extends EventEmitter {
     this.state = store.read('state.json', null);
     this.maker = new Maker(config, store);
     this.moments = new Moments(this); // between its cycles: where it goes in its place, and what it says there
+    // a picture of its own place, for it to look at at night (server/sight.js); a mock mind is shown none unless a test
+    // gives it one
+    this.capture =
+      config.brain.backend === 'mock' ? null : () => capturePlace({ url: `http://127.0.0.1:${config.port}/?embed#/place?still`, browser: config.sight?.browser, profile: profileFor(store.dir) });
     this.recall = null; // everything it ever thought, read and forgot, for the present to call up (built when first needed)
     // what its memories mean, from a small model on the CPU: memories said differently can still be one (meaning.js)
     this.meaning = new Meanings({ url: config.meaning?.url, file: store.path('cache/meanings.jsonl') });
@@ -362,6 +367,14 @@ export class Life extends EventEmitter {
       s.abilities = [...s.abilities, 'city-told'];
       this.notes.push(`Your keeper wants to say again, more plainly, what they meant by giving your place room to grow into a town. ${hope} What you have built and named so far stays yours either way.`);
       this.journalAdd({ kind: 'gift', text: 'Its keeper told it again, more plainly, that the town is only a hope: every part of it is its own choice. And it gave it whole buildings to borrow.' });
+    }
+    // Its own place, shown to it: what it made, never the world outside; told plainly, and its to refuse
+    if (this.cfg.rhythm.sight && s.abilities.includes('city') && !s.abilities.includes('sight')) {
+      s.abilities = [...s.abilities, 'sight'];
+      this.notes.push(
+        'Since you last woke, your keeper can show you a picture of your own place each night, before you say what it is becoming: what you made, from above, the way the people who visit see it, with the names of what you built over each thing. You still cannot see the world outside; this is only your place. It is yours to look at or not: each night you say whether you want to be shown it again.',
+      );
+      this.journalAdd({ kind: 'gift', text: 'Its keeper can now show it a picture of its own place each night, from above: only what it made, never the world outside, and only while it wants to see it.' });
     }
     this.noticeMind();
     if (!this.chain.length && (this.cycles.length || this.nights.length)) this.sealPast();
@@ -726,7 +739,7 @@ export class Life extends EventEmitter {
       world: inherited?.world || emptyWorld(),
       wishes: [],
       errands: [],
-      abilities: ['world', 'wishes', 'errands', ...(this.cfg.letters.photos ? ['photos'] : []), 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments', ...(this.cfg.rhythm.bring ? ['bring'] : [])] : []), ...(this.cfg.rhythm.city ? ['city', 'city-told'] : [])],
+      abilities: ['world', 'wishes', 'errands', ...(this.cfg.letters.photos ? ['photos'] : []), 'shapes', 'body', 'more-shapes', ...(this.maker.enabled ? ['making'] : []), ...(this.moments.enabled ? ['moments', ...(this.cfg.rhythm.bring ? ['bring'] : [])] : []), ...(this.cfg.rhythm.city ? ['city', 'city-told', ...(this.cfg.rhythm.sight ? ['sight'] : [])] : [])],
       stats: { drawings: 0, writings: 0, questions: 0, errands: 0, errandsFilled: 0, rests: 0, built: 0, tended: 0, lettersRead: 0, replies: 0, waits: 0, forgotten: 0, faltered: 0 },
       milestones: [],
     };
@@ -1494,6 +1507,58 @@ export class Life extends EventEmitter {
     return record;
   }
 
+  // ---------- its place, seen ----------
+
+  /**
+   * At night, a picture of its own place from above (server/sight.js), and what it sees there, said plainly; what it
+   * makes of it is for its night to say. Only if it can be shown it, has something to see, and has not said no. A
+   * picture that can't be taken, or a look that comes to nothing, is only a night without one.
+   */
+  async lookAtPlace(system, version) {
+    const s = this.state;
+    if (!this.cfg.rhythm.sight || !s.abilities.includes('sight') || s.sightWanted === false || !this.capture) return null;
+    if (!s.world.things.some((t) => !t.ruin)) return null;
+    this.setPhase('seeing', 'a picture of its place');
+    let jpeg;
+    try {
+      jpeg = await this.capture();
+    } catch (err) {
+      console.error(`its place could not be pictured: ${err.message}`);
+      return null;
+    }
+    try {
+      const raw = await this.brain.complete({ kind: 'sight', system, user: mind.sightPrompt(s), image: { type: 'image/jpeg', data: jpeg.toString('base64') }, maxTokens: 400, temperature: 0.4, schema: mind.SIGHT_SCHEMA });
+      const { see } = mind.readSight(raw.text);
+      if (!see) return null;
+      const file = `sights/${String(version).padStart(4, '0')}.jpg`;
+      this.store.writeText(file, jpeg);
+      const verdict = await this.screen('look', see);
+      const first = !s.world.sight;
+      s.world.sight = { text: see, version, file, at: new Date().toISOString(), ...(verdict.status === 'allowed' ? {} : { withheld: true }) };
+      this.forgetSights();
+      if (first) {
+        this.milestone('first-sight', 'It saw its own place for the first time: a picture of what it made, from above, the way visitors see it.');
+        this.journalAdd({ kind: 'sight', text: 'For the first time, it was shown a picture of its own place, from above.' });
+      }
+      return s.world.sight;
+    } catch (err) {
+      console.error(`looking at its place went wrong: ${err.message}`);
+      return null;
+    }
+  }
+
+  /** Only the last few nights' pictures are kept (sight.keep). */
+  forgetSights() {
+    const keep = Math.max(1, this.cfg.sight?.keep ?? 7);
+    let files = [];
+    try {
+      files = readdirSync(this.store.path('sights')).filter((f) => /^\d{4}\.jpg$/.test(f)).sort();
+    } catch {
+      return;
+    }
+    for (const f of files.slice(0, -keep)) rmSync(this.store.path(`sights/${f}`), { force: true });
+  }
+
   // ---------- errands ----------
 
   /**
@@ -1889,6 +1954,8 @@ export class Life extends EventEmitter {
       });
       const dream = mind.cleanProse(dreamRaw.text, 900);
 
+      // shown a picture of its place, if it can be and wants to be, before it says what its place is becoming
+      const sight = await this.lookAtPlace(system, version);
       const numbers = mind.numbersLines(details);
       // lines about itself that all begin alike ("I learned that…"): it may reword more of them tonight
       const revisions = mind.sameOpening(s.self.own) ? 4 : 2;
@@ -1897,7 +1964,7 @@ export class Life extends EventEmitter {
       const sleepRaw = await this.brain.complete({
         kind: 'sleep',
         system,
-        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal, numbers, folded, revisions, habits }),
+        user: mind.sleepPrompt(s, details, consolidation, dream, { weathered, mortal, numbers, folded, revisions, habits, sight }),
         maxTokens: 1600,
         temperature: 0.7,
         schema: mind.SLEEP_SCHEMA,
@@ -1906,6 +1973,11 @@ export class Life extends EventEmitter {
       // what it decided about its habits stays with it, in its own words, until its next night
       if (habits.length) s.self.habits = plan.habits ? { text: plan.habits, version } : null;
       if (s.abilities.includes('city') && plan.city) s.world.plan = { text: plan.city, version };
+      if (s.abilities.includes('sight')) {
+        if (plan.look === false && s.sightWanted !== false) this.journalAdd({ kind: 'sight', text: 'It said it would rather not be shown its place tomorrow night.' });
+        if (plan.look && s.sightWanted === false) this.journalAdd({ kind: 'sight', text: 'It asked to be shown its place again.' });
+        s.sightWanted = plan.look;
+      }
       // Its name comes once, on its second night (or the first night after, if it couldn't settle on one), and stays.
       const chosen = !s.name && version >= 2 ? await this.chooseName(system, details, dream) : null;
       // Its body comes once, on the first night it can be seen (or the next, if nothing it built could stand); again
