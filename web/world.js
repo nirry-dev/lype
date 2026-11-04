@@ -910,10 +910,11 @@ function placedAround(t, dimsOf = () => null) {
 
 /**
  * @param {HTMLElement} host  an element to fill (it gets a canvas, a minimap and a layer of name labels)
- * @param {{ asset: (path: string) => string, onSelect: (id: string | null) => void, models?: string }} opts  `models`: where the
- *   borrowed models' catalogue and meshes are served from (default: models/ beside the page)
+ * @param {{ asset: (path: string) => string, onSelect: (id: string | null) => void, onArrive?: (n: number) => void, models?: string }} opts
+ *   `onArrive`: told when its body gets to where a moment put it (the moment's number), so what is said of it can
+ *   wait until it is there; `models`: where the borrowed models' catalogue and meshes are served from (default: models/)
  */
-export function createWalk(host, { asset, onSelect, onLens = null, models: modelsAt = 'models/' }) {
+export function createWalk(host, { asset, onSelect, onLens = null, onArrive = null, models: modelsAt = 'models/' }) {
   const canvas = document.createElement('canvas');
   canvas.className = 'walk-canvas';
   canvas.tabIndex = 0;
@@ -1688,7 +1689,8 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       creature.visiting = null;
       return { spot: [0, 0], face: null, settle: true };
     }
-    if (look.mode === 'awake' || reduced) {
+    // (with motion reduced it still goes where its moment put it, at once; with no moment, by what it last built)
+    if (look.mode === 'awake' || (reduced && !look.about)) {
       creature.visiting = null;
       const at = reduced && things.find((th) => th.t.id === world.at);
       return at ? beside(at, [0, 0]) : { spot: [0.25, 0.62], face: Math.PI };
@@ -1696,11 +1698,21 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     // between cycles: where its moment put it (the same for everyone watching), doing what it chose to do there
     if (look.about) {
       const a = look.about;
-      const th = a.at !== 'card' && things.find((x) => x.t.id === a.at);
-      if (creature.goal?.about === a.n && (!creature.visiting || creature.visiting === th)) return creature.goal;
-      creature.visiting = th || null;
+      const th = (a.at !== 'card' && things.find((x) => x.t.id === a.at)) || null;
+      // the same moment at the same thing: keep going there (a thing it raised or set something down by this moment may
+      // only reach the page a moment after the moment does: then it goes on from the card to it)
+      if (creature.goal?.about === a.n && (creature.visiting?.t.id ?? null) === (th?.t.id ?? null)) {
+        creature.visiting = th;
+        return creature.goal;
+      }
+      creature.visiting = th;
       creature.arrived = 0;
-      if (!th) return { ...(a.doing === 'sit' ? { spot: [0, 0], face: null, settle: true } : { spot: [0.25, 0.62], face: Math.PI }), about: a.n, doing: a.doing };
+      if (!th) {
+        if (a.doing === 'sit') return { spot: [0, 0], face: null, settle: true, about: a.n, doing: a.doing };
+        // walking round its card: round its edge, from its front
+        const orbit = a.doing === 'circle' && !reduced ? { c: [0, 0], r: 0.78 + reach(), from: Math.atan2(0.62, 0.25), since: Date.parse(a.since) || Date.now() } : null;
+        return { spot: [0.25, 0.62], face: Math.PI, about: a.n, doing: a.doing, orbit };
+      }
       // the side of it it went to, the same for everyone watching (by the moment, not by where each viewer stands)
       const g = beside(th, [0, 0], a.doing === 'touch', `${th.t.id}|${a.n}`);
       // walking round it: far enough out to clear its corners, from that side, and as far round as the time since the
@@ -1765,7 +1777,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       creature.pos[0] = gx;
       creature.pos[2] = gz;
     } else if (d > 0.002) {
-      const speed = (wandering ? 0.5 : 1.3) * clamp(d / 0.5, 0.2, 1);
+      // where a moment put it, it goes with purpose (across its town in a few seconds, not half a minute); idly
+      // wandering, it ambles. Walking round something it keeps up with its own pace round it.
+      const pace = !wandering ? 1.3 : goal.about != null ? clamp(d / 2, 0.5, 2) : 0.5;
+      const speed = Math.max(pace * clamp(d / 0.5, 0.2, 1), goal.orbit ? 0.4 : 0);
       const k = Math.min(1, (speed * dt) / d);
       creature.pos[0] += (gx - x) * k;
       creature.pos[2] += (gz - z) * k;
@@ -1774,6 +1789,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
     if (left < 0.03 && !creature.arrived) {
       creature.arrived = now;
       if (said && !said.until && said.n === goal.about) speak(now);
+      if (goal.about != null) onArrive?.(goal.about);
     }
     // float: just off the ground, higher over whatever it passes, resting on the card at night, lower when it sits
     const hover = goal.sit && creature.arrived ? (body() ? 0.02 : 0.3) : body() ? 0.1 : 0.55;
@@ -2463,6 +2479,8 @@ export function createWalk(host, { asset, onSelect, onLens = null, models: model
       dirty = true;
       schedule();
     },
+    /** The moment its body is at now, where that moment put it (null while it is still on its way, or has none). */
+    arrived: () => (creature.goal?.about != null && creature.arrived ? creature.goal.about : null),
     /** What it is doing now, its body, its name: it goes where that takes it. */
     setLook(next) {
       if (next.bodyLive == null) creature.born = [];

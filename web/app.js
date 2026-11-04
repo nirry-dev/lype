@@ -360,8 +360,12 @@ function connect() {
   });
   es.addEventListener('status', (e) => {
     const st = JSON.parse(e.data);
-    const prev = { phase: app.state.phase, detail: app.state.detail, musing: app.state.musing };
+    const prev = { phase: app.state.phase, detail: app.state.detail, musing: app.state.musing, moment: app.state.about?.n };
     Object.assign(app.state, st);
+    // a moment that changed its place (it set something down, or raised something new to go to): the page's copy of
+    // its place is out of date, and its body would look for something that is not there yet
+    const a = st.about;
+    if (a && a.n !== prev.moment && (a.brought || a.raised || (app.world && a.at !== 'card' && !app.world.things.some((t) => t.id === a.at)))) freshWorld();
     // a new thought aloud (at full power): the last one stays on screen until the first words of this one arrive
     if (st.musing && st.musing !== prev.musing) app.live.muse = '';
     if ((st.phase === 'waking' || st.phase === 'dreaming') && prev.phase !== st.phase) app.live = blankLive();
@@ -458,6 +462,13 @@ function aboutText(s) {
   if (a.at === 'card') return ABOUT_CARD[a.doing] || ABOUT_CARD.look;
   const thing = app.world?.things.find((t) => t.id === a.at);
   return thing ? `${ABOUT_THING[a.doing] || ABOUT_THING.look} ${thing.name}` : 'about its place';
+}
+/** On its way, in its place, to where its moment put it: what the page says until its body gets there. */
+function goingText(s) {
+  const a = s.about;
+  if (a.at === 'card') return 'on its way to its card';
+  const thing = app.world?.things.find((t) => t.id === a.at);
+  return thing ? `on its way to ${thing.name}` : 'on its way';
 }
 function statusText(s) {
   if (s.phase === 'recorded') return `a recording · ${dayName(s.snapshotAt)}`;
@@ -1969,7 +1980,9 @@ function updateWalkHud() {
   if (!hud || !app.state) return;
   const s = app.state;
   const b = !SNAPSHOT && s.busy && app.live.building;
-  const about = aboutText(s);
+  // what it does in its place, once its body is there (the same for everyone watching); on its way there until then
+  const there = !app.walk || app.walk.arrived() === s.about?.n;
+  const about = aboutText(s) && (there ? aboutText(s) : goingText(s));
   const doing = b ? `${b.id ? 'reshaping' : app.live.form ? 'building' : 'drawing'} “${b.name}”` : about ? `${about}${s.nextWakeAt ? ` · wakes ${untilText(s.nextWakeAt)}` : ''}` : statusText(s);
   const text = `${s.name || 'It'} is ${doing}`;
   app.walk?.setLook(walkLook());
@@ -1998,6 +2011,18 @@ function walkLook() {
   };
 }
 
+/** Its place again, from the server, after a moment changed it: into the world as it stands (or the whole page, on the map). */
+async function freshWorld() {
+  invalidate('world', 'atlasData');
+  if (app.view !== 'place') return;
+  if (!app.walk || app.params.has('map')) return refreshView();
+  const w = await api('/api/world').catch(() => null);
+  if (!w || app.view !== 'place' || !app.walk) return;
+  app.world = w;
+  await app.walk.show(w, walkLook());
+  updateWalkHud();
+}
+
 async function renderPlace(current) {
   app.world ??= await api('/api/world');
   if (!current()) return;
@@ -2008,7 +2033,7 @@ async function renderPlace(current) {
   if (fresh) {
     // The world is kept across live updates (the same canvas is moved into the new page), so the reader's view holds.
     app.walkHost = h('div', { class: 'walk' });
-    app.walk = createWalk(app.walkHost, { asset, onSelect: (id, item) => selectThing(id, item), onLens: (l) => !EMBED && local?.setItem('iterant.lens', l) }); // a lens chosen in a frame is the host page's, not remembered
+    app.walk = createWalk(app.walkHost, { asset, onSelect: (id, item) => selectThing(id, item), onArrive: () => updateWalkHud(), onLens: (l) => !EMBED && local?.setItem('iterant.lens', l) }); // a lens chosen in a frame is the host page's, not remembered
     if (app.walk) {
       app.walkHost.append((app.walkHud = h('div', { class: 'walk-hud', 'aria-live': 'polite' })));
       app.walkHost.append((app.walkMuse = h('div', { class: 'walk-muse', 'aria-hidden': 'true' }, h('span', {}))));
