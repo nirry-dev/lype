@@ -8,6 +8,7 @@
 // site while it builds, and settled on the card at night. What it borrowed (ready-made models
 // from the catalogue in models/) stands among its own solids, in the colours it came in.
 import { COLORS, LOT, MADE, expand, formHeight, inlay, isMesh, partialParts } from './lib/form.js';
+import { clear as clearOf, route as routeOf } from './lib/route.js';
 import { BLOCK, avenue } from './lib/town.js';
 
 /** Which mesh a part stands as: a borrowed model's id, or "made:<id>" for something made from its words. */
@@ -1142,7 +1143,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
   let site = null; // { x, y, id, name, pos, tex, label, svg, parts: [{ p, at }] }
   const cam = { yaw: 0.6, pitch: ORIGIN_PITCH, dist: 12, target: [0, 0.4, 0], goal: null };
   // Where it is and where it is going: a spot on the ground (x, z), a height it floats at, which way it faces.
-  const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [] };
+  const creature = { pos: [0, 0.6, 0], heading: 0, goal: null, face: null, arrived: 0, next: 0, visiting: null, trail: [], born: [], way: null };
+  const TALL = 0.2; // what stands taller than this it walks round, along the streets; lower, it floats over
+  let placeVersion = 0; // counts each time what stands in its place changes, so its way round is worked out again
+  let blocked = null; // what it walks round, for this version of its place
   let said = null; // its words from its last moment: { text, n, until } (shown from when it gets there)
   // A pal that shares its graphics card: its town, faint, past the edge of this one, lit while it has the card.
   let neighbor = null; // { name, page, at: [x, z] (its card), things: [{ pos, placed }] }
@@ -1756,7 +1760,22 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
     return need;
   }
 
-  /** One step of it moving: toward where it is going, over what is in the way, turning to where it goes or looks. */
+  // ---------- its way round what stands ----------
+
+  /**
+   * What it goes round rather than over: everything taller than its card (it floats over its card, and over what lies
+   * low). Worked out again when its place, or its body, changes.
+   */
+  function blocks() {
+    const r = reach();
+    if (blocked?.v === placeVersion && blocked.r === r) return blocked;
+    blocked = { v: placeVersion, r, half: 0.47 + r, list: things.filter((th) => th.top > TALL).map((th) => [th.pos[0], th.pos[2]]) };
+    return blocked;
+  }
+  const clear = (a, c, b = blocks()) => clearOf(a, c, b);
+  const route = (from, to) => routeOf(from, to, blocks(), PITCH / 2);
+
+  /** One step of it moving: toward where it is going, round what stands in the way, turning to where it goes or looks. */
   function move(dt) {
     const now = performance.now();
     const goal = decide(now);
@@ -1770,7 +1789,24 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
     }
     const [x, , z] = creature.pos;
     const [gx, gz] = goal.spot;
-    const d = Math.hypot(gx - x, gz - z);
+    // its way there, round what stands (worked out again when where it goes, or its place, changes)
+    // (and when where it goes has moved on round something since, out of its straight sight)
+    const way = creature.way;
+    const shifted = way ? Math.hypot(gx - way.to[0], gz - way.to[1]) : 0;
+    if (!way || way.v !== placeVersion || (way.goal !== goal && shifted > 0.05) || (!way.points.length && shifted > 0.3 && !clear([x, z], [gx, gz]))) {
+      creature.way = { goal, v: placeVersion, to: [gx, gz], points: reduced ? [] : route([x, z], [gx, gz]) };
+    } else way.goal = goal;
+    const points = creature.way.points;
+    while (points.length && Math.hypot(points[0][0] - x, points[0][1] - z) < 0.04) points.shift();
+    const [wx, wz] = points[0] || [gx, gz];
+    const dw = Math.hypot(wx - x, wz - z);
+    // how far it still has to go, all the way, round the turns
+    let d = dw;
+    for (let i = 0; i < points.length; i++) {
+      const [px, pz] = points[i];
+      const [qx, qz] = points[i + 1] || [gx, gz];
+      d += Math.hypot(qx - px, qz - pz);
+    }
     const before = creature.pos.slice();
     const wandering = look.mode !== 'awake' && !site && !goal.settle;
     if (reduced) {
@@ -1781,9 +1817,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
       // wandering, it ambles. Walking round something it keeps up with its own pace round it.
       const pace = !wandering ? 1.3 : goal.about != null ? clamp(d / 2, 0.5, 2) : 0.5;
       const speed = Math.max(pace * clamp(d / 0.5, 0.2, 1), goal.orbit ? 0.4 : 0);
-      const k = Math.min(1, (speed * dt) / d);
-      creature.pos[0] += (gx - x) * k;
-      creature.pos[2] += (gz - z) * k;
+      const k = Math.min(1, (speed * dt) / Math.max(dw, 1e-6));
+      creature.pos[0] += (wx - x) * k;
+      creature.pos[2] += (wz - z) * k;
     }
     const left = Math.hypot(gx - creature.pos[0], gz - creature.pos[2]);
     if (left < 0.03 && !creature.arrived) {
@@ -1793,7 +1829,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
     }
     // float: just off the ground, higher over whatever it passes, resting on the card at night, lower when it sits
     const hover = goal.sit && creature.arrived ? (body() ? 0.02 : 0.3) : body() ? 0.1 : 0.55;
-    const ahead = d > 0.01 ? [creature.pos[0] + ((gx - x) / d) * 0.3, creature.pos[2] + ((gz - z) / d) * 0.3] : [creature.pos[0], creature.pos[2]];
+    const ahead = dw > 0.01 ? [creature.pos[0] + ((wx - x) / dw) * 0.3, creature.pos[2] + ((wz - z) / dw) * 0.3] : [creature.pos[0], creature.pos[2]];
     const want = goal.settle ? 0.26 : Math.max(clearance(creature.pos[0], creature.pos[2]), clearance(...ahead)) + hover;
     creature.pos[1] = reduced ? want : lerp(creature.pos[1], want, 1 - Math.exp(-dt * 3));
     // facing: where it is going while it goes; once there, what it came to look at. With nothing to look at (sitting
@@ -2369,6 +2405,7 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
         if (gone.tex) gl.deleteTexture(gone.tex);
       }
       things = fresh;
+      placeVersion++;
       if (selected) selected = things.find((th) => th.t.id === selected.t.id) || null;
     }
     if (first) {

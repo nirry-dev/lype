@@ -108,7 +108,7 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
   write('index.html', page);
   // The modules it imports are stamped too: a browser holding last night's world.js must not run it under tonight's app.js.
   const stamped = (src) => src.replace(/(\bfrom\s+'\.{1,2}\/[^'?]+\.js)'/g, `$1?v=${stamp}'`);
-  for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js', 'lib/form.js', 'lib/town.js']) {
+  for (const rel of ['app.js', 'atlas.js', 'presence.js', 'world.js', 'style.css', 'lib/svgclean.js', 'lib/seal.js', 'lib/form.js', 'lib/town.js', 'lib/route.js']) {
     const src = readFileSync(join(web, rel), 'utf8');
     write(rel, rel.endsWith('.js') ? stamped(src) : src);
   }
