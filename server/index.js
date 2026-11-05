@@ -195,7 +195,8 @@ async function api(req, res, url) {
   let m = /^\/api\/cycle\/(\d+|latest)$/.exec(path);
   if (m && method === 'GET') {
     const record = views.cycle(store, m[1] === 'latest' ? life.state.cycle : Number(m[1]));
-    return record ? json(res, 200, record) : json(res, 404, { error: 'no such cycle' });
+    const to = record && life.addressee(record.n)?.name;
+    return record ? json(res, 200, to ? { ...record, to } : record) : json(res, 404, { error: 'no such cycle' });
   }
   m = /^\/api\/night\/(\d+)$/.exec(path);
   if (m && method === 'GET') {
@@ -226,7 +227,7 @@ async function api(req, res, url) {
     if (photo?.error) return json(res, photo.status, { error: photo.error });
     const ip = fromRelay(req) || req.socket.remoteAddress || 'unknown';
     if (rateLimited([`ip:${ip}`, ...(vid ? [`v:${vid}`] : [])])) return json(res, 429, { error: 'That is a lot of letters for one hour. It reads slowly; give it time.' });
-    const inReplyTo = typeof body.inReplyTo === 'string' && /^L\d{1,7}$/.test(body.inReplyTo) ? body.inReplyTo : null;
+    const inReplyTo = typeof body.inReplyTo === 'string' && /^[Lc]\d{1,7}$/.test(body.inReplyTo) ? body.inReplyTo : null;
     const letter = life.addLetter({ from, text, person: vid || `name:${from.toLowerCase()}`, question: typeof body.question === 'string' ? body.question : null, photo: photo?.data, inReplyTo });
     return json(res, 201, letter);
   }

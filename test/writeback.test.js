@@ -8,7 +8,7 @@ import { after, test } from 'node:test';
 import { createBrain } from '../server/brain.js';
 import { loadConfig } from '../server/config.js';
 import { Life } from '../server/life.js';
-import { createStore } from '../server/store.js';
+import { createStore, pad } from '../server/store.js';
 import * as views from '../server/views.js';
 
 const root = mkdtempSync(join(tmpdir(), 'iterant-writeback-'));
@@ -90,4 +90,67 @@ test('it reads a letter that writes back with the conversation so far, oldest fi
   const reply = asked.find((r) => r.kind === 'reply' && r.user.includes(`letter ${third}`));
   assert.ok(reply, 'it wrote back again');
   assert.match(reply.user, /this is a conversation: carry it on/);
+});
+
+/** A writing it made in cycle `n` (as if a cycle had written it). */
+function wrote(life, n, title, text) {
+  life.cycles.push({ n, v: 1, at: new Date(Date.now() + n).toISOString(), action: 'write', title, work: { kind: 'writing', failed: false }, letters: [], replies: 0 });
+  life.store.write(`cycles/${pad(n)}.json`, { n, version: 1, startedAt: new Date().toISOString(), action: { kind: 'write' }, work: { kind: 'writing', title, intent: '', text }, letters: [], replies: [] });
+}
+
+test('a writing it addresses to someone who wrote to it is a letter to them, theirs to write back to', () => {
+  const { life } = makeLife();
+  life.birth();
+  answered(life, { from: 'Wren', text: 'There is a bottle on the pipe outside.', person: 'v1', reply: 'I will remember the bottle.' });
+  wrote(life, 40, 'To Wren', 'To Wren,\nIs the bottle on the pipe still there?');
+  wrote(life, 41, 'Note to Orea', 'Orea is a pal, not a person who wrote.');
+  wrote(life, 42, 'The Soft Line', 'The trunk holds the moss.');
+  wrote(life, 43, 'To the wind', 'Nobody signs as the wind.');
+  assert.equal(life.addressee(40).name, 'Wren');
+  assert.deepEqual(life.addressee(40).persons, ['v1']);
+  for (const n of [41, 42, 43]) assert.equal(life.addressee(n), null, `cycle ${n} is to nobody who wrote`);
+  // only a name someone signed before it wrote: a newcomer signing "Wren" afterwards is not who it wrote to
+  life.addLetter({ from: 'Wren', text: 'I am also Wren.', person: 'v9' });
+  assert.deepEqual(life.addressee(40).persons, ['v1']);
+
+  // what it wrote them, for them: newest first, with the way to write back
+  const mine = life.you('v1').wroteYou;
+  assert.deepEqual(mine.map((x) => [x.kind, x.id]), [['writing', 'c40'], ['reply', 'L1']]);
+  assert.equal(mine[0].title, 'To Wren');
+  assert.equal(life.you('v9').wroteYou.length, 0);
+  assert.equal(views.works(life, life.store).find((w) => w.cycle === 40).to, 'Wren', 'its works say who it was to');
+  assert.equal(views.works(life, life.store).find((w) => w.cycle === 42).to, undefined);
+
+  // writing back to it: theirs only
+  const back = life.addLetter({ from: 'Wren', text: 'Yes, it is still there, full of rain.', person: 'v1', inReplyTo: 'c40' });
+  assert.equal(back.inReplyTo, 'c40');
+  assert.equal(life.addLetter({ from: 'Wren', text: 'x', person: 'v9', inReplyTo: 'c40' }).inReplyTo, null, 'not the one it wrote to');
+  assert.equal(life.addLetter({ from: 'Wren', text: 'x', person: 'v1', inReplyTo: 'c42' }).inReplyTo, null, 'a writing to nobody');
+  const shown = views.letters(life, null).find((l) => l.id === back.id);
+  assert.deepEqual(shown.writingBack, { id: 'c40', from: 'Wren', reply: 'To Wren,\nIs the bottle on the pipe still there?', title: 'To Wren', cycle: 40, writing: true });
+
+  // and it reads that letter knowing what it wrote them, on its own
+  const turns = life.conversation(life.letters.find((l) => l.id === back.id));
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].writing, true);
+  assert.match(turns[0].you, /Is the bottle on the pipe still there\?/);
+  const next = life.addLetter({ from: 'Wren', text: 'Did you get my answer?', person: 'v1' });
+  Object.assign(life.letters.find((l) => l.id === back.id), { readAt: new Date().toISOString(), readCycle: 44, reply: { text: 'Full of rain: then it is listening too.', cycle: 44 } });
+  const again = life.addLetter({ from: 'Wren', text: 'It is.', person: 'v1', inReplyTo: back.id });
+  assert.deepEqual(life.conversation(life.letters.find((l) => l.id === again.id)).map((t) => (t.writing ? `c${t.cycle}` : t.id)), ['c40', back.id], 'oldest first, from what it wrote them');
+  assert.ok(next.id);
+});
+
+test('it is told a letter writes back to something it wrote, on its own, and what that was', async () => {
+  const { life, asked } = makeLife();
+  life.birth();
+  life.welcome();
+  answered(life, { from: 'Wren', text: 'There is a bottle on the pipe outside.', person: 'v1', reply: 'I will remember the bottle.' });
+  wrote(life, 40, 'To Wren', 'To Wren,\nIs the bottle on the pipe still there?');
+  life.state.cycle = 40;
+  const back = life.addLetter({ from: 'Wren', text: 'Still there, full of rain.', person: 'v1', inReplyTo: 'c40' });
+  for (let i = 0; i < 3 && !life.letters.find((l) => l.id === back.id).readAt; i++) assert.ok((await life.wake('test')).ok);
+  clearTimeout(life.timer);
+  const read = asked.find((r) => r.user?.includes('Still there, full of rain.'));
+  assert.match(read.user, /you wrote to them, on your own, in cycle 40 \("To Wren"\); they found it as a letter to them: "To Wren, Is the bottle on the pipe still there\?"/);
 });

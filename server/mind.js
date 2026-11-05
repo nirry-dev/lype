@@ -283,7 +283,9 @@ function lettersBlock(ctx) {
     const answering = l.question ? ` It answers a question you asked: "${l.question}".` : '';
     // writing back to its reply: the conversation so far, oldest first
     const back = l.thread?.length
-      ? ` They are writing back to what you wrote them. What was said before, oldest first:${l.thread.map((t) => `\n- they wrote (letter ${t.id}): "${t.them}"\n  you wrote back: "${t.you}"`).join('')}\nNow they wrote this:`
+      ? ` They are writing back to what you wrote them. What was said before, oldest first:${l.thread
+          .map((t) => (t.writing ? `\n- you wrote to them, on your own, in cycle ${t.cycle} ("${t.title}"); they found it as a letter to them: "${t.you}"` : `\n- they wrote (letter ${t.id}): "${t.them}"\n  you wrote back: "${t.you}"`))
+          .join('')}\nNow they wrote this:`
       : '';
     const look = l.errand?.look;
     const brought = l.errand
@@ -583,6 +585,17 @@ export function readAct(text, letters, tired = null, { canTend = true, canErrand
     content: action === 'rest' ? '' : content,
     replyTo: letters.filter((l) => wanted.has(l.id)).map((l) => l.id),
   };
+}
+
+/**
+ * The name a writing of its is addressed to, by its title ("To Yzri", "Note to Yzri", "A letter for Yzri") or its first
+ * line ("To Yzri," / "Dear Yzri,"), or null. Only a name: whether it is someone who wrote to it is for its life to say.
+ */
+export function addressedName(title, text) {
+  const t = /^\s*(?:a\s+)?(?:(?:note|letter|words|message|reply|answer)\s+)?(?:to|for)\s+([^\s,.:;!?"“”]+(?:\s+[^\s,.:;!?"“”]+)?)\s*[.!]?\s*$/i.exec(title || '');
+  if (t) return t[1];
+  const first = /^\s*(?:dear|to)\s+([^\n,:;.!?]{1,40}?)\s*[,:\n]/i.exec(text || '');
+  return first ? first[1].trim() : null;
 }
 
 export function replyPrompt(ctx, monologue, outcome, letter) {

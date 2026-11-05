@@ -43,6 +43,8 @@ export function works(life, store) {
       text: full.kind === 'writing' ? full.text : undefined,
       plaque: full.kind === 'building' ? full.plaque : undefined,
       thing: full.thing,
+      // a writing it addressed to someone who wrote to it: theirs to answer
+      ...(full.kind === 'writing' && life.addressee(c.n) ? { to: life.addressee(c.n).name } : {}),
       src: full.kind === 'drawing' || (full.kind === 'building' && full.svg) ? `works/${pad(c.n)}.svg` : undefined,
     });
   }
@@ -136,8 +138,14 @@ export function letters(life, me = null) {
       // a person's letter whose words it carried on to a pen pal, in a letter written after it read it
       const read = l.readAt && !l.pal ? life.cycles.find((c) => c.letters.includes(l.id))?.n : null;
       const passed = read ? sent.filter((o) => o.cycle >= read && influencedBy(l, o.text)).map((o) => ({ to: o.toName, night: o.night })) : [];
-      const before = l.inReplyTo ? life.letters.find((x) => x.id === l.inReplyTo) : null;
-      const back = before?.reply?.text && !before.reply.withheld ? { id: before.id, from: before.from, reply: before.reply.text } : null;
+      const wrote = /^c(\d+)$/.exec(l.inReplyTo || '');
+      const addressed = wrote ? life.addressee(Number(wrote[1])) : null;
+      const before = l.inReplyTo && !wrote ? life.letters.find((x) => x.id === l.inReplyTo) : null;
+      const back = addressed
+        ? { id: l.inReplyTo, from: addressed.name, reply: addressed.text, title: addressed.title, cycle: addressed.n, writing: true }
+        : before?.reply?.text && !before.reply.withheld
+          ? { id: before.id, from: before.from, reply: before.reply.text }
+          : null;
       return { ...publicLetter(l, { own: Boolean(me && l.person === me) }), mine: Boolean(me && l.person === me), ...(back ? { writingBack: back } : {}), ...(passed.length ? { passedOn: passed } : {}) };
     })
     .reverse();

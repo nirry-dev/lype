@@ -2363,10 +2363,44 @@ export class Life extends EventEmitter {
     return publicLetter(letter, { own: true });
   }
 
-  /** The letter of theirs whose reply someone is writing back to, if it is theirs and it wrote back (in public). */
+  /**
+   * What someone is writing back to, if it is theirs to answer: its reply to one of their letters (one anyone may see),
+   * or a writing of its addressed to them (`c241`, by its cycle).
+   */
   writingBackTo(id, person) {
+    if (!person) return null;
+    const w = /^c(\d+)$/.exec(id);
+    if (w) return this.addressee(Number(w[1]))?.persons.includes(person) ? { id } : null;
     const l = this.letters.find((x) => x.id === id);
-    return l && person && l.person === person && !l.pal && l.reply?.text && !l.reply.withheld ? l : null;
+    return l && l.person === person && !l.pal && l.reply?.text && !l.reply.withheld ? l : null;
+  }
+
+  /**
+   * Who a writing of its (by its cycle) is to: a name it addressed it to, by its title or first line, that someone who
+   * wrote to it before then signed their letters with; and which visitors those were. Null for any other writing.
+   * A cycle never changes once written, so each is worked out once.
+   */
+  addressee(n) {
+    this.addressees ??= new Map();
+    if (this.addressees.has(n)) return this.addressees.get(n);
+    const c = this.cycles.find((x) => x.n === n);
+    let found = null;
+    if (c?.work?.kind === 'writing' && !c.work.failed) {
+      const work = this.store.read(`cycles/${pad(n)}.json`, null)?.work;
+      const name = work && mind.addressedName(work.title, work.text);
+      const theirs = name ? this.letters.filter((l) => !l.pal && !l.kin && l.person && l.readCycle && l.readCycle <= n && letterStatus(l) === 'allowed' && sameName(l.from, name)) : [];
+      if (theirs.length) found = { n, name: theirs.at(-1).from.trim(), persons: [...new Set(theirs.map((l) => l.person))], title: work.title, text: work.text, at: c.at };
+    }
+    this.addressees.set(n, found);
+    return found;
+  }
+
+  /** Every writing of its addressed to this visitor, oldest first. */
+  writingsTo(person) {
+    return this.cycles
+      .filter((c) => c.work?.kind === 'writing')
+      .map((c) => this.addressee(c.n))
+      .filter((a) => a?.persons.includes(person));
   }
 
   /**
@@ -2376,6 +2410,13 @@ export class Life extends EventEmitter {
   conversation(letter, depth = 3) {
     const turns = [];
     for (let l = letter; l?.inReplyTo && turns.length < depth; ) {
+      const w = /^c(\d+)$/.exec(l.inReplyTo);
+      if (w) {
+        // what started it: a writing it addressed to them on its own
+        const a = this.addressee(Number(w[1]));
+        if (a) turns.unshift({ id: l.inReplyTo, writing: true, cycle: a.n, title: a.title, you: mind.clip(a.text, 600) });
+        break;
+      }
       l = this.letters.find((x) => x.id === l.inReplyTo);
       if (!l?.reply?.text || l.reply.withheld) break;
       turns.unshift({ id: l.id, them: mind.clip(l.text, 400), you: mind.clip(l.reply.text, 400) });
@@ -2399,6 +2440,13 @@ export class Life extends EventEmitter {
       ),
       pending: s.memory.today.filter(mentions).map((m) => ({ text: m.text, shelf: m.shelf })),
       forgotten: s.memory.forgotten.filter(mentions).map((m) => ({ text: m.text, shelf: m.shelf, forgottenAt: m.forgottenAt, how: m.how })),
+      // what it wrote them, newest first: its replies to their letters, and writings of its addressed to them
+      wroteYou: [
+        ...mine
+          .filter((l) => !l.pal && l.reply?.text && !l.reply.withheld)
+          .map((l) => ({ kind: 'reply', id: l.id, text: l.reply.text, cycle: l.reply.cycle ?? l.readCycle ?? null, at: l.reply.at || l.readAt || l.at, yours: mind.clip(l.text, 140) })),
+        ...this.writingsTo(person).map((w) => ({ kind: 'writing', id: `c${w.n}`, title: w.title, text: w.text, cycle: w.n, at: w.at, to: w.name })),
+      ].sort((x, y) => Date.parse(y.at) - Date.parse(x.at)),
     };
   }
 

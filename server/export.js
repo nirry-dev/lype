@@ -87,7 +87,8 @@ export function exportLife(cfg, out, { relayUrl = '', allModels = true } = {}) {
     copyFileSync(svg, join(out, `data/works/${pad(n)}.svg`));
   };
   for (const c of life.cycles) {
-    write(`data/cycles/${pad(c.n)}.json`, views.cycle(store, c.n));
+    const to = life.addressee(c.n)?.name;
+    write(`data/cycles/${pad(c.n)}.json`, to ? { ...views.cycle(store, c.n), to } : views.cycle(store, c.n));
     copyWork(c.n);
   }
   // What it asked to be made, once made (and never the pictures they were made from).
