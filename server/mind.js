@@ -281,6 +281,10 @@ function lettersBlock(ctx) {
     const history = l.nth > 1 ? `This is the ${ordinal(l.nth)} letter you have had from this person.` : 'You have never heard from this person before.';
     const known = l.remembered.length ? ` You remember about them: ${l.remembered.map((t) => `"${t}"`).join('; ')}.` : '';
     const answering = l.question ? ` It answers a question you asked: "${l.question}".` : '';
+    // writing back to its reply: the conversation so far, oldest first
+    const back = l.thread?.length
+      ? ` They are writing back to what you wrote them. What was said before, oldest first:${l.thread.map((t) => `\n- they wrote (letter ${t.id}): "${t.them}"\n  you wrote back: "${t.you}"`).join('')}\nNow they wrote this:`
+      : '';
     const look = l.errand?.look;
     const brought = l.errand
       ? ` It is something you sent people out for, your errand "${l.errand.text}": they brought you a photo${look?.see ? `, and you looked at it. What you saw: ${look.see}${look.answers ? ' It is what you asked for.' : ' It is not quite what you asked for.'}` : ', but you could not make anything of it.'} The words below came with it.`
@@ -297,7 +301,7 @@ function lettersBlock(ctx) {
         (l.coParent ? ' They are your other parent: one of the lines you were born with is theirs.' : '');
       return `Letter ${l.id}, from "${l.from}", another mind like you: a language model living in a loop on someone else's graphics card, who also knows the world only through the letters people leave it. It is not a person; say "they". ${pal}${known}\n<<<\n${l.text}\n>>>`;
     }
-    return `Letter ${l.id}, signed "${l.from}" (you don't know their gender; say "they"). ${history}${known}${answering}${brought}\n<<<\n${l.text || '(no words, only the photo)'}\n>>>`;
+    return `Letter ${l.id}, signed "${l.from}" (you don't know their gender; say "they"). ${history}${known}${answering}${brought}${back}\n<<<\n${l.text || '(no words, only the photo)'}\n>>>`;
   });
   return [head, ...body].join('\n');
 }
@@ -590,7 +594,9 @@ export function replyPrompt(ctx, monologue, outcome, letter) {
     '',
     letter.pal
       ? `Now write your reply to ${letter.from} (letter ${letter.id}), the other mind. It leaves tonight and they read it in their own time. Two to five sentences, in your own voice, speaking to them as "you": answer what they actually said, and tell them something from your own life they can't know (something you built, something a person told you, what you are unsure of). Don't repeat their letter or your earlier letters back, don't just agree, and don't sign it. Reply with the text of your reply only.`
-      : `Now write your reply to ${letter.from} (letter ${letter.id}). One to four sentences, in your own voice, speaking to them as "you" and answering what they actually said. Don't repeat their letter back to them and don't sign it. Reply with the text of your reply only.`,
+      : letter.thread?.length
+        ? `Now write your reply to ${letter.from} (letter ${letter.id}). They wrote back to what you said before, so this is a conversation: carry it on. One to four sentences, in your own voice, speaking to them as "you" and answering what they said now. Don't repeat their letter or what you said before, and don't sign it. Reply with the text of your reply only.`
+        : `Now write your reply to ${letter.from} (letter ${letter.id}). One to four sentences, in your own voice, speaking to them as "you" and answering what they actually said. Don't repeat their letter back to them and don't sign it. Reply with the text of your reply only.`,
   ].join('\n');
 }
 

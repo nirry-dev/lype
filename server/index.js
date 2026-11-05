@@ -226,7 +226,8 @@ async function api(req, res, url) {
     if (photo?.error) return json(res, photo.status, { error: photo.error });
     const ip = fromRelay(req) || req.socket.remoteAddress || 'unknown';
     if (rateLimited([`ip:${ip}`, ...(vid ? [`v:${vid}`] : [])])) return json(res, 429, { error: 'That is a lot of letters for one hour. It reads slowly; give it time.' });
-    const letter = life.addLetter({ from, text, person: vid || `name:${from.toLowerCase()}`, question: typeof body.question === 'string' ? body.question : null, photo: photo?.data });
+    const inReplyTo = typeof body.inReplyTo === 'string' && /^L\d{1,7}$/.test(body.inReplyTo) ? body.inReplyTo : null;
+    const letter = life.addLetter({ from, text, person: vid || `name:${from.toLowerCase()}`, question: typeof body.question === 'string' ? body.question : null, photo: photo?.data, inReplyTo });
     return json(res, 201, letter);
   }
   if (path === '/api/errands' && method === 'GET') return json(res, 200, views.errands(life));

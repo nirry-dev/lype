@@ -130,6 +130,7 @@ export function publicLetter(l, { own = false } = {}) {
     at: l.at,
     question: l.question || null,
     questionText: l.questionText || null,
+    inReplyTo: l.inReplyTo || null,
     readAt: l.readAt || null,
     readCycle: l.readCycle || null,
     reply,
@@ -1184,6 +1185,8 @@ export class Life extends EventEmitter {
         // nothing in its place comes from this writer's letters yet (a photo brought back is an answer, not a letter)
         unbuilt: !l.errand && !s.world.things.some((t) => (t.people || []).some((p) => sameName(p, l.from))),
         question: l.question ? s.questions.find((q) => q.id === l.question)?.text : undefined,
+        // writing back to its reply: what was said before, oldest first
+        thread: l.inReplyTo ? this.conversation(l) : undefined,
         errand: l.errand ? { text: l.errand.text, look: looks.get(l.id) } : undefined,
         photo: !l.errand && l.photo ? { look: looks.get(l.id) } : undefined,
       })),
@@ -1329,7 +1332,7 @@ export class Life extends EventEmitter {
       this.live.replyTo = { id, from: letter.from };
       this.setPhase('replying', `to ${letter.from}`);
       // Not streamed: a reply is public, so it is screened before anyone sees a word of it.
-      const res = await this.brain.complete({ kind: 'reply', system, user: mind.replyPrompt(ctx, monologue, outcome, letter), maxTokens: 240 });
+      const res = await this.brain.complete({ kind: 'reply', system, user: mind.replyPrompt(ctx, monologue, outcome, { ...letter, thread: ctx.letters.find((x) => x.id === id)?.thread }), maxTokens: 240 });
       const text = mind.clip(res.text, 600);
       // Small models sometimes echo the letter instead of answering it; that isn't a reply.
       if (!text || similarity(text, letter.text) >= 0.6) continue;
@@ -1537,7 +1540,7 @@ export class Life extends EventEmitter {
       s.world.sight = { text: see, version, file, at: new Date().toISOString(), ...(verdict.status === 'allowed' ? {} : { withheld: true }) };
       this.forgetSights();
       if (first) {
-        this.milestone('first-sight', 'It saw its own place for the first time: a picture of what it made, from above, the way visitors see it.');
+        this.milestone('first-place-sight', 'It saw its own place for the first time: a picture of what it made, from above, the way visitors see it.');
         this.journalAdd({ kind: 'sight', text: 'For the first time, it was shown a picture of its own place, from above.' });
       }
       return s.world.sight;
@@ -2321,8 +2324,10 @@ export class Life extends EventEmitter {
   // ---------- visitors ----------
 
   /** A new letter. Obvious problems are held at the door; the rest waits for the model's screen when it next wakes. */
-  addLetter({ from, text, person, question, errand = null, photo = null, pal = null }) {
-    const asked = question ? this.state.questions.find((q) => q.id === question && q.open) : null;
+  addLetter({ from, text, person, question, errand = null, photo = null, pal = null, inReplyTo = null }) {
+    // writing back to what it wrote them: only to its reply to one of their own letters (else it is just a letter)
+    const back = inReplyTo ? this.writingBackTo(inReplyTo, person) : null;
+    const asked = question && !back ? this.state.questions.find((q) => q.id === question && q.open) : null;
     // A pal its keeper trusts (a sibling, say) is screened by the model even when every public letter waits for the keeper.
     const mode = pal?.trusted && this.cfg.moderation.mode === 'keeper' ? 'model' : this.cfg.moderation.mode;
     const rule = mode === 'off' ? null : ruleReason(`${from}\n${text}`);
@@ -2346,6 +2351,7 @@ export class Life extends EventEmitter {
       person,
       question: asked?.id ?? null,
       questionText: asked?.text ?? null,
+      ...(back ? { inReplyTo: back.id } : {}),
       ...(errand ? { errand: { id: errand.id, text: errand.text, photo: photo ? `returns/${id}.jpg` : null } } : photo ? { photo: `returns/${id}.jpg` } : {}),
       ...(pal ? { pal } : {}),
       screen,
@@ -2355,6 +2361,26 @@ export class Life extends EventEmitter {
     if (screen.status === 'allowed') this.emit('letter', publicLetter(letter));
     else this.emit('letter-queued', { id: letter.id });
     return publicLetter(letter, { own: true });
+  }
+
+  /** The letter of theirs whose reply someone is writing back to, if it is theirs and it wrote back (in public). */
+  writingBackTo(id, person) {
+    const l = this.letters.find((x) => x.id === id);
+    return l && person && l.person === person && !l.pal && l.reply?.text && !l.reply.withheld ? l : null;
+  }
+
+  /**
+   * What came before a letter that writes back: each earlier letter of theirs and what it replied, oldest first, up to
+   * `depth` of them, so it reads the letter as the next turn of a conversation and not out of nowhere.
+   */
+  conversation(letter, depth = 3) {
+    const turns = [];
+    for (let l = letter; l?.inReplyTo && turns.length < depth; ) {
+      l = this.letters.find((x) => x.id === l.inReplyTo);
+      if (!l?.reply?.text || l.reply.withheld) break;
+      turns.unshift({ id: l.id, them: mind.clip(l.text, 400), you: mind.clip(l.reply.text, 400) });
+    }
+    return turns;
   }
 
   you(person) {

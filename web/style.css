@@ -769,6 +769,16 @@ main {
   background: color-mix(in srgb, var(--mind) 6%, var(--bg-2));
   border-radius: 0 10px 10px 0;
 }
+.reply-block .write-back {
+  display: inline-block;
+  margin-top: 10px;
+}
+.compose .writing-back-to {
+  margin: 0 0 14px;
+}
+.writing-back q {
+  font-style: italic;
+}
 .reply-block .voice {
   font-size: 17px;
   margin: 4px 0 0;

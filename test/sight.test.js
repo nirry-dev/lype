@@ -81,7 +81,7 @@ test('at night it is shown its place, says what it sees, and its night is told; 
   const sleep = asked.find((r) => r.kind === 'sleep');
   assert.match(sleep.user, /Tonight you were shown a picture of your place/);
   assert.ok(asked.indexOf(look) < asked.indexOf(sleep), 'it looks before it says what its place is becoming');
-  assert.ok(s.milestones.some((m) => m.key === 'first-sight' || /first time: a picture of what it made/.test(m.text)));
+  assert.ok(s.milestones.some((m) => m.kind === 'first-place-sight'), 'its first look at its own place is a milestone of its own');
   const w = views.world(life);
   assert.deepEqual(Object.keys(w.sight).sort(), ['at', 'image', 'text', 'version']);
   assert.equal(w.sight.image, s.world.sight.file);

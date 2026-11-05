@@ -657,6 +657,7 @@ function letterView(l) {
       { class: 'paper' },
       h('div', { class: 'from' }, `From ${l.from}`, l.fromCreature ? ' · another mind like it' : '', l.fromParent ? ' · its parent, on its last night' : '', l.at ? ` · ${dayTime(l.at)}` : '', l.mine ? ' · you' : ''),
       l.questionText ? h('div', { class: 'from' }, `answering “${l.questionText}”`) : null,
+      l.writingBack ? h('div', { class: 'from writing-back' }, 'writing back to what it said: ', h('q', {}, short(l.writingBack.reply, 140))) : null,
       l.errand ? h('div', { class: 'from' }, `brought back for its errand “${l.errand.text}”`) : null,
       l.errand?.photo ? h('img', { class: 'return-photo', src: asset(l.errand.photo), alt: `The photo ${l.from} brought back`, loading: 'lazy' }) : null,
       l.photo ? h('img', { class: 'return-photo', src: asset(l.photo), alt: `The photo ${l.from} sent with this letter`, loading: 'lazy' }) : null,
@@ -665,7 +666,16 @@ function letterView(l) {
     ),
     l.errand?.look ? lookBlock(l.errand.look) : null,
     l.look ? lookBlock(l.look, { asked: false }) : null,
-    reply ? h('div', { class: 'reply-block' }, h('span', { class: 'label' }, `It wrote back${reply.cycle ? ` · cycle ${reply.cycle}` : ''}`), h('p', { class: 'voice' }, reply.text)) : null,
+    reply
+      ? h(
+          'div',
+          { class: 'reply-block' },
+          h('span', { class: 'label' }, `It wrote back${reply.cycle ? ` · cycle ${reply.cycle}` : ''}`),
+          h('p', { class: 'voice' }, reply.text),
+          // to its reply to your own letter, you can write back: it reads what was said before
+          l.mine && (!SNAPSHOT || RELAY) && !l.fromCreature ? h('a', { class: 'btn write-back', href: `#/letters?reply=${l.id}` }, 'Write back') : null,
+        )
+      : null,
     l.passedOn?.length
       ? h('div', { class: 'influence' }, `↳ Something of this reached ${[...new Set(l.passedOn.map((p) => p.to))].join(' and ')}, in ${l.passedOn.length === 1 ? 'a letter' : 'letters'} that left on night ${l.passedOn.map((p) => p.night).join(', ')}.`)
       : null,
@@ -3039,9 +3049,11 @@ async function renderLetters(current) {
   if (!current()) return;
   const s = app.state;
   const wanted = app.params.get('q');
+  // writing back to its reply to one of your letters (#/letters?reply=L12)
+  let back = app.letters.find((l) => l.id === app.params.get('reply') && l.mine && l.reply?.text && !l.fromCreature) || null;
 
   // Someone may be halfway through a letter: on live updates only the feed is rebuilt.
-  if (app.renderedView === 'letters' && $('#compose-form')) {
+  if (app.renderedView === 'letters' && $('#compose-form') && $('#compose-form').dataset.reply === (back?.id || '')) {
     fill($('#letters-feed'), ...lettersFeed().flat().filter(Boolean));
     return;
   }
@@ -3108,12 +3120,22 @@ async function renderLetters(current) {
       msg.textContent = err.message;
     }
   });
+  const backBlock = back
+    ? h(
+        'div',
+        { class: 'reply-block writing-back-to' },
+        h('span', { class: 'label' }, `Writing back to what it wrote you${back.reply.cycle ? ` · cycle ${back.reply.cycle}` : ''}`),
+        h('p', { class: 'voice' }, back.reply.text),
+        h('p', { class: 'hint', style: 'margin:6px 0 0' }, 'It reads this with what you wrote before and what it said, so it can carry the conversation on. ', h('a', { href: '#/letters' }, 'Write a new letter instead')),
+      )
+    : null;
   const form = h(
     'form',
-    { class: 'paper compose', id: 'compose-form' },
-    h('div', { class: 'from' }, 'A letter for it'),
+    { class: 'paper compose', id: 'compose-form', 'data-reply': back?.id || '' },
+    h('div', { class: 'from' }, back ? 'Writing back to it' : 'A letter for it'),
+    backBlock,
     h('label', {}, h('span', { class: 'label' }, 'Sign as'), name),
-    s.questions.length ? h('div', { class: 'q-field' }, h('span', { class: 'label' }, s.questions.length === 1 ? 'This is just a letter, or an answer to its question' : 'This is just a letter, or an answer to one of its questions'), question) : null,
+    s.questions.length ? h('div', { class: 'q-field', hidden: back ? true : null }, h('span', { class: 'label' }, s.questions.length === 1 ? 'This is just a letter, or an answer to its question' : 'This is just a letter, or an answer to one of its questions'), question) : null,
     h('label', {}, h('span', { class: 'label' }, 'Your letter'), text),
     photos ? h('label', {}, h('span', { class: 'label' }, 'A photo, if you like'), file) : null,
     photos ? preview : null,
@@ -3141,13 +3163,25 @@ async function renderLetters(current) {
           from: name.value,
           text: text.value,
           visitor,
-          question: question.querySelector('input:checked')?.value || null,
+          question: back ? null : question.querySelector('input:checked')?.value || null,
+          ...(back ? { inReplyTo: back.id } : {}),
           ...(photos && photo ? { photo: photo.replace(/^data:image\/jpeg;base64,/, '') } : {}),
         }),
       };
       const sent = away ? await toMailbox(letter) : await api('/api/letters', letter);
       text.value = '';
       clearPhoto();
+      // written back: the form is for a new letter again
+      if (back) {
+        back = null;
+        backBlock.remove();
+        form.dataset.reply = '';
+        form.querySelector('.from').textContent = 'A letter for it';
+        const q = form.querySelector('.q-field');
+        if (q) q.hidden = false;
+        history.replaceState(null, '', '#/letters');
+        app.params.delete('reply');
+      }
       msg.textContent = sent.waiting
         ? `Your letter is waiting at the door${sent.ahead ? ` with ${sent.ahead} other letter${sent.ahead === 1 ? '' : 's'}` : ''}. ${s.name || 'It'} gets it as soon as it is back.`
         : sent.status === 'held' && sent.statusReason === 'a photo waits for its keeper'
@@ -3171,6 +3205,10 @@ async function renderLetters(current) {
     h('div', { class: 'letters-grid' }, form, h('div', { class: 'feed', id: 'letters-feed' }, lettersFeed())),
   );
   if (wanted) text.focus();
+  if (back) {
+    form.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    text.focus({ preventScroll: true });
+  }
 }
 
 /** A question it asked, for reading: the first thing it asks, and the rest of what it said around it. */

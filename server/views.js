@@ -136,7 +136,9 @@ export function letters(life, me = null) {
       // a person's letter whose words it carried on to a pen pal, in a letter written after it read it
       const read = l.readAt && !l.pal ? life.cycles.find((c) => c.letters.includes(l.id))?.n : null;
       const passed = read ? sent.filter((o) => o.cycle >= read && influencedBy(l, o.text)).map((o) => ({ to: o.toName, night: o.night })) : [];
-      return { ...publicLetter(l, { own: Boolean(me && l.person === me) }), mine: Boolean(me && l.person === me), ...(passed.length ? { passedOn: passed } : {}) };
+      const before = l.inReplyTo ? life.letters.find((x) => x.id === l.inReplyTo) : null;
+      const back = before?.reply?.text && !before.reply.withheld ? { id: before.id, from: before.from, reply: before.reply.text } : null;
+      return { ...publicLetter(l, { own: Boolean(me && l.person === me) }), mine: Boolean(me && l.person === me), ...(back ? { writingBack: back } : {}), ...(passed.length ? { passedOn: passed } : {}) };
     })
     .reverse();
 }
