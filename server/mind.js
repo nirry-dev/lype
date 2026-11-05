@@ -588,8 +588,8 @@ export function readAct(text, letters, tired = null, { canTend = true, canErrand
 }
 
 /**
- * The name a writing of its is addressed to, by its title ("To Yzri", "Note to Yzri", "A letter for Yzri") or its first
- * line ("To Yzri," / "Dear Yzri,"), or null. Only a name: whether it is someone who wrote to it is for its life to say.
+ * The name a writing of its is addressed to, by its title ("To Wren", "Note to Wren", "A letter for Wren") or its first
+ * line ("To Wren," / "Dear Wren,"), or null. Only a name: whether it is someone who wrote to it is for its life to say.
  */
 export function addressedName(title, text) {
   const t = /^\s*(?:a\s+)?(?:(?:note|letter|words|message|reply|answer)\s+)?(?:to|for)\s+([^\s,.:;!?"“”]+(?:\s+[^\s,.:;!?"“”]+)?)\s*[.!]?\s*$/i.exec(title || '');
