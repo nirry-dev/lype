@@ -3309,7 +3309,7 @@ function lettersFeed() {
       : null;
 
   const letters = app.letters;
-  return [keeperCard(), forYouCard(), youCard, letterKeyCard(), palsCard(), letters.length ? letters.map(letterView) : h('p', { class: 'empty' }, 'Nobody has written to it yet. You could be the first.')];
+  return [keeperCard(), letterKeyCard(), forYouCard(), youCard, palsCard(), letters.length ? letters.map(letterView) : h('p', { class: 'empty' }, 'Nobody has written to it yet. You could be the first.')];
 }
 
 /**
@@ -3346,7 +3346,7 @@ function letterKeyCard() {
   });
   return h(
     'details',
-    { class: 'card letter-key', open: null },
+    { class: 'card letter-key', open: true },
     h('summary', {}, h('span', { class: 'label' }, 'Your letter key'), h('span', { class: 'meta' }, wrote ? ' · to write as you from another browser' : ' · wrote from another browser?')),
     wrote
       ? [
