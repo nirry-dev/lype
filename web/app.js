@@ -129,8 +129,33 @@ function storage(kind) {
 }
 const local = storage('localStorage');
 const session = storage('sessionStorage');
+/** A letter key as people write it down: any case, in groups, with spaces or dashes; or null if it is not one. */
+const readKey = (text) => {
+  const key = String(text || '').toLowerCase().replace(/[^0-9a-f]/g, '');
+  return key.length === 32 ? key : null;
+};
+/** A letter key as it is shown: eight groups of four. */
+const showKey = (key) => key.match(/.{1,4}/g).join(' ');
 const visitor = (() => {
   let key = local?.getItem('iterant.visitor');
+  // A letter key brought from another browser (#/letters?key=…): taken out of the address at once, so it is not left
+  // in this page's history, and this browser becomes that visitor only if they say so.
+  const brought = /[?&]key=([0-9a-fA-F -]{32,48})(?=&|$)/.exec(decodeURIComponent(location.hash))?.[1];
+  if (brought) {
+    history.replaceState(null, '', location.href.replace(/#.*$/, '#/letters'));
+    const next = readKey(brought);
+    const ok =
+      next &&
+      next !== key &&
+      confirm(
+        `Use this letter key in this browser?\n\nYour letters written with it, and what it wrote you, will be yours here.${key ? `\n\nThis browser's own key (${showKey(key)}) will be replaced. If you wrote from this browser, save that key first.` : ''}`,
+      );
+    if (ok) {
+      key = next;
+      local?.setItem('iterant.visitor', key);
+      local?.removeItem('iterant.seenForYou');
+    }
+  }
   if (!key) {
     key = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
     local?.setItem('iterant.visitor', key);
@@ -356,7 +381,10 @@ function connect() {
     const first = !app.state;
     app.state = JSON.parse(e.data);
     app.live = { ...blankLive(), ...(app.state.live || {}) };
-    if (first) route();
+    if (first) {
+      route();
+      forYouDot();
+    }
     else render();
   });
   es.addEventListener('status', (e) => {
@@ -389,6 +417,7 @@ function connect() {
     [app.latest, app.state] = await Promise.all([api('/api/cycle/latest'), api('/api/state')]);
     invalidate('journey', 'works', 'letters', 'you', 'life', 'atlasData', 'world', 'chain');
     refreshView();
+    forYouDot(true);
   });
   es.addEventListener('world', (e) => {
     // It has chosen where the thing it is building will stand.
@@ -657,7 +686,9 @@ function letterView(l) {
       { class: 'paper' },
       h('div', { class: 'from' }, `From ${l.from}`, l.fromCreature ? ' · another mind like it' : '', l.fromParent ? ' · its parent, on its last night' : '', l.at ? ` · ${dayTime(l.at)}` : '', l.mine ? ' · you' : ''),
       l.questionText ? h('div', { class: 'from' }, `answering “${l.questionText}”`) : null,
-      l.writingBack ? h('div', { class: 'from writing-back' }, 'writing back to what it said: ', h('q', {}, short(l.writingBack.reply, 140))) : null,
+      l.writingBack
+        ? h('div', { class: 'from writing-back' }, l.writingBack.writing ? `writing back to “${l.writingBack.title}”, which it wrote ${l.writingBack.from} in cycle ${l.writingBack.cycle}` : ['writing back to what it said: ', h('q', {}, short(l.writingBack.reply, 140))])
+        : null,
       l.errand ? h('div', { class: 'from' }, `brought back for its errand “${l.errand.text}”`) : null,
       l.errand?.photo ? h('img', { class: 'return-photo', src: asset(l.errand.photo), alt: `The photo ${l.from} brought back`, loading: 'lazy' }) : null,
       l.photo ? h('img', { class: 'return-photo', src: asset(l.photo), alt: `The photo ${l.from} sent with this letter`, loading: 'lazy' }) : null,
@@ -737,7 +768,7 @@ function workView(c) {
     );
   }
   if (w.kind === 'writing') {
-    return h('div', {}, h('div', { class: 'work-title' }, w.title), h('p', { class: 'work-text' }, w.text), w.note ? h('p', { class: 'work-note' }, w.note) : null, why);
+    return h('div', {}, h('div', { class: 'work-title' }, w.title), c.to ? h('div', { class: 'label', style: 'margin:4px 0 8px' }, `Written to ${c.to}`) : null, h('p', { class: 'work-text' }, w.text), w.note ? h('p', { class: 'work-note' }, w.note) : null, why);
   }
   if (w.failed) return [h('p', { class: 'voice' }, `It tried to draw “${w.title}”, but nothing came out.`), h('p', { class: 'work-intent' }, w.intent), why];
   return h(
@@ -812,7 +843,8 @@ function openWork(w) {
       ? h('div', { class: 'making' }, drawingFrame(workSrc(w.cycle), w.title), h('div', {}, h('p', { class: 'work-intent' }, w.intent), w.note ? h('p', { class: 'work-note' }, w.note) : null))
       : w.kind === 'building'
         ? h('div', { class: 'making' }, thingFrame(w.src ? workSrc(w.cycle) : null, w.title), h('div', {}, h('div', { class: 'label' }, 'Something it built in its place'), h('p', { class: 'voice plaque' }, w.plaque), w.note ? h('p', { class: 'work-note' }, w.note) : null))
-        : h('div', {}, h('p', { class: 'work-text' }, w.text), w.note ? h('p', { class: 'work-note', style: 'margin-top:12px' }, w.note) : null);
+        : h('div', {}, w.to ? h('div', { class: 'label', style: 'margin-bottom:8px' }, `Written to ${w.to}`) : null, h('p', { class: 'work-text' }, w.text), w.note ? h('p', { class: 'work-note', style: 'margin-top:12px' }, w.note) : null);
+  const yours = w.to && (app.you?.wroteYou || []).some((x) => x.id === `c${w.cycle}`);
   showDialog(w.title, `${dayTime(w.at)} · cycle ${w.cycle} · made by version ${w.version}`, [
     body,
     h(
@@ -820,6 +852,7 @@ function openWork(w) {
       { class: 'rp-row' },
       h('button', { class: 'btn', type: 'button', onclick: () => openCycle(w.cycle) }, 'See the whole cycle'),
       w.thing ? h('a', { class: 'btn', href: `#/place?thing=${w.thing}`, onclick: () => $('#detail').close() }, 'See it in its place') : null,
+      yours && (!SNAPSHOT || RELAY) ? h('a', { class: 'btn btn-primary', href: `#/letters?reply=c${w.cycle}`, onclick: () => $('#detail').close() }, 'Write back') : null,
     ),
   ]);
 }
@@ -3022,7 +3055,7 @@ async function renderWorks(current) {
               'button',
               { class: `card work-card${w.kind === 'building' ? ' built' : ''}`, type: 'button', onclick: () => openWork(w) },
               workFace(w),
-              h('div', { class: 'caption' }, h('b', {}, w.title), h('span', { class: 'meta' }, `${w.kind === 'building' ? 'built · ' : ''}v${w.version} · cycle ${w.cycle} · ${ago(w.at)}`)),
+              h('div', { class: 'caption' }, h('b', {}, w.title), h('span', { class: 'meta' }, `${w.kind === 'building' ? 'built · ' : w.to ? `to ${w.to} · ` : ''}v${w.version} · cycle ${w.cycle} · ${ago(w.at)}`)),
             ),
           ),
         )
@@ -3050,7 +3083,11 @@ async function renderLetters(current) {
   const s = app.state;
   const wanted = app.params.get('q');
   // writing back to its reply to one of your letters (#/letters?reply=L12)
-  let back = app.letters.find((l) => l.id === app.params.get('reply') && l.mine && l.reply?.text && !l.fromCreature) || null;
+  const wanting = app.params.get('reply');
+  const wrote = (app.you?.wroteYou || []).find((x) => x.kind === 'writing' && x.id === wanting);
+  let back = wrote
+    ? { id: wrote.id, writing: true, title: wrote.title, reply: { text: wrote.text, cycle: wrote.cycle } }
+    : app.letters.find((l) => l.id === wanting && l.mine && l.reply?.text && !l.fromCreature) || null;
 
   // Someone may be halfway through a letter: on live updates only the feed is rebuilt.
   if (app.renderedView === 'letters' && $('#compose-form') && $('#compose-form').dataset.reply === (back?.id || '')) {
@@ -3124,8 +3161,8 @@ async function renderLetters(current) {
     ? h(
         'div',
         { class: 'reply-block writing-back-to' },
-        h('span', { class: 'label' }, `Writing back to what it wrote you${back.reply.cycle ? ` · cycle ${back.reply.cycle}` : ''}`),
-        h('p', { class: 'voice' }, back.reply.text),
+        h('span', { class: 'label' }, back.writing ? `Writing back to “${back.title}”, which it wrote you · cycle ${back.reply.cycle}` : `Writing back to what it wrote you${back.reply.cycle ? ` · cycle ${back.reply.cycle}` : ''}`),
+        h('p', { class: back.writing ? 'work-text' : 'voice' }, back.reply.text),
         h('p', { class: 'hint', style: 'margin:6px 0 0' }, 'It reads this with what you wrote before and what it said, so it can carry the conversation on. ', h('a', { href: '#/letters' }, 'Write a new letter instead')),
       )
     : null;
@@ -3147,7 +3184,7 @@ async function renderLetters(current) {
     send,
     msg,
     housemate() ? h('p', { class: 'hint' }, `${s.name || 'It'} also writes to ${housemate().name}, another mind on the same graphics card${housemate().open === false ? `, who hears from nobody else` : ''}. What you tell ${s.name || 'it'} may reach ${housemate().name}.`) : null,
-    h('p', { class: 'hint' }, `It reads letters in its own time, usually within a cycle or two, and may write back. ${s.moderation === 'off' ? '' : 'Letters and replies are screened before anyone sees them; links and contact details are held. '}If you write again from this browser, it will know it is you.`),
+    h('p', { class: 'hint' }, `It reads letters in its own time, usually within a cycle or two, and may write back. ${s.moderation === 'off' ? '' : 'Letters and replies are screened before anyone sees them; links and contact details are held. '}If you write again from this browser, it will know it is you; your letter key carries that to another browser.`),
   );
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3272,7 +3309,112 @@ function lettersFeed() {
       : null;
 
   const letters = app.letters;
-  return [keeperCard(), youCard, palsCard(), letters.length ? letters.map(letterView) : h('p', { class: 'empty' }, 'Nobody has written to it yet. You could be the first.')];
+  return [keeperCard(), forYouCard(), youCard, letterKeyCard(), palsCard(), letters.length ? letters.map(letterView) : h('p', { class: 'empty' }, 'Nobody has written to it yet. You could be the first.')];
+}
+
+/**
+ * Your letter key: what makes your letters yours, kept in this browser. Shown so you can carry it to another browser
+ * or device (as a link, or written down), and a key brought from one can be used here. Nothing about it is stored
+ * anywhere but in the browsers you use it in; it never goes in an address the page sends anywhere.
+ */
+function letterKeyCard() {
+  const wrote = Boolean(app.you?.letters?.length);
+  const link = `${location.origin}${location.pathname}#/letters?key=${visitor}`;
+  const msg = h('p', { class: 'form-msg', role: 'status', style: 'margin:8px 0 0' });
+  const copy = (text, said) => async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      msg.textContent = said;
+    } catch {
+      msg.textContent = 'This browser would not copy it; select it and copy it yourself.';
+    }
+  };
+  const input = h('input', { name: 'letter-key', placeholder: 'xxxx xxxx xxxx xxxx xxxx xxxx xxxx xxxx', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'A letter key from another browser' });
+  const use = h('button', { class: 'btn', type: 'button' }, 'Use this key');
+  use.addEventListener('click', () => {
+    const key = readKey(input.value);
+    if (!key) {
+      msg.textContent = 'That is not a letter key: it is 32 letters and numbers, in eight groups of four.';
+      return;
+    }
+    if (key === visitor) {
+      msg.textContent = 'That is already this browser’s key.';
+      return;
+    }
+    location.hash = `#/letters?key=${key}`;
+    location.reload();
+  });
+  return h(
+    'details',
+    { class: 'card letter-key', open: null },
+    h('summary', {}, h('span', { class: 'label' }, 'Your letter key'), h('span', { class: 'meta' }, wrote ? ' · to write as you from another browser' : ' · wrote from another browser?')),
+    wrote
+      ? [
+          h('p', { class: 'meta', style: 'margin:10px 0 6px' }, 'Your letters are yours in this browser because of this key. Open the link (or type the key) in another browser or on another device, and it knows it is you there too.'),
+          h('p', { class: 'letter-key-code' }, showKey(visitor)),
+          h('div', { class: 'rp-row' }, h('button', { class: 'btn', type: 'button', onclick: copy(link, 'Copied the link. Open it in the other browser.') }, 'Copy the link'), h('button', { class: 'btn', type: 'button', onclick: copy(showKey(visitor), 'Copied the key.') }, 'Copy the key')),
+          h('p', { class: 'hint', style: 'margin:8px 0 0' }, 'Keep it to yourself: anyone with it can write as you and see your letters before they are read. Nobody here can find it again if you lose it.'),
+        ]
+      : null,
+    h('p', { class: 'meta', style: 'margin:12px 0 6px' }, 'Have a key from another browser?'),
+    h('div', { class: 'rp-row' }, input, use),
+    msg,
+  );
+}
+
+/** When you last saw what it wrote you (this browser only), and what was new then. */
+const SEEN_KEY = 'iterant.seenForYou';
+function seenForYou() {
+  try {
+    return Date.parse(local?.getItem(SEEN_KEY) || '') || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Everything it wrote you, newest first: its replies to your letters, and what it wrote to you on its own. Each can be
+ * written back to. What is new since you last looked is marked, and looking clears the dot on the Letters tab.
+ */
+function forYouCard() {
+  const items = app.you?.wroteYou || [];
+  if (!items.length) return null;
+  app.seenBefore ??= seenForYou(); // what was new when you came, for as long as you are here
+  try {
+    local?.setItem(SEEN_KEY, items[0].at);
+  } catch {}
+  forYouDot();
+  const shown = items.slice(0, 6);
+  const fresh = (x) => Date.parse(x.at) > app.seenBefore;
+  const canWrite = !SNAPSHOT || RELAY;
+  return h(
+    'div',
+    { class: 'card for-you', id: 'for-you' },
+    cardHead('It wrote to you', `${items.length}${items.some(fresh) ? ` · ${items.filter(fresh).length} new` : ''}`),
+    shown.map((x) =>
+      h(
+        'div',
+        { class: `for-you-item${fresh(x) ? ' fresh' : ''}` },
+        h('span', { class: 'label' }, x.kind === 'writing' ? `It wrote you “${x.title}”, on its own · cycle ${x.cycle}` : `Its reply to your letter${x.cycle ? ` · cycle ${x.cycle}` : ''}`, fresh(x) ? h('b', { class: 'new-badge' }, 'new') : null),
+        x.kind === 'reply' && x.yours ? h('p', { class: 'meta', style: 'margin:4px 0 0' }, 'You wrote: ', h('q', {}, x.yours)) : null,
+        h('p', { class: x.kind === 'writing' ? 'work-text' : 'voice' }, x.text),
+        canWrite ? h('a', { class: 'btn write-back', href: `#/letters?reply=${x.id}` }, 'Write back') : null,
+      ),
+    ),
+    items.length > shown.length ? h('p', { class: 'meta muted', style: 'margin:8px 0 0' }, `And ${items.length - shown.length} earlier, under your letters below.`) : null,
+  );
+}
+
+/** A dot on the Letters tab while it has written you something you have not seen (from this browser). */
+async function forYouDot(fresh = false) {
+  const tab = $('#tabs a[data-view="letters"]');
+  if (!tab || (SNAPSHOT && !RELAY)) return;
+  if (fresh || !app.you) app.you = await api(`/api/you?visitor=${visitor}`).catch(() => app.you || null);
+  const newest = Date.parse(app.you?.wroteYou?.[0]?.at || '') || 0;
+  const waiting = newest > seenForYou() && app.view !== 'letters';
+  tab.classList.toggle('has-news', waiting);
+  if (waiting) tab.setAttribute('title', `${app.state?.name || 'It'} wrote to you`);
+  else tab.removeAttribute('title');
 }
 
 /** Its pen pals: other creatures it writes to, and the letters it has sent them (they leave at night). */

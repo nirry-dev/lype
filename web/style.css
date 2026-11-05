@@ -769,6 +769,63 @@ main {
   background: color-mix(in srgb, var(--mind) 6%, var(--bg-2));
   border-radius: 0 10px 10px 0;
 }
+.letter-key summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+.letter-key-code {
+  margin: 6px 0 10px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  user-select: all;
+  word-break: break-word;
+}
+.letter-key input {
+  flex: 1 1 260px;
+  min-width: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.for-you-item {
+  padding: 12px 0;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+}
+.for-you-item:first-of-type {
+  border-top: 0;
+  padding-top: 4px;
+}
+.for-you-item .voice,
+.for-you-item .work-text {
+  margin: 6px 0 0;
+}
+.for-you-item .work-text {
+  white-space: pre-line;
+}
+.for-you-item .write-back {
+  display: inline-block;
+  margin-top: 10px;
+}
+.new-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--curious, #6fb1a8);
+  color: var(--bg, #0b0d12);
+}
+.tabs a.has-news {
+  position: relative;
+}
+.tabs a.has-news::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--curious, #6fb1a8);
+}
 .reply-block .write-back {
   display: inline-block;
   margin-top: 10px;
