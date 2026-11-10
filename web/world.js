@@ -1659,8 +1659,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
    * everyone watching shares), the side is chosen by it instead, so everyone sees it on the same side.
    */
   function beside(th, toward = [0, 0], close = false, seed = null) {
-    // far enough out that all of its body stands clear of the lot, not only its middle (just clear of it, to touch it)
-    const out = SPAN / 2 + reach() + (close ? 0.03 : 0.08);
+    // far enough out that all of its body stands clear of the lot, not only its middle (just clear of it, to touch it),
+    // but never past the middle of the street: a wide body there would stand in the lot across the way
+    const out = Math.min(SPAN / 2 + reach() + (close ? 0.03 : 0.08), PITCH / 2);
     // the sides of its lot, nearest to `toward` (or in the seed's order) first; open ground before a side where
     // something else stands
     const away = (spot, dir) => (seed == null ? Math.hypot(spot[0] - toward[0], spot[1] - toward[1]) : hash(`${seed}|${dir}`));
@@ -1670,6 +1671,12 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
     const { spot } = sides.find((s) => !clearance(...s.spot)) || sides[0];
     return { spot, face: angleTo(spot, [th.pos[0], th.pos[2]]) };
   }
+
+  /**
+   * How far out it walks round something (a square, along the streets round it): `edge` from its middle, and its body
+   * clear of that, but no further than the middle of the street, where a wide body would stand in the next lot.
+   */
+  const ring = (edge) => Math.min(edge + reach(), PITCH / 2);
 
   /** How far its body reaches out from its middle (0 while it is only a light). */
   function reach() {
@@ -1714,16 +1721,16 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
       if (!th) {
         if (a.doing === 'sit') return { spot: [0, 0], face: null, settle: true, about: a.n, doing: a.doing };
         // walking round its card: round its edge, from its front
-        const orbit = a.doing === 'circle' && !reduced ? { c: [0, 0], r: 0.78 + reach(), from: Math.atan2(0.62, 0.25), since: Date.parse(a.since) || Date.now() } : null;
+        const orbit = a.doing === 'circle' && !reduced ? { c: [0, 0], r: ring(0.6), from: Math.atan2(0.62, 0.25), since: Date.parse(a.since) || Date.now() } : null;
         return { spot: [0.25, 0.62], face: Math.PI, about: a.n, doing: a.doing, orbit };
       }
       // the side of it it went to, the same for everyone watching (by the moment, not by where each viewer stands)
       const g = beside(th, [0, 0], a.doing === 'touch', `${th.t.id}|${a.n}`);
-      // walking round it: far enough out to clear its corners, from that side, and as far round as the time since the
+      // walking round it: along the streets round its lot, from that side, and as far round as the time since the
       // moment began has taken it, so everyone sees it at the same point
       const orbit =
         a.doing === 'circle' && !reduced
-          ? { c: [th.pos[0], th.pos[2]], r: (SPAN / 2) * Math.SQRT2 + reach() + 0.06, from: Math.atan2(g.spot[1] - th.pos[2], g.spot[0] - th.pos[0]), since: Date.parse(a.since) || Date.now() }
+          ? { c: [th.pos[0], th.pos[2]], r: ring(SPAN / 2 + 0.08), from: Math.atan2(g.spot[1] - th.pos[2], g.spot[0] - th.pos[0]), since: Date.parse(a.since) || Date.now() }
           : null;
       return { ...g, about: a.n, doing: a.doing, orbit, sit: a.doing === 'sit' };
     }
@@ -1739,8 +1746,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
       creature.visiting = pick.th;
       creature.arrived = 0;
       if (pick.th) return { ...beside(pick.th, [0, 0], false, `${pick.th.t.id}|${slot}`), slot };
+      // somewhere round its card, short of the lots round it
       const a = hash(`wander|${slot}|a`) * Math.PI * 2;
-      return { spot: [Math.cos(a) * 0.9, Math.sin(a) * 0.9], face: angleTo([Math.cos(a), Math.sin(a)], [0, 0]), slot };
+      const out = PITCH / 2;
+      return { spot: [Math.cos(a) * out, Math.sin(a) * out], face: angleTo([Math.cos(a), Math.sin(a)], [0, 0]), slot };
     }
     return creature.goal;
   }
@@ -1756,7 +1765,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
     const r = reach(); // all of its body, not only its middle
     let need = 0;
     if (Math.abs(x) < 0.55 + r && Math.abs(z) < 0.45 + r) need = 0.24; // the card
-    for (const th of things) if (Math.abs(x - th.pos[0]) < 0.47 + r && Math.abs(z - th.pos[2]) < 0.47 + r) need = Math.max(need, th.top + 0.04);
+    // (what it only brushes, it does not rise over: its way keeps it off the lots, and a wide body in a narrow street
+    // would otherwise leap to the roofs at every sway)
+    const edge = SPAN / 2 + r * 0.75;
+    for (const th of things) if (Math.abs(x - th.pos[0]) < edge && Math.abs(z - th.pos[2]) < edge) need = Math.max(need, th.top + 0.04);
     return need;
   }
 
@@ -1783,8 +1795,10 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
     if (goal.orbit) {
       // it goes slowly round what it came to, as far round as the time since its moment began (it catches up, walking)
       const { c, r, from, since } = goal.orbit;
+      // (round a square, not a circle: a circle cuts the corners of a lot, or swings out into the lots beside it)
       const a = from + (Math.max(0, Date.now() - since) / 1000) * 0.3;
-      goal.spot = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
+      const s = r / Math.max(Math.abs(Math.cos(a)), Math.abs(Math.sin(a)));
+      goal.spot = [c[0] + Math.cos(a) * s, c[1] + Math.sin(a) * s];
       goal.face = angleTo(goal.spot, c);
     }
     const [x, , z] = creature.pos;
@@ -1829,7 +1843,9 @@ export function createWalk(host, { asset, onSelect, onLens = null, onArrive = nu
     }
     // float: just off the ground, higher over whatever it passes, resting on the card at night, lower when it sits
     const hover = goal.sit && creature.arrived ? (body() ? 0.02 : 0.3) : body() ? 0.1 : 0.55;
-    const ahead = dw > 0.01 ? [creature.pos[0] + ((wx - x) / dw) * 0.3, creature.pos[2] + ((wz - z) / dw) * 0.3] : [creature.pos[0], creature.pos[2]];
+    // (looking ahead no further than where it stops: not past it, into what it came to stand beside)
+    const far = points.length ? 0.3 : Math.min(0.3, dw);
+    const ahead = dw > 0.01 ? [creature.pos[0] + ((wx - x) / dw) * far, creature.pos[2] + ((wz - z) / dw) * far] : [creature.pos[0], creature.pos[2]];
     const want = goal.settle ? 0.26 : Math.max(clearance(creature.pos[0], creature.pos[2]), clearance(...ahead)) + hover;
     creature.pos[1] = reduced ? want : lerp(creature.pos[1], want, 1 - Math.exp(-dt * 3));
     // facing: where it is going while it goes; once there, what it came to look at. With nothing to look at (sitting
